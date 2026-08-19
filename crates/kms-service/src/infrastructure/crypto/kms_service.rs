@@ -12,6 +12,7 @@ use crate::{
     config::crypto::{CryptoSettings, MasterKeyProvider},
     domain::crypto::{EncryptedPrivateKey, KmsCryptoService as KmsCryptoServiceTrait, RawKeyPair},
     errors::{AppError, AppResult},
+    hsm::client::{decrypt_via_hsm, encrypt_via_hsm},
 };
 
 const NONCE_LEN: usize = 12;
@@ -20,6 +21,8 @@ const NONCE_LEN: usize = 12;
 pub struct KmsCryptoService {
     current_version: i32,
     master_keys: HashMap<i32, [u8; 32]>,
+    provider: MasterKeyProvider,
+    hsm_socket_path: String,
 }
 
 impl KmsCryptoService {
@@ -61,7 +64,9 @@ impl KmsCryptoService {
             master_keys.insert(version, key_array);
         }
 
-        if !master_keys.contains_key(&settings.current_master_key_version) {
+        if settings.provider != MasterKeyProvider::Hsm
+            && !master_keys.contains_key(&settings.current_master_key_version)
+        {
             return Err(AppError::CryptoError(format!(
                 "Current master key version {} is missing from configured master keys",
                 settings.current_master_key_version
@@ -71,6 +76,8 @@ impl KmsCryptoService {
         Ok(Self {
             current_version: settings.current_master_key_version,
             master_keys,
+            provider: settings.provider,
+            hsm_socket_path: settings.effective_hsm_socket_path(),
         })
     }
 
@@ -137,6 +144,24 @@ impl KmsCryptoServiceTrait for KmsCryptoService {
     }
 
     fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey> {
+        if self.provider == MasterKeyProvider::Hsm {
+            let ciphertext = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| {
+                    AppError::RuntimeError(format!("Failed to create HSM runtime: {err}"))
+                })?
+                .block_on(async {
+                    encrypt_via_hsm(&self.hsm_socket_path, "master_key", private_key).await
+                })?;
+
+            return Ok(EncryptedPrivateKey {
+                ciphertext,
+                nonce: Vec::new(),
+                master_key_version: self.current_version,
+            });
+        }
+
         let mut nonce_bytes = [0u8; NONCE_LEN];
         let mut rng = OsRng;
 
@@ -158,6 +183,18 @@ impl KmsCryptoServiceTrait for KmsCryptoService {
     }
 
     fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>> {
+        if self.provider == MasterKeyProvider::Hsm {
+            return tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|err| {
+                    AppError::RuntimeError(format!("Failed to create HSM runtime: {err}"))
+                })?
+                .block_on(async {
+                    decrypt_via_hsm(&self.hsm_socket_path, "master_key", &encrypted.ciphertext).await
+                });
+        }
+
         if encrypted.nonce.len() != NONCE_LEN {
             return Err(AppError::CryptoError(format!(
                 "Invalid nonce length: expected {NONCE_LEN} bytes, got {}",

@@ -1,29 +1,22 @@
-use aes_gcm::Aes256Gcm;
+use aes_gcm::{Aes256Gcm, aead::Aead, Nonce};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, sync::RwLock};
 
-#[derive(Serialize, Deserialize)]
-#[serde(tag = "action", content = "payload")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VhsmRequest {
-    /// Komenda wywoływana przez CLI podczas uruchomienia / ceremonii
+    Ping,
     InitMasterKey { master_key_hex: String },
-    /// Operacja szyfrowania dla kms-service
-    Encrypt { plaintext: Vec<u8> },
-    /// Operacja odszyfrowania dla kms-service
-    Decrypt { nonce: Vec<u8>, ciphertext: Vec<u8> },
-    /// Zapytanie o stan vHSM
-    Status,
+    Encrypt { key_id: String, plaintext: Vec<u8> },
+    Decrypt { key_id: String, ciphertext: Vec<u8> },
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(untagged)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum VhsmResponse {
-    InitSuccess,
-    StatusResponse { is_unlocked: bool },
-    EncryptSuccess { nonce: Vec<u8>, ciphertext: Vec<u8> },
-    DecryptSuccess { plaintext: Vec<u8> },
-    Error { error: String },
+    Pong,
+    Encrypted { ciphertext: Vec<u8> },
+    Decrypted { plaintext: Vec<u8> },
+    Error { code: u16, message: String },
 }
 
 /// Stan wewnętrzny demona w pamięci RAM

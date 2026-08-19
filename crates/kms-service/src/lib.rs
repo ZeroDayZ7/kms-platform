@@ -9,6 +9,7 @@ pub mod config;
 pub mod domain;
 pub mod errors;
 pub mod handlers;
+pub mod hsm;
 pub mod infrastructure;
 pub mod server;
 pub mod workers;
