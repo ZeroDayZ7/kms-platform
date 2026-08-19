@@ -5,17 +5,18 @@ use aes_gcm::{
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use ed25519_dalek::{SigningKey, pkcs8::EncodePublicKey};
 use pkcs8::LineEnding;
-use std::collections::HashMap;
+use std::{collections::HashMap, path::Path};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
-    config::crypto::CryptoSettings,
+    config::crypto::{CryptoSettings, MasterKeyProvider},
     domain::crypto::{EncryptedPrivateKey, KmsCryptoService as KmsCryptoServiceTrait, RawKeyPair},
     errors::{AppError, AppResult},
 };
 
 const NONCE_LEN: usize = 12;
 
+#[derive(Debug)]
 pub struct KmsCryptoService {
     current_version: i32,
     master_keys: HashMap<i32, [u8; 32]>,
@@ -23,6 +24,25 @@ pub struct KmsCryptoService {
 
 impl KmsCryptoService {
     pub fn new(settings: &CryptoSettings) -> AppResult<Self> {
+        if settings.provider == MasterKeyProvider::Hsm {
+            let socket_path = settings.effective_hsm_socket_path();
+            let path = Path::new(&socket_path);
+
+            if !path.exists() {
+                return Err(AppError::ConfigError(format!(
+                    "HSM provider selected but socket is missing at {}",
+                    path.display()
+                )));
+            }
+
+            if !path.is_file() {
+                return Err(AppError::ConfigError(format!(
+                    "HSM provider selected but socket path {} is not a file",
+                    path.display()
+                )));
+            }
+        }
+
         let mut master_keys = HashMap::new();
 
         for (&version, b64_key) in &settings.master_keys {

@@ -28,7 +28,7 @@ pool_size = 5
 auth_source = "admin"
 
 [redis]
-enabled = true
+enabled = false
 host = "127.0.0.1"
 port = 6380
 db = 0
@@ -45,6 +45,8 @@ auth_burst = 100
 # KMS Crypto Config
 # ==============================================================================
 [crypto]
+provider = "local"
+hsm_socket_path = "/run/vhsm/vhsm.sock"
 current_master_key_version = 1
 default_key_ttl_days = 365
 grace_period_minutes = 30

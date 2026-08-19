@@ -88,8 +88,25 @@ impl<'de> Deserialize<'de> for GracePeriodMinutes {
 
 // --- GŁÓWNA STRUKTURA KONFIGURACJI KMS Z WERSJONOWANIEM ---
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MasterKeyProvider {
+    Local,
+    Hsm,
+}
+
+impl Default for MasterKeyProvider {
+    fn default() -> Self {
+        Self::Local
+    }
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct CryptoSettings {
+    #[serde(default)]
+    pub provider: MasterKeyProvider,
+    #[serde(default)]
+    pub hsm_socket_path: Option<String>,
     pub current_master_key_version: i32,
     pub master_keys: HashMap<i32, MasterKeyB64>,
     pub default_key_ttl_days: KeyTtlDays,
@@ -109,5 +126,41 @@ impl CryptoSettings {
     /// Zwraca klucz główny dla podanej wersji
     pub fn get_master_key(&self, version: i32) -> Option<&MasterKeyB64> {
         self.master_keys.get(&version)
+    }
+
+    pub fn effective_hsm_socket_path(&self) -> String {
+        self.hsm_socket_path
+            .clone()
+            .unwrap_or_else(|| "/run/vhsm/vhsm.sock".to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn provider_defaults_to_local() {
+        let provider = MasterKeyProvider::default();
+        assert_eq!(provider, MasterKeyProvider::Local);
+    }
+
+    #[test]
+    fn hsm_mode_requires_existing_socket() {
+        let socket = PathBuf::from("/tmp/does-not-exist-vhsm.sock");
+        let settings = CryptoSettings {
+            provider: MasterKeyProvider::Hsm,
+            hsm_socket_path: Some(socket.to_string_lossy().to_string()),
+            current_master_key_version: 1,
+            master_keys: HashMap::from([(1, MasterKeyB64("MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=".to_string()))]),
+            default_key_ttl_days: KeyTtlDays(30),
+            grace_period_minutes: GracePeriodMinutes(10),
+            enable_http_rewrap: false,
+            enable_http_lock: false,
+        };
+
+        let err = crate::infrastructure::crypto::kms_service::KmsCryptoService::new(&settings);
+        assert!(matches!(err, Err(crate::errors::AppError::ConfigError(_))));
     }
 }
