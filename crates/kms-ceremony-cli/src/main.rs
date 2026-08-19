@@ -2,12 +2,16 @@ mod cli;
 mod crypto;
 mod storage;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use std::fs;
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
-use crate::cli::args::{Cli, Commands};
+use kms_core::hsm::client::send_hsm_request;
+use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
+
+use crate::cli::args::{CliArgs, Commands};
 use crate::crypto::aes::encrypt_storage_key;
 use crate::crypto::keys::generate_master_key;
 use crate::crypto::sss::{combine_shares, split_shares};
@@ -112,65 +116,98 @@ fn handle_recover(shares_dir: PathBuf, output_key: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn interactive_walkthrough() -> Result<()> {
-    use dialoguer::{Confirm, Input};
-
-    let shares: u8 = Input::new()
-        .with_prompt("Number of shares")
-        .default(5)
-        .interact()?;
-
-    let threshold: u8 = Input::new()
-        .with_prompt("Recovery threshold")
-        .default(3)
-        .interact()?;
-
-    let output_dir: String = Input::new()
-        .with_prompt("Output directory")
-        .default("./out".to_string())
-        .interact()?;
-
-    let output_dir = PathBuf::from(output_dir);
-    handle_generate(shares, threshold, output_dir.clone())?;
-
-    let recover_now = Confirm::new()
-        .with_prompt("Do you want to recover the key immediately from the created shares?")
-        .default(false)
-        .interact()?;
-
-    if recover_now {
-        let recovered_path: String = Input::new()
-            .with_prompt("Recovered key output path")
-            .default("./recovered.key".to_string())
-            .interact()?;
-        handle_recover(output_dir.join("shares"), PathBuf::from(recovered_path))?;
-    }
-
-    Ok(())
-}
-
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = CliArgs::parse();
 
     match cli.command {
-        Some(Commands::Generate {
+        Commands::Generate {
             shares,
             threshold,
             output_dir,
-        }) => {
+        } => {
             handle_generate(shares, threshold, output_dir)?;
         }
-        Some(Commands::Recover {
+        Commands::Recover {
             shares_dir,
             output_key,
-        }) => {
+        } => {
             handle_recover(shares_dir, output_key)?;
         }
-        Some(Commands::Interactive { output_dir }) => {
+        Commands::Interactive { output_dir } => {
             handle_generate(5, 3, output_dir)?;
         }
-        None => {
-            interactive_walkthrough()?;
+        Commands::InitMasterKey {
+            socket_path,
+            threshold,
+            shares,
+        } => {
+            let cleaned_shares: Vec<String> =
+                shares.into_iter().map(|s| s.trim().to_string()).collect();
+
+            let request = HsmRequest::InitMasterKey {
+                threshold,
+                shares: cleaned_shares,
+            };
+
+            match send_hsm_request(&socket_path, &request).await {
+                Ok(HsmResponse::Initialized) => {
+                    println!("✅ Klucz główny vHSM został pomyślnie załadowany.")
+                }
+                Ok(HsmResponse::Error { code, message }) => {
+                    bail!("Błąd HSM [{code}]: {message}")
+                }
+                Ok(_) => bail!("Otrzymano nieoczekiwaną odpowiedź z HSM"),
+                Err(err) => bail!("Błąd komunikacji z HSM: {err}"),
+            }
+        }
+        Commands::Encrypt {
+            socket_path,
+            plaintext,
+        } => {
+            let request = HsmRequest::Encrypt {
+                key_id: "master_key".to_string(),
+                key_version: None,
+                plaintext: plaintext.into_bytes(),
+            };
+
+            match send_hsm_request(&socket_path, &request).await {
+                Ok(HsmResponse::Encrypted { ciphertext }) => {
+                    println!("Ciphertext (HEX): {}", hex::encode(ciphertext));
+                }
+                Ok(HsmResponse::Error { code, message }) => {
+                    bail!("Błąd szyfrowania [{code}]: {message}")
+                }
+                Ok(_) => bail!("Otrzymano nieoczekiwaną odpowiedź z HSM"),
+                Err(err) => bail!("Błąd komunikacji z HSM: {err}"),
+            }
+        }
+        Commands::Decrypt {
+            socket_path,
+            ciphertext_hex,
+        } => {
+            let ciphertext =
+                hex::decode(ciphertext_hex.trim()).context("Nieprawidłowy HEX szyfrogramu")?;
+            let request = HsmRequest::Decrypt {
+                key_id: "master_key".to_string(),
+                key_version: None,
+                ciphertext,
+            };
+
+            match send_hsm_request(&socket_path, &request).await {
+                Ok(HsmResponse::Decrypted { plaintext }) => {
+                    let decrypted_str = Zeroizing::new(
+                        String::from_utf8(plaintext)
+                            .context("Tekst odszyfrowany nie jest prawidłowym UTF-8")?,
+                    );
+                    println!("Plaintext: {}", *decrypted_str);
+                }
+                Ok(HsmResponse::Error { code, message }) => {
+                    bail!("Błąd dekodowania [{code}]: {message}")
+                }
+                Ok(_) => bail!("Otrzymano nieoczekiwaną odpowiedź z HSM"),
+                Err(err) => bail!("Błąd komunikacji z HSM: {err}"),
+            }
         }
     }
 

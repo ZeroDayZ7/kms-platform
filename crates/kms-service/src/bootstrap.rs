@@ -61,7 +61,7 @@ fn read_share_file(path: &Path) -> AppResult<ShareFileRecord> {
     })?;
 
     let record: ShareFileRecord =
-        serde_json::from_str(&content).map_err(AppError::SerializationError)?;
+        serde_json::from_str(&content).map_err(|e| AppError::SerializationError(e.to_string()))?;
 
     Ok(record)
 }
@@ -80,8 +80,8 @@ pub fn recover_storage_key_from_ceremony(
         ))
     })?;
 
-    let manifest: CeremonyManifest =
-        serde_json::from_str(&manifest_content).map_err(AppError::SerializationError)?;
+    let manifest: CeremonyManifest = serde_json::from_str(&manifest_content)
+        .map_err(|e| AppError::SerializationError(e.to_string()))?;
 
     let mut selected_shares = Vec::new();
     for file_name in &manifest.share_files {
@@ -137,7 +137,6 @@ pub fn recover_storage_key_from_ceremony(
     Ok(storage_key)
 }
 
-/// Recover storage key by using shares provided directly (e.g. via HTTP request).
 pub fn recover_storage_key_from_shares(
     manifest_path: impl AsRef<Path>,
     shares: &[String],
@@ -151,8 +150,8 @@ pub fn recover_storage_key_from_shares(
         ))
     })?;
 
-    let manifest: CeremonyManifest =
-        serde_json::from_str(&manifest_content).map_err(AppError::SerializationError)?;
+    let manifest: CeremonyManifest = serde_json::from_str(&manifest_content)
+        .map_err(|e| AppError::SerializationError(e.to_string()))?;
 
     if shares.len() < manifest.threshold as usize {
         return Err(AppError::ValidationError(format!(
@@ -162,7 +161,6 @@ pub fn recover_storage_key_from_shares(
         )));
     }
 
-    // Convert provided share strings into (index, value) tuples expected by combine_shares
     let share_tuples: Vec<(u8, String)> = shares
         .iter()
         .enumerate()

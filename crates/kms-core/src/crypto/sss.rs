@@ -1,3 +1,4 @@
+// crates/kms-core/src/crypto/sss.rs
 use crate::crypto::keys::{KEY_SIZE, SecretKey};
 use anyhow::{Context, Result, bail};
 use ssss::{SsssConfig, gen_shares, unlock};

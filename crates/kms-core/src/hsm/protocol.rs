@@ -5,6 +5,7 @@ pub enum HsmRequest {
     Ping,
     Status,
     InitMasterKey {
+        threshold: u8,
         shares: Vec<String>,
     },
     Encrypt {
@@ -26,7 +27,7 @@ pub enum HsmResponse {
         initialized: bool,
         active_key_version: u32,
     },
-    MasterKeyInitialized,
+    Initialized,
     Encrypted {
         ciphertext: Vec<u8>,
     },

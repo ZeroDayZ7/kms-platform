@@ -1,0 +1,68 @@
+#[cfg(unix)]
+use aes_gcm::{
+    aead::{rand_core::RngCore, Aead, OsRng},
+    Aes256Gcm, KeyInit, Nonce,
+};
+#[cfg(unix)]
+use kms_core::crypto::sss::{combine_shares, SecretShare};
+
+#[cfg(unix)]
+pub fn reconstruct_master_key(shares: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+    if shares.is_empty() {
+        return Err("At least one share is required".to_string());
+    }
+
+    let share_items: Vec<SecretShare> = shares
+        .iter()
+        .enumerate()
+        .map(|(index, value)| SecretShare {
+            index: (index as u8) + 1,
+            value: value.clone(),
+        })
+        .collect();
+
+    let recovered = combine_shares(&share_items)
+        .map_err(|err| format!("Failed to reconstruct master key from shares: {err}"))?;
+
+    if recovered.len() != 32 {
+        return Err("Recovered master key must be 32 bytes".to_string());
+    }
+
+    Ok(recovered)
+}
+
+#[cfg(unix)]
+pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|err| format!("Failed to initialize AES-GCM: {err}"))?;
+
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let mut ciphertext = cipher
+        .encrypt(nonce, plaintext)
+        .map_err(|err| format!("Encryption failed: {err}"))?;
+
+    // Łączymy nonce (12 B) + ciphertext na potrzeby poprawnej dekrypcji
+    let mut payload = nonce_bytes.to_vec();
+    payload.append(&mut ciphertext);
+    Ok(payload)
+}
+
+#[cfg(unix)]
+pub fn decrypt_bytes(key: &[u8], payload: &[u8]) -> Result<Vec<u8>, String> {
+    if payload.len() < 12 {
+        return Err("Ciphertext payload too short".to_string());
+    }
+
+    let cipher = Aes256Gcm::new_from_slice(key)
+        .map_err(|err| format!("Failed to initialize AES-GCM: {err}"))?;
+
+    let (nonce_bytes, raw_ciphertext) = payload.split_at(12);
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    cipher
+        .decrypt(nonce, raw_ciphertext)
+        .map_err(|err| format!("Decryption failed: {err}"))
+}
