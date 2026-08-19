@@ -1,0 +1,100 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cargo pipeline (fmt -> check -> clippy)",
+      "type": "shell",
+      "command": "cargo fmt && cargo check && cargo clippy --all-targets --all-features -- -D warnings",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": ["$codelldb-rustc"]
+    },
+    {
+      "label": "cargo check",
+      "type": "shell",
+      "command": "cargo check",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": ["$codelldb-rustc"]
+    },
+    {
+      "label": "cargo clippy (strict)",
+      "type": "shell",
+      "command": "cargo clippy --all-targets --all-features -- -D warnings",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": ["$codelldb-rustc"]
+    },
+    {
+      "label": "cargo build",
+      "type": "shell",
+      "command": "cargo build",
+      "group": "build",
+      "problemMatcher": ["$codelldb-rustc"]
+    },
+    {
+      "label": "cargo test",
+      "type": "shell",
+      "command": "cargo test",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": ["$codelldb-rustc"]
+    },
+    {
+      "label": "cargo test (no capture)",
+      "type": "shell",
+      "command": "cargo test -- --nocapture",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": ["$codelldb-rustc"]
+    },
+    {
+      "label": "cargo test (single test)",
+      "type": "shell",
+      "command": "cargo test ${input:testName} -- --nocapture",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": ["$codelldb-rustc"]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testName",
+      "type": "promptString",
+      "description": "Podaj nazwę testu do uruchomienia"
+    }
+  ]
+}

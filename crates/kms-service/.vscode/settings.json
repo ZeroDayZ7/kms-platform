@@ -1,0 +1,35 @@
+{
+  // === Explorer & Search ===
+  "files.exclude": {
+    "**/target": true,
+    "**/Cargo.lock": true,
+    "**/.git": true,
+    "**/.github": true,
+    "**/docker-entrypoint-initdb.d": true,
+    // "**/.vscode": true,
+    "**/tests": true,
+    "LICENSE": true
+    // ".env.example": true
+    // "**/.env": true
+    // "README.md": true
+  },
+  "search.exclude": {
+    "**/target": true,
+    "**/Cargo.lock": true,
+    "**/.git": true,
+    "**/.vscode": true,
+    "**/tests": true,
+    "LICENSE": true,
+    "**/docs": true,
+    "**/docker-entrypoint-initdb.d": true,
+    ".env.example": true,
+    "README.md": true,
+    "**/combined.txt": true
+  },
+
+  // === Formatowanie ===
+  "editor.formatOnSave": true
+  // "[rust]": {
+  //     "editor.defaultFormatter": "rust-lang.rust-analyzer"
+  // },
+}

@@ -1,0 +1,56 @@
+# config/settings.toml
+
+[server]
+host = "127.0.0.1"
+port = 7000
+shutdown_timeout = 30
+
+[log]
+level = "debug"
+
+[cors]
+allowed_methods = ["GET", "POST", "OPTIONS", "PATCH"]
+max_age = 3600
+
+[cors.allowed_origin]
+type = "List"
+value = [
+  "http://localhost:3000",
+  "https://myapp.com",
+  "https://admin.myapp.com"
+]
+
+[database]
+host = "127.0.0.1"
+port = 27017
+name = "kms_db"
+pool_size = 5
+auth_source = "admin"
+
+[redis]
+enabled = true
+host = "127.0.0.1"
+port = 6380
+db = 0
+
+[rate_limit]
+global_per_second = 50
+global_burst = 100
+health_per_second = 50
+health_burst = 100
+auth_per_second = 50
+auth_burst = 100
+
+# ==============================================================================
+# KMS Crypto Config
+# ==============================================================================
+[crypto]
+current_master_key_version = 1
+default_key_ttl_days = 365
+grace_period_minutes = 30
+enable_http_rewrap = false
+enable_http_lock = false
+
+
+[crypto.master_keys]
+1 = "MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI="
