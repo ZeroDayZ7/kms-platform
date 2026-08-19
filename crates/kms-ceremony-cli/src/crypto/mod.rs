@@ -1,2 +1,1 @@
-pub mod keys;
-pub mod sss;
+pub use kms_core::crypto::{keys, sss, aes};

@@ -8,7 +8,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::cli::args::{Cli, Commands};
-use crate::crypto::keys::{encrypt_storage_key, generate_master_key};
+use crate::crypto::aes::encrypt_storage_key;
+use crate::crypto::keys::generate_master_key;
 use crate::crypto::sss::{combine_shares, split_shares};
 use crate::storage::files::{
     load_share_directory, write_manifest, write_master_key_file, write_share_file,

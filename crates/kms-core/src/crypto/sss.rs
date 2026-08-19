@@ -2,7 +2,7 @@ use crate::crypto::keys::{SecretKey, KEY_SIZE};
 use anyhow::{bail, Result};
 use ssss::{gen_shares, unlock, SsssConfig};
 
-pub fn split_secret(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec<(u8, String)>> {
+pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec<(u8, String)>> {
     if shares == 0 {
         bail!("Total shares must be greater than zero");
     }
@@ -28,10 +28,6 @@ pub fn split_secret(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec
     }
 
     Ok(result)
-}
-
-pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec<(u8, String)>> {
-    split_secret(secret, shares, threshold)
 }
 
 pub fn combine_shares(shares: &[(u8, String)]) -> Result<SecretKey> {

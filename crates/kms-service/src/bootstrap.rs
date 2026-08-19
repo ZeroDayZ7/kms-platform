@@ -1,15 +1,9 @@
-use aes_gcm::{
-    Aes256Gcm, Nonce,
-    aead::{Aead, KeyInit},
-};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use ssss::unlock;
 use std::{fs, path::Path, sync::Arc};
 use tracing::{info, warn};
-use uuid::Uuid;
-use zeroize::{Zeroize, ZeroizeOnDrop};
+use kms_core::ceremony::{CeremonyManifest, ShareFileRecord, compute_share_sha256};
+use kms_core::crypto::sss::combine_shares;
+use kms_core::crypto::aes::{decrypt_storage_key, EncryptedContainer};
+use kms_core::crypto::keys::SecretKey as CoreSecretKey;
 
 use crate::{
     config::acl::AclSettings,
@@ -23,62 +17,7 @@ use crate::{
     errors::{AppError, AppResult},
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CeremonyManifest {
-    pub id: Uuid,
-    pub version: u32,
-    pub created_at: DateTime<Utc>,
-    pub threshold: u8,
-    pub total_shares: u8,
-    pub share_files: Vec<String>,
-    pub encrypted_storage_key_nonce: String,
-    pub encrypted_storage_key_ciphertext: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShareFileRecord {
-    pub index: u8,
-    pub threshold: u8,
-    pub total_shares: u8,
-    pub share_hex: String,
-    pub share_sha256: String,
-    pub created_at: DateTime<Utc>,
-}
-
-#[derive(Clone, ZeroizeOnDrop)]
-pub struct SecureStorageKey([u8; 32]);
-
-impl SecureStorageKey {
-    pub fn from_bytes(bytes: [u8; 32]) -> Self {
-        Self(bytes)
-    }
-
-    pub fn as_bytes(&self) -> &[u8; 32] {
-        &self.0
-    }
-}
-
-pub fn compute_share_sha256(share_hex: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(share_hex.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn decode_hex<const N: usize>(hex_value: &str, field: &str) -> AppResult<[u8; N]> {
-    let bytes = hex::decode(hex_value)
-        .map_err(|err| AppError::CryptoError(format!("Invalid hex for {field}: {err}")))?;
-
-    if bytes.len() != N {
-        return Err(AppError::CryptoError(format!(
-            "Invalid length for {field}: expected {N} bytes, got {}",
-            bytes.len()
-        )));
-    }
-
-    let mut out = [0u8; N];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
+pub type SecureStorageKey = CoreSecretKey;
 
 fn validate_share_record(record: &ShareFileRecord, manifest: &CeremonyManifest) -> AppResult<()> {
     if record.index == 0 || record.index > manifest.total_shares {
@@ -157,7 +96,7 @@ pub fn recover_storage_key_from_ceremony(
         let record = read_share_file(&path)?;
         validate_share_record(&record, &manifest)?;
 
-        selected_shares.push(record.share_hex);
+        selected_shares.push((record.index, record.share_hex.clone()));
     }
 
     if selected_shares.len() < manifest.threshold as usize {
@@ -168,56 +107,22 @@ pub fn recover_storage_key_from_ceremony(
         )));
     }
 
-    let mut master_key = [0u8; 32];
-    let recovered = unlock(&selected_shares[..manifest.threshold as usize]).map_err(|err| {
+    let master_key = combine_shares(&selected_shares[..manifest.threshold as usize]).map_err(|err| {
         AppError::CryptoError(format!(
             "Failed to reconstruct master key from shares: {err}"
         ))
     })?;
 
-    if recovered.len() != 32 {
-        return Err(AppError::CryptoError(format!(
-            "Recovered master key has invalid length: expected 32 bytes, got {}",
-            recovered.len()
-        )));
-    }
+    let container = EncryptedContainer {
+        nonce: manifest.encrypted_storage_key_nonce.clone(),
+        ciphertext: manifest.encrypted_storage_key_ciphertext.clone(),
+    };
 
-    master_key.copy_from_slice(&recovered);
-
-    let nonce = decode_hex::<12>(
-        &manifest.encrypted_storage_key_nonce,
-        "encrypted_storage_key_nonce",
-    )?;
-    let ciphertext = hex::decode(&manifest.encrypted_storage_key_ciphertext)
-        .map_err(|err| AppError::CryptoError(format!("Invalid ciphertext hex: {err}")))?;
-
-    let cipher = Aes256Gcm::new_from_slice(&master_key).map_err(|err| {
-        AppError::CryptoError(format!(
-            "Failed to initialize AES-GCM with recovered master key: {err}"
-        ))
+    let storage_key = decrypt_storage_key(&master_key, &container).map_err(|err| {
+        AppError::CryptoError(format!("Failed to decrypt storage key: {err}"))
     })?;
 
-    let nonce_value = Nonce::from_slice(&nonce);
-    let mut raw_key = cipher
-        .decrypt(nonce_value, ciphertext.as_ref())
-        .map_err(|_| {
-            AppError::CryptoError("Failed to decrypt storage key with recovered master key".into())
-        })?;
-
-    if raw_key.len() != 32 {
-        raw_key.zeroize();
-        master_key.zeroize();
-        return Err(AppError::CryptoError(
-            "Recovered storage key is not 32 bytes long".into(),
-        ));
-    }
-
-    let mut storage_key_bytes = [0u8; 32];
-    storage_key_bytes.copy_from_slice(&raw_key);
-    raw_key.zeroize();
-    master_key.zeroize();
-
-    Ok(SecureStorageKey::from_bytes(storage_key_bytes))
+    Ok(storage_key)
 }
 
 /// Recover storage key by using shares provided directly (e.g. via HTTP request).
@@ -245,56 +150,29 @@ pub fn recover_storage_key_from_shares(
         )));
     }
 
-    let recovered = unlock(&shares[..manifest.threshold as usize]).map_err(|err| {
+    // Convert provided share strings into (index, value) tuples expected by combine_shares
+    let share_tuples: Vec<(u8, String)> = shares
+        .iter()
+        .enumerate()
+        .map(|(i, s)| ((i as u8) + 1, s.clone()))
+        .collect();
+
+    let master_key = combine_shares(&share_tuples[..manifest.threshold as usize]).map_err(|err| {
         AppError::CryptoError(format!(
             "Failed to reconstruct master key from shares: {err}"
         ))
     })?;
 
-    if recovered.len() != 32 {
-        return Err(AppError::CryptoError(format!(
-            "Recovered master key has invalid length: expected 32 bytes, got {}",
-            recovered.len()
-        )));
-    }
+    let container = EncryptedContainer {
+        nonce: manifest.encrypted_storage_key_nonce.clone(),
+        ciphertext: manifest.encrypted_storage_key_ciphertext.clone(),
+    };
 
-    let mut master_key = [0u8; 32];
-    master_key.copy_from_slice(&recovered);
-
-    let nonce = decode_hex::<12>(
-        &manifest.encrypted_storage_key_nonce,
-        "encrypted_storage_key_nonce",
-    )?;
-    let ciphertext = hex::decode(&manifest.encrypted_storage_key_ciphertext)
-        .map_err(|err| AppError::CryptoError(format!("Invalid ciphertext hex: {err}")))?;
-
-    let cipher = Aes256Gcm::new_from_slice(&master_key).map_err(|err| {
-        AppError::CryptoError(format!(
-            "Failed to initialize AES-GCM with recovered master key: {err}"
-        ))
+    let storage_key = decrypt_storage_key(&master_key, &container).map_err(|err| {
+        AppError::CryptoError(format!("Failed to decrypt storage key: {err}"))
     })?;
 
-    let nonce_value = Nonce::from_slice(&nonce);
-    let mut raw_key = cipher
-        .decrypt(nonce_value, ciphertext.as_ref())
-        .map_err(|_| {
-            AppError::CryptoError("Failed to decrypt storage key with recovered master key".into())
-        })?;
-
-    if raw_key.len() != 32 {
-        raw_key.zeroize();
-        master_key.zeroize();
-        return Err(AppError::CryptoError(
-            "Recovered storage key is not 32 bytes long".into(),
-        ));
-    }
-
-    let mut storage_key_bytes = [0u8; 32];
-    storage_key_bytes.copy_from_slice(&raw_key);
-    raw_key.zeroize();
-    master_key.zeroize();
-
-    Ok(SecureStorageKey::from_bytes(storage_key_bytes))
+    Ok(storage_key)
 }
 
 pub async fn bootstrap_keys<R>(
@@ -373,8 +251,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aes_gcm::{Aes256Gcm, KeyInit, aead::Aead};
+    use aes_gcm::{Aes256Gcm, Nonce, KeyInit, aead::Aead};
+    use chrono::Utc;
     use tempfile::tempdir;
+    use uuid::Uuid;
 
     #[test]
     fn ceremony_bootstrap_reconstructs_storage_key_from_manifest_and_shares() {

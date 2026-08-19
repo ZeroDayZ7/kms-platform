@@ -17,6 +17,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 anyhow = "1.0"
 sha2 = "0.10"
 ssss = "1.0.6"
+kms-core = { path = "../kms-core" }
 
 [profile.release]
 opt-level = 3
