@@ -15,6 +15,7 @@ pub mod rate_limit;
 pub use cors::HttpMethod;
 pub use database::DatabaseConfig;
 pub use log::LogConfig;
+pub use log::LogFormat;
 pub use log::LogLevel;
 pub use redis::RedisConfig;
 pub use settings::Settings;

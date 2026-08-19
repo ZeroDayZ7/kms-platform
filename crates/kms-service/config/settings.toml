@@ -7,6 +7,7 @@ shutdown_timeout = 30
 
 [log]
 level = "debug"
+format = "json" # dostępne opcje: "json", "compact", "pretty"
 
 [cors]
 allowed_methods = ["GET", "POST", "OPTIONS", "PATCH"]

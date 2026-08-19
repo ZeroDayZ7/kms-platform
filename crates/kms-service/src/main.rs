@@ -47,7 +47,7 @@ async fn main() {
 
 async fn run_command(cli: Cli) -> anyhow::Result<()> {
     let settings = Arc::new(config::load().context("Failed to load configuration")?);
-    server::logger::init_logging(settings.log.level);
+    server::logger::init_logging(&settings.log);
     info!("⚙️ Configuration loaded");
 
     match cli.command {
