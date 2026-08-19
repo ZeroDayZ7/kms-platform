@@ -1,35 +1,44 @@
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use zeroize::Zeroize;
+
 #[cfg(unix)]
-use aes_gcm::{Aes256Gcm, Nonce, aead::{Aead, OsRng, rand_core::RngCore}};
-#[cfg(unix)]
-use kms_core::{
-    crypto::sss::{SecretShare, combine_shares},
-    hsm::protocol::{HsmRequest, HsmResponse},
+use aes_gcm::{
+    aead::{rand_core::RngCore, Aead, OsRng},
+    Aes256Gcm, Nonce,
 };
 #[cfg(unix)]
-use std::sync::Arc;
+use kms_core::{
+    crypto::sss::{combine_shares, SecretShare},
+    hsm::protocol::{HsmRequest, HsmResponse},
+};
 #[cfg(unix)]
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixListener,
-    sync::RwLock,
 };
-#[cfg(unix)]
-use zeroize::Zeroize;
 
+#[allow(dead_code)]
 pub struct VhsmState {
-    initialized: bool,
-    active_key_version: u32,
-    master_key: Option<Vec<u8>>,
+    pub initialized: bool,
+    pub active_key_version: u32,
+    pub master_key: Option<Vec<u8>>,
 }
 
 impl VhsmState {
-    fn zeroize_key(&mut self) {
+    pub fn zeroize_key(&mut self) {
         if let Some(ref mut key) = self.master_key {
             key.zeroize();
         }
         self.master_key = None;
         self.initialized = false;
         self.active_key_version = 0;
+    }
+}
+
+impl Drop for VhsmState {
+    fn drop(&mut self) {
+        self.zeroize_key();
     }
 }
 
@@ -64,7 +73,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[cfg(unix)]
-async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_unix_listener(
+    state: Arc<RwLock<VhsmState>>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
@@ -80,7 +91,10 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
     let listener = UnixListener::bind(SOCKET_PATH)?;
     std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o660))?;
 
-    tracing::info!("vHSM Daemon oczekuje na inicjalizację kluczem na: {}", SOCKET_PATH);
+    tracing::info!(
+        "vHSM Daemon oczekuje na inicjalizację kluczem na: {}",
+        SOCKET_PATH
+    );
 
     loop {
         match listener.accept().await {
@@ -109,7 +123,10 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
                         }
                         Ok(HsmRequest::InitMasterKey { shares }) => {
                             if shares.is_empty() {
-                                HsmResponse::Error { code: 400, message: "At least one share is required".to_string() }
+                                HsmResponse::Error {
+                                    code: 400,
+                                    message: "At least one share is required".to_string(),
+                                }
                             } else {
                                 let share_items: Vec<SecretShare> = shares
                                     .iter()
@@ -123,7 +140,11 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
                                 match combine_shares(&share_items) {
                                     Ok(recovered) => {
                                         if recovered.len() != 32 {
-                                            HsmResponse::Error { code: 422, message: "Recovered master key must be 32 bytes".to_string() }
+                                            HsmResponse::Error {
+                                                code: 422,
+                                                message: "Recovered master key must be 32 bytes"
+                                                    .to_string(),
+                                            }
                                         } else {
                                             let mut guard = state_clone.write().await;
                                             guard.master_key = Some(recovered.clone());
@@ -136,14 +157,23 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
                                     }
                                     Err(err) => HsmResponse::Error {
                                         code: 500,
-                                        message: format!("Failed to reconstruct master key from shares: {err}"),
+                                        message: format!(
+                                            "Failed to reconstruct master key from shares: {err}"
+                                        ),
                                     },
                                 }
                             }
                         }
-                        Ok(HsmRequest::Encrypt { key_id, key_version, plaintext }) => {
+                        Ok(HsmRequest::Encrypt {
+                            key_id,
+                            key_version,
+                            plaintext,
+                        }) => {
                             if key_id != "master_key" {
-                                HsmResponse::Error { code: 404, message: format!("Unknown key id: {key_id}") }
+                                HsmResponse::Error {
+                                    code: 404,
+                                    message: format!("Unknown key id: {key_id}"),
+                                }
                             } else {
                                 let master_key = {
                                     let guard = state_clone.read().await;
@@ -157,7 +187,9 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
                                             Err(err) => {
                                                 return HsmResponse::Error {
                                                     code: 500,
-                                                    message: format!("Failed to initialize AES-GCM: {err}"),
+                                                    message: format!(
+                                                        "Failed to initialize AES-GCM: {err}"
+                                                    ),
                                                 };
                                             }
                                         };
@@ -174,14 +206,23 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
                                     }
                                     None => HsmResponse::Error {
                                         code: 403,
-                                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                                        message:
+                                            "vHSM is locked. Master key must be initialized first."
+                                                .to_string(),
                                     },
                                 }
                             }
                         }
-                        Ok(HsmRequest::Decrypt { key_id, key_version, ciphertext }) => {
+                        Ok(HsmRequest::Decrypt {
+                            key_id,
+                            key_version,
+                            ciphertext,
+                        }) => {
                             if key_id != "master_key" {
-                                HsmResponse::Error { code: 404, message: format!("Unknown key id: {key_id}") }
+                                HsmResponse::Error {
+                                    code: 404,
+                                    message: format!("Unknown key id: {key_id}"),
+                                }
                             } else {
                                 let master_key = {
                                     let guard = state_clone.read().await;
@@ -195,7 +236,9 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
                                             Err(err) => {
                                                 return HsmResponse::Error {
                                                     code: 500,
-                                                    message: format!("Failed to initialize AES-GCM: {err}"),
+                                                    message: format!(
+                                                        "Failed to initialize AES-GCM: {err}"
+                                                    ),
                                                 };
                                             }
                                         };
@@ -213,7 +256,9 @@ async fn run_unix_listener(state: Arc<RwLock<VhsmState>>) -> Result<(), Box<dyn 
                                     }
                                     None => HsmResponse::Error {
                                         code: 403,
-                                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                                        message:
+                                            "vHSM is locked. Master key must be initialized first."
+                                                .to_string(),
                                     },
                                 }
                             }

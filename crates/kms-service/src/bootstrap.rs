@@ -107,7 +107,8 @@ pub fn recover_storage_key_from_ceremony(
         )));
     }
 
-    let selected_secret_shares: Vec<kms_core::crypto::sss::SecretShare> = selected_shares[..manifest.threshold as usize]
+    let selected_secret_shares: Vec<kms_core::crypto::sss::SecretShare> = selected_shares
+        [..manifest.threshold as usize]
         .iter()
         .map(|(index, value)| kms_core::crypto::sss::SecretShare {
             index: *index,
@@ -168,7 +169,8 @@ pub fn recover_storage_key_from_shares(
         .map(|(i, s)| ((i as u8) + 1, s.clone()))
         .collect();
 
-    let selected_secret_shares: Vec<kms_core::crypto::sss::SecretShare> = share_tuples[..manifest.threshold as usize]
+    let selected_secret_shares: Vec<kms_core::crypto::sss::SecretShare> = share_tuples
+        [..manifest.threshold as usize]
         .iter()
         .map(|(index, value)| kms_core::crypto::sss::SecretShare {
             index: *index,

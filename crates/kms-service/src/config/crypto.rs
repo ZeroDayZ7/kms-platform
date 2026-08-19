@@ -1,4 +1,3 @@
-// src/config/crypto.rs
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -88,17 +87,12 @@ impl<'de> Deserialize<'de> for GracePeriodMinutes {
 
 // --- GŁÓWNA STRUKTURA KONFIGURACJI KMS Z WERSJONOWANIEM ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum MasterKeyProvider {
+    #[default]
     Local,
     Hsm,
-}
-
-impl Default for MasterKeyProvider {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -153,7 +147,10 @@ mod tests {
             provider: MasterKeyProvider::Hsm,
             hsm_socket_path: Some(socket.to_string_lossy().to_string()),
             current_master_key_version: 1,
-            master_keys: HashMap::from([(1, MasterKeyB64("MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=".to_string()))]),
+            master_keys: HashMap::from([(
+                1,
+                MasterKeyB64("MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=".to_string()),
+            )]),
             default_key_ttl_days: KeyTtlDays(30),
             grace_period_minutes: GracePeriodMinutes(10),
             enable_http_rewrap: false,

@@ -10,7 +10,11 @@ pub struct SecretShare {
     pub value: String,
 }
 
-pub fn split_secret(secret: &[u8], threshold: u8, shares_count: u8) -> Result<Vec<SecretShare>, KmsError> {
+pub fn split_secret(
+    secret: &[u8],
+    threshold: u8,
+    shares_count: u8,
+) -> Result<Vec<SecretShare>, KmsError> {
     if secret.len() != KEY_SIZE {
         bail!("Secret length must be exactly {KEY_SIZE} bytes");
     }
@@ -52,8 +56,12 @@ pub fn combine_shares(shares: &[SecretShare]) -> Result<Vec<u8>, KmsError> {
     }
 
     let share_strings: Vec<String> = shares.iter().map(|share| share.value.clone()).collect();
-    let recovered_bytes = unlock(&share_strings)
-        .with_context(|| format!("Failed to reconstruct secret from {} shares", share_strings.len()))?;
+    let recovered_bytes = unlock(&share_strings).with_context(|| {
+        format!(
+            "Failed to reconstruct secret from {} shares",
+            share_strings.len()
+        )
+    })?;
 
     if recovered_bytes.len() != KEY_SIZE {
         bail!("Reconstructed key has invalid size");

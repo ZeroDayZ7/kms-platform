@@ -9,8 +9,10 @@ use crate::{
     hsm::protocol::{HsmRequest, HsmResponse},
 };
 
+#[cfg(unix)]
 const HSM_SOCKET_DEFAULT_PATH: &str = "/run/vhsm/vhsm.sock";
 
+#[cfg(any(unix, test))]
 fn framed_message(payload: &[u8]) -> Result<Vec<u8>, AppError> {
     let len = payload.len() as u32;
     let mut frame = Vec::with_capacity(4 + payload.len());
@@ -22,9 +24,10 @@ fn framed_message(payload: &[u8]) -> Result<Vec<u8>, AppError> {
 #[cfg(unix)]
 async fn read_frame(stream: &mut UnixStream) -> AppResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await.map_err(|err| {
-        AppError::RuntimeError(format!("Failed to read HSM frame length: {err}"))
-    })?;
+    stream
+        .read_exact(&mut len_buf)
+        .await
+        .map_err(|err| AppError::RuntimeError(format!("Failed to read HSM frame length: {err}")))?;
 
     let len = u32::from_be_bytes(len_buf) as usize;
     let mut payload = vec![0u8; len];
@@ -38,7 +41,11 @@ async fn read_frame(stream: &mut UnixStream) -> AppResult<Vec<u8>> {
 #[cfg(unix)]
 pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> AppResult<HsmResponse> {
     let socket = socket_path.trim();
-    let path = if socket.is_empty() { HSM_SOCKET_DEFAULT_PATH } else { socket };
+    let path = if socket.is_empty() {
+        HSM_SOCKET_DEFAULT_PATH
+    } else {
+        socket
+    };
 
     let mut stream = UnixStream::connect(path).await.map_err(|err| {
         AppError::RuntimeError(format!("Failed to connect to HSM socket {path}: {err}"))
@@ -52,12 +59,13 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> AppResult<
     })?;
 
     let response_bytes = read_frame(&mut stream).await?;
-    let response: HsmResponse = serde_json::from_slice(&response_bytes).map_err(AppError::SerializationError)?;
+    let response: HsmResponse =
+        serde_json::from_slice(&response_bytes).map_err(AppError::SerializationError)?;
 
     match response {
-        HsmResponse::Error { code, message } => {
-            Err(AppError::CryptoError(format!("HSM returned error {code}: {message}")))
-        }
+        HsmResponse::Error { code, message } => Err(AppError::CryptoError(format!(
+            "HSM returned error {code}: {message}"
+        ))),
         _ => Ok(response),
     }
 }
