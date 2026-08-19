@@ -4,6 +4,7 @@ mod storage;
 
 use anyhow::{bail, Context, Result};
 use clap::Parser;
+use dialoguer::Password;
 use std::fs;
 use std::path::PathBuf;
 use zeroize::Zeroizing;
@@ -64,6 +65,73 @@ fn handle_generate(shares: u8, threshold: u8, output_dir: PathBuf) -> Result<()>
         output_dir.join("ceremony_manifest.json").display()
     );
 
+    Ok(())
+}
+
+async fn handle_interactive_ceremony(
+    socket_path: String,
+    shares_count: u8,
+    threshold: u8,
+    output_dir: PathBuf,
+) -> Result<()> {
+    if shares_count == 0 || threshold == 0 {
+        bail!("Shares and threshold must be greater than zero");
+    }
+    if threshold > shares_count {
+        bail!("Threshold cannot exceed total shares");
+    }
+
+    println!("[INFO] Łączenie z vHSM na {} w celu przeprowadzenia wewnętrznej ceremonii...", socket_path);
+
+    let request = HsmRequest::GenerateCeremony {
+        threshold,
+        total_shares: shares_count,
+    };
+
+    let response = send_hsm_request(&socket_path, &request)
+        .await
+        .context("Nie udało się połączyć z vHSM daemonem")?;
+
+    let raw_shares = match response {
+        HsmResponse::CeremonyGenerated { shares } => shares,
+        HsmResponse::Error { code, message } => bail!("Błąd HSM [{code}]: {message}"),
+        _ => bail!("Otrzymano nieoczekiwaną odpowiedź z vHSM"),
+    };
+
+    fs::create_dir_all(&output_dir)?;
+    let share_dir = output_dir.join("shares");
+    fs::create_dir_all(&share_dir)?;
+
+    println!("\n[CEREMONY] vHSM wygenerował klucz główny w bezpiecznej pamięci!");
+    println!(
+        "[CEREMONY] Teraz nastąpi iteracja po {} oficerach w celu zabezpieczenia udziałów.\n",
+        raw_shares.len()
+    );
+
+    for (index, hex_val) in raw_shares {
+        println!("--------------------------------------------------");
+        println!("Oficerie nr {index}, podejdź do terminala.");
+
+        let password = Password::new()
+            .with_prompt(format!("Podaj hasło/PIN dla Oficera nr {index}"))
+            .interact()?;
+
+        let confirm = Password::new()
+            .with_prompt("Potwierdź hasło")
+            .interact()?;
+
+        if password != confirm {
+            bail!("Hasła się nie zgadzają! Przerwano ceremonię ze względów bezpieczeństwa.");
+        }
+
+        let file_path = write_share_file(&share_dir, index, threshold, shares_count, hex_val)?;
+        println!(
+            "[OK] Udział nr {index} został zaszyfrowany i zapisany w {}",
+            file_path.display()
+        );
+    }
+
+    println!("\n[SUCCESS] Ceremonia zakończona pomyślnie! Master Key w vHSM jest aktywny.");
     Ok(())
 }
 
@@ -134,8 +202,13 @@ async fn main() -> Result<()> {
         } => {
             handle_recover(shares_dir, output_key)?;
         }
-        Commands::Interactive { output_dir } => {
-            handle_generate(5, 3, output_dir)?;
+        Commands::Interactive {
+            socket_path,
+            shares,
+            threshold,
+            output_dir,
+        } => {
+            handle_interactive_ceremony(socket_path, shares, threshold, output_dir).await?;
         }
         Commands::InitMasterKey {
             socket_path,
@@ -151,7 +224,7 @@ async fn main() -> Result<()> {
             };
 
             match send_hsm_request(&socket_path, &request).await {
-                Ok(HsmResponse::Initialized) => {
+                Ok(HsmResponse::MasterKeyInitialized) => {
                     println!("✅ Klucz główny vHSM został pomyślnie załadowany.")
                 }
                 Ok(HsmResponse::Error { code, message }) => {

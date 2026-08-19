@@ -77,7 +77,7 @@ services:
     <<: *common-settings
     build:
       context: .
-      dockerfile: crates/kms-service/Dockerfile
+      dockerfile: Dockerfile
       target: runtime
     container_name: vhsm_daemon
     entrypoint: ["/app/vhsm-daemon"]
@@ -93,7 +93,7 @@ services:
     <<: *common-settings
     build:
       context: .
-      dockerfile: crates/kms-service/Dockerfile
+      dockerfile: Dockerfile
     container_name: kms_service
     ports:
       - "8081:8080"
@@ -124,7 +124,7 @@ services:
     <<: *common-settings
     build:
       context: .
-      dockerfile: crates/kms-service/Dockerfile
+      dockerfile: Dockerfile
     container_name: kms_ceremony_cli
     profiles:
       - tools

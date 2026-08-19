@@ -1,9 +1,15 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum HsmRequest {
     Ping,
     Status,
+    // Nowe żądanie: demon generuje klucz i zwraca udziały
+    GenerateCeremony {
+        threshold: u8,
+        total_shares: u8,
+    },
+    // Stare InitMasterKey zostawiamy np. do odzyskiwania
     InitMasterKey {
         threshold: u8,
         shares: Vec<String>,
@@ -20,14 +26,18 @@ pub enum HsmRequest {
     },
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum HsmResponse {
     Pong,
     StatusInfo {
         initialized: bool,
         active_key_version: u32,
     },
-    Initialized,
+    // Odpowiedź z udziałami wygenerowanymi wewnątrz HSM
+    CeremonyGenerated {
+        shares: Vec<(u8, String)>, // (index, hex_value)
+    },
+    MasterKeyInitialized,
     Encrypted {
         ciphertext: Vec<u8>,
     },

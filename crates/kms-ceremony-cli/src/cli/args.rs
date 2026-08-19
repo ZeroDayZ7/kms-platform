@@ -42,9 +42,23 @@ pub enum Commands {
         output_key: PathBuf,
     },
 
-    /// Run the step-by-step interactive key ceremony prompting at the terminal.
+    /// Run the step-by-step interactive key ceremony prompting at the terminal with vHSM daemon.
     Interactive {
-        #[arg(short = 'o', long, default_value = "./out")]
+        #[arg(
+            short,
+            long,
+            help = "Ścieżka do gniazda Unix vHSM",
+            default_value = "/tmp/vhsm.sock"
+        )]
+        socket_path: String,
+
+        #[arg(short = 's', long, default_value_t = 5, help = "Całkowita liczba udziałów")]
+        shares: u8,
+
+        #[arg(short = 't', long, default_value_t = 3, help = "Próg wymaganych udziałów (K)")]
+        threshold: u8,
+
+        #[arg(short = 'o', long, default_value = "./out", help = "Katalog wyjściowy na pliki udziałów")]
         output_dir: PathBuf,
     },
 

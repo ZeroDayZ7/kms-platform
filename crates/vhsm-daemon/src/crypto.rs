@@ -4,7 +4,21 @@ use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
 };
 #[cfg(unix)]
-use kms_core::crypto::sss::{combine_shares, SecretShare};
+use kms_core::crypto::sss::{combine_shares, split_shares, SecretShare};
+
+#[cfg(unix)]
+pub fn generate_and_split_master_key(
+    total: u8,
+    threshold: u8,
+) -> Result<(Vec<u8>, Vec<(u8, String)>), String> {
+    let master_key = kms_core::crypto::keys::generate_master_key();
+    let raw_bytes = master_key.as_bytes().to_vec();
+
+    let shares = split_shares(&raw_bytes, total, threshold)
+        .map_err(|e| format!("Failed to split master key: {e}"))?;
+
+    Ok((raw_bytes, shares))
+}
 
 #[cfg(unix)]
 pub fn reconstruct_master_key(shares: &[Vec<u8>]) -> Result<Vec<u8>, String> {
@@ -44,7 +58,6 @@ pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
         .encrypt(nonce, plaintext)
         .map_err(|err| format!("Encryption failed: {err}"))?;
 
-    // Łączymy nonce (12 B) + ciphertext na potrzeby poprawnej dekrypcji
     let mut payload = nonce_bytes.to_vec();
     payload.append(&mut ciphertext);
     Ok(payload)
