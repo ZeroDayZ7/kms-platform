@@ -2,14 +2,15 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Debug Rust Server",
+      "name": "Debug KMS Service",
       "type": "lldb",
       "request": "launch",
       "cargo": {
-        "args": ["build", "--bin=kms-service"]
+        "args": ["build", "-p", "kms-service", "--bin=kms-service"]
       },
       "args": ["serve"],
-      "cwd": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}/crates/kms-service",
+      "envFile": "${workspaceFolder}/crates/kms-service/.env",
       "stopOnEntry": false
     }
   ]

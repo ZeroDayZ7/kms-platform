@@ -4,7 +4,7 @@
     {
       "label": "cargo pipeline (fmt -> check -> clippy)",
       "type": "shell",
-      "command": "cargo fmt && cargo check && cargo clippy --all-targets --all-features -- -D warnings",
+      "command": "cargo fmt --all && cargo check --workspace --all-targets && cargo clippy --workspace --all-targets --all-features -- -D warnings",
       "group": {
         "kind": "build",
         "isDefault": true
@@ -19,11 +19,8 @@
     {
       "label": "cargo check",
       "type": "shell",
-      "command": "cargo check",
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
+      "command": "cargo check --workspace",
+      "group": "build",
       "presentation": {
         "reveal": "always",
         "panel": "dedicated",
@@ -34,7 +31,7 @@
     {
       "label": "cargo clippy (strict)",
       "type": "shell",
-      "command": "cargo clippy --all-targets --all-features -- -D warnings",
+      "command": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
       "group": "build",
       "presentation": {
         "reveal": "always",
@@ -46,14 +43,14 @@
     {
       "label": "cargo build",
       "type": "shell",
-      "command": "cargo build",
+      "command": "cargo build --workspace",
       "group": "build",
       "problemMatcher": ["$codelldb-rustc"]
     },
     {
       "label": "cargo test",
       "type": "shell",
-      "command": "cargo test",
+      "command": "cargo test --workspace",
       "group": {
         "kind": "test",
         "isDefault": true
@@ -68,7 +65,7 @@
     {
       "label": "cargo test (no capture)",
       "type": "shell",
-      "command": "cargo test -- --nocapture",
+      "command": "cargo test --workspace -- --nocapture",
       "group": "test",
       "presentation": {
         "reveal": "always",
@@ -80,7 +77,7 @@
     {
       "label": "cargo test (single test)",
       "type": "shell",
-      "command": "cargo test ${input:testName} -- --nocapture",
+      "command": "cargo test --workspace ${input:testName} -- --nocapture",
       "group": "test",
       "presentation": {
         "reveal": "always",

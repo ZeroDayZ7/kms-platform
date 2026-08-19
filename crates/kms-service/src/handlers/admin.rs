@@ -1,5 +1,6 @@
 use axum::{Json, extract::State};
 use serde::Deserialize;
+use tracing::info;
 
 use crate::{
     application::use_cases::rewrap_keys::{RewrapKeysInput, rewrap_keys},
@@ -41,9 +42,15 @@ pub async fn unlock_handler(
 
 pub async fn lock_handler(
     State(state): State<AppState>,
-    AuthenticatedService(_caller): AuthenticatedService,
+    AuthenticatedService(caller): AuthenticatedService,
 ) -> AppResult<Json<serde_json::Value>> {
     state.clear_storage_key().await;
+
+    info!(
+        "🔒 [KMS-LOCK] Klucz szyfrujący został wyczyszczony z pamięci przez serwis '{}'",
+        caller.0
+    );
+
     Ok(Json(serde_json::json!({ "status": "LOCKED" })))
 }
 

@@ -11,6 +11,9 @@ cargo run
 cargo run -- serve
 cargo build --release
 
+./scripts/unlock.sh
+./scripts/lock.sh
+
 cargo fmt --all
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features
