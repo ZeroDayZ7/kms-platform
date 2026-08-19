@@ -4478,12 +4478,14 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "hex",
+ "kms-core",
  "rand 0.8.7",
  "serde",
  "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

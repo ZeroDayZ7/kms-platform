@@ -152,7 +152,13 @@ impl KmsCryptoServiceTrait for KmsCryptoService {
                     AppError::RuntimeError(format!("Failed to create HSM runtime: {err}"))
                 })?
                 .block_on(async {
-                    encrypt_via_hsm(&self.hsm_socket_path, "master_key", private_key).await
+                    encrypt_via_hsm(
+                        &self.hsm_socket_path,
+                        "master_key",
+                        Some(self.current_version as u32),
+                        private_key,
+                    )
+                    .await
                 })?;
 
             return Ok(EncryptedPrivateKey {
@@ -191,7 +197,13 @@ impl KmsCryptoServiceTrait for KmsCryptoService {
                     AppError::RuntimeError(format!("Failed to create HSM runtime: {err}"))
                 })?
                 .block_on(async {
-                    decrypt_via_hsm(&self.hsm_socket_path, "master_key", &encrypted.ciphertext).await
+                    decrypt_via_hsm(
+                        &self.hsm_socket_path,
+                        "master_key",
+                        Some(self.current_version as u32),
+                        &encrypted.ciphertext,
+                    )
+                    .await
                 });
         }
 

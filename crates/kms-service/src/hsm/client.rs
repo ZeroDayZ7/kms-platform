@@ -1,7 +1,8 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
 #[cfg(unix)]
-use tokio::net::UnixStream;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::UnixStream,
+};
 
 use crate::{
     errors::{AppError, AppResult},
@@ -37,33 +38,26 @@ async fn read_frame(stream: &mut UnixStream) -> AppResult<Vec<u8>> {
 #[cfg(unix)]
 pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> AppResult<HsmResponse> {
     let socket = socket_path.trim();
-    let path = if socket.is_empty() {
-        HSM_SOCKET_DEFAULT_PATH
-    } else {
-        socket
-    };
+    let path = if socket.is_empty() { HSM_SOCKET_DEFAULT_PATH } else { socket };
 
     let mut stream = UnixStream::connect(path).await.map_err(|err| {
-        AppError::RuntimeError(format!(
-            "Failed to connect to HSM socket {}: {err}",
-            path
-        ))
+        AppError::RuntimeError(format!("Failed to connect to HSM socket {path}: {err}"))
     })?;
 
     let payload = serde_json::to_vec(req).map_err(AppError::SerializationError)?;
     let frame = framed_message(&payload)?;
 
     stream.write_all(&frame).await.map_err(|err| {
-        AppError::RuntimeError(format!("Failed to write HSM request to {}: {err}", path))
+        AppError::RuntimeError(format!("Failed to write HSM request to {path}: {err}"))
     })?;
 
     let response_bytes = read_frame(&mut stream).await?;
     let response: HsmResponse = serde_json::from_slice(&response_bytes).map_err(AppError::SerializationError)?;
 
     match response {
-        HsmResponse::Error { code, message } => Err(AppError::CryptoError(format!(
-            "HSM returned error {code}: {message}"
-        ))),
+        HsmResponse::Error { code, message } => {
+            Err(AppError::CryptoError(format!("HSM returned error {code}: {message}")))
+        }
         _ => Ok(response),
     }
 }
@@ -71,14 +65,19 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> AppResult<
 #[cfg(not(unix))]
 pub async fn send_hsm_request(_socket_path: &str, _req: &HsmRequest) -> AppResult<HsmResponse> {
     Err(AppError::ConfigError(
-        "Unix domain sockets are not available on this platform; HSM provider requires Unix sockets."
-            .to_string(),
+        "Unix domain sockets are not available on this platform; HSM provider requires Unix sockets.".to_string(),
     ))
 }
 
-pub async fn encrypt_via_hsm(socket_path: &str, key_id: &str, plaintext: &[u8]) -> AppResult<Vec<u8>> {
+pub async fn encrypt_via_hsm(
+    socket_path: &str,
+    key_id: &str,
+    key_version: Option<u32>,
+    plaintext: &[u8],
+) -> AppResult<Vec<u8>> {
     let req = HsmRequest::Encrypt {
         key_id: key_id.to_string(),
+        key_version,
         plaintext: plaintext.to_vec(),
     };
 
@@ -93,9 +92,15 @@ pub async fn encrypt_via_hsm(socket_path: &str, key_id: &str, plaintext: &[u8]) 
     }
 }
 
-pub async fn decrypt_via_hsm(socket_path: &str, key_id: &str, ciphertext: &[u8]) -> AppResult<Vec<u8>> {
+pub async fn decrypt_via_hsm(
+    socket_path: &str,
+    key_id: &str,
+    key_version: Option<u32>,
+    ciphertext: &[u8],
+) -> AppResult<Vec<u8>> {
     let req = HsmRequest::Decrypt {
         key_id: key_id.to_string(),
+        key_version,
         ciphertext: ciphertext.to_vec(),
     };
 

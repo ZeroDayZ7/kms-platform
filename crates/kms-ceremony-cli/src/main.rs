@@ -91,7 +91,18 @@ fn handle_recover(shares_dir: PathBuf, output_key: PathBuf) -> Result<()> {
         .map(|record| (record.index, record.share_hex.clone()))
         .collect();
 
-    let recovered_key = combine_shares(&shares)?;
+    let secret_shares: Vec<kms_core::crypto::sss::SecretShare> = shares
+        .iter()
+        .map(|(index, value)| kms_core::crypto::sss::SecretShare {
+            index: *index,
+            value: value.clone(),
+        })
+        .collect();
+
+    let recovered_bytes = combine_shares(&secret_shares)?;
+    let mut key_bytes = [0u8; 32];
+    key_bytes.copy_from_slice(&recovered_bytes);
+    let recovered_key = crate::crypto::keys::SecretKey::from_bytes(key_bytes);
     write_master_key_file(&output_key, &recovered_key)?;
 
     println!("[OK] Reconstructed master key from {} shares", sorted.len());

@@ -107,12 +107,23 @@ pub fn recover_storage_key_from_ceremony(
         )));
     }
 
-    let master_key =
-        combine_shares(&selected_shares[..manifest.threshold as usize]).map_err(|err| {
-            AppError::CryptoError(format!(
-                "Failed to reconstruct master key from shares: {err}"
-            ))
-        })?;
+    let selected_secret_shares: Vec<kms_core::crypto::sss::SecretShare> = selected_shares[..manifest.threshold as usize]
+        .iter()
+        .map(|(index, value)| kms_core::crypto::sss::SecretShare {
+            index: *index,
+            value: value.clone(),
+        })
+        .collect();
+
+    let recovered_bytes = combine_shares(&selected_secret_shares).map_err(|err| {
+        AppError::CryptoError(format!(
+            "Failed to reconstruct master key from shares: {err}"
+        ))
+    })?;
+
+    let mut master_key_bytes = [0u8; 32];
+    master_key_bytes.copy_from_slice(&recovered_bytes);
+    let master_key = CoreSecretKey::from_bytes(master_key_bytes);
 
     let container = EncryptedContainer {
         nonce: manifest.encrypted_storage_key_nonce.clone(),
@@ -157,12 +168,23 @@ pub fn recover_storage_key_from_shares(
         .map(|(i, s)| ((i as u8) + 1, s.clone()))
         .collect();
 
-    let master_key =
-        combine_shares(&share_tuples[..manifest.threshold as usize]).map_err(|err| {
-            AppError::CryptoError(format!(
-                "Failed to reconstruct master key from shares: {err}"
-            ))
-        })?;
+    let selected_secret_shares: Vec<kms_core::crypto::sss::SecretShare> = share_tuples[..manifest.threshold as usize]
+        .iter()
+        .map(|(index, value)| kms_core::crypto::sss::SecretShare {
+            index: *index,
+            value: value.clone(),
+        })
+        .collect();
+
+    let recovered_bytes = combine_shares(&selected_secret_shares).map_err(|err| {
+        AppError::CryptoError(format!(
+            "Failed to reconstruct master key from shares: {err}"
+        ))
+    })?;
+
+    let mut master_key_bytes = [0u8; 32];
+    master_key_bytes.copy_from_slice(&recovered_bytes);
+    let master_key = CoreSecretKey::from_bytes(master_key_bytes);
 
     let container = EncryptedContainer {
         nonce: manifest.encrypted_storage_key_nonce.clone(),
