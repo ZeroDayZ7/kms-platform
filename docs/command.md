@@ -11,6 +11,7 @@ cargo run
 cargo run -- serve
 cargo build --release
 
+cargo fmt --all
 cargo fmt --all -- --check
 cargo check --workspace --all-targets --all-features
 cargo clippy --workspace --all-targets --all-features -- -D warnings

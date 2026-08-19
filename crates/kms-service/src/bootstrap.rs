@@ -1,9 +1,9 @@
+use kms_core::ceremony::{CeremonyManifest, ShareFileRecord, compute_share_sha256};
+use kms_core::crypto::aes::{EncryptedContainer, decrypt_storage_key};
+use kms_core::crypto::keys::SecretKey as CoreSecretKey;
+use kms_core::crypto::sss::combine_shares;
 use std::{fs, path::Path, sync::Arc};
 use tracing::{info, warn};
-use kms_core::ceremony::{CeremonyManifest, ShareFileRecord, compute_share_sha256};
-use kms_core::crypto::sss::combine_shares;
-use kms_core::crypto::aes::{decrypt_storage_key, EncryptedContainer};
-use kms_core::crypto::keys::SecretKey as CoreSecretKey;
 
 use crate::{
     config::acl::AclSettings,
@@ -107,20 +107,20 @@ pub fn recover_storage_key_from_ceremony(
         )));
     }
 
-    let master_key = combine_shares(&selected_shares[..manifest.threshold as usize]).map_err(|err| {
-        AppError::CryptoError(format!(
-            "Failed to reconstruct master key from shares: {err}"
-        ))
-    })?;
+    let master_key =
+        combine_shares(&selected_shares[..manifest.threshold as usize]).map_err(|err| {
+            AppError::CryptoError(format!(
+                "Failed to reconstruct master key from shares: {err}"
+            ))
+        })?;
 
     let container = EncryptedContainer {
         nonce: manifest.encrypted_storage_key_nonce.clone(),
         ciphertext: manifest.encrypted_storage_key_ciphertext.clone(),
     };
 
-    let storage_key = decrypt_storage_key(&master_key, &container).map_err(|err| {
-        AppError::CryptoError(format!("Failed to decrypt storage key: {err}"))
-    })?;
+    let storage_key = decrypt_storage_key(&master_key, &container)
+        .map_err(|err| AppError::CryptoError(format!("Failed to decrypt storage key: {err}")))?;
 
     Ok(storage_key)
 }
@@ -157,20 +157,20 @@ pub fn recover_storage_key_from_shares(
         .map(|(i, s)| ((i as u8) + 1, s.clone()))
         .collect();
 
-    let master_key = combine_shares(&share_tuples[..manifest.threshold as usize]).map_err(|err| {
-        AppError::CryptoError(format!(
-            "Failed to reconstruct master key from shares: {err}"
-        ))
-    })?;
+    let master_key =
+        combine_shares(&share_tuples[..manifest.threshold as usize]).map_err(|err| {
+            AppError::CryptoError(format!(
+                "Failed to reconstruct master key from shares: {err}"
+            ))
+        })?;
 
     let container = EncryptedContainer {
         nonce: manifest.encrypted_storage_key_nonce.clone(),
         ciphertext: manifest.encrypted_storage_key_ciphertext.clone(),
     };
 
-    let storage_key = decrypt_storage_key(&master_key, &container).map_err(|err| {
-        AppError::CryptoError(format!("Failed to decrypt storage key: {err}"))
-    })?;
+    let storage_key = decrypt_storage_key(&master_key, &container)
+        .map_err(|err| AppError::CryptoError(format!("Failed to decrypt storage key: {err}")))?;
 
     Ok(storage_key)
 }
@@ -251,7 +251,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use aes_gcm::{Aes256Gcm, Nonce, KeyInit, aead::Aead};
+    use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::Aead};
     use chrono::Utc;
     use tempfile::tempdir;
     use uuid::Uuid;

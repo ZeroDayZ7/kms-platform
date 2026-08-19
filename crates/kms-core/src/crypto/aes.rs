@@ -1,8 +1,11 @@
-use crate::crypto::keys::{SecretKey, KEY_SIZE};
-use aes_gcm::{Aes256Gcm, Nonce, aead::{Aead, KeyInit}};
-use anyhow::{anyhow, Result};
-use zeroize::Zeroize;
+use crate::crypto::keys::{KEY_SIZE, SecretKey};
+use aes_gcm::{
+    Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
+};
+use anyhow::{Result, anyhow};
 use getrandom::getrandom;
+use zeroize::Zeroize;
 
 use serde::{Deserialize, Serialize};
 
@@ -35,11 +38,12 @@ pub fn decrypt_storage_key(
     master_key: &SecretKey,
     container: &EncryptedContainer,
 ) -> Result<SecretKey> {
-    let cipher = Aes256Gcm::new_from_slice(master_key.as_bytes())
-        .map_err(|e| anyhow!(e.to_string()))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(master_key.as_bytes()).map_err(|e| anyhow!(e.to_string()))?;
 
     let nonce_bytes = hex::decode(&container.nonce).map_err(|e| anyhow!(e.to_string()))?;
-    let ciphertext_bytes = hex::decode(&container.ciphertext).map_err(|e| anyhow!(e.to_string()))?;
+    let ciphertext_bytes =
+        hex::decode(&container.ciphertext).map_err(|e| anyhow!(e.to_string()))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let mut decrypted_bytes = cipher

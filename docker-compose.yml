@@ -29,7 +29,7 @@ services:
       MONGO_APP_DATABASE: ${DATABASE__NAME}
     volumes:
       - mongo_data:/data/db
-      - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+      - ./crates/kms-service/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
     healthcheck:
       <<: *common-healthcheck
       test:
@@ -72,18 +72,65 @@ services:
       test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-change_me}", "ping"]
   # endregion
 
+  # region VHSM DAEMON
+  vhsm-daemon:
+    <<: *common-settings
+    build:
+      context: .
+      dockerfile: crates/kms-service/Dockerfile
+      target: runtime
+    container_name: vhsm_daemon
+    entrypoint: ["/app/vhsm-daemon"]
+    volumes:
+      - vhsm_sockets:/run/vhsm
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD", "test", "-S", "/run/vhsm/vhsm.sock"]
+  # endregion
+
   # region KMS SERVICE (RUST)
-  # kms-service:
-  #   <<: *common-settings
-  #   build: .
-  #   container_name: kms_service
-  #   ports:
-  #     - "8081:8081"
-  #   depends_on:
-  #     mongodb:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
+  kms-service:
+    <<: *common-settings
+    build:
+      context: .
+      dockerfile: crates/kms-service/Dockerfile
+    container_name: kms_service
+    ports:
+      - "8081:8080"
+    environment:
+      - RUST_LOG=${RUST_LOG:-info,kms_service=debug}
+      - APP_SERVER__HOST=0.0.0.0
+      - APP_SERVER__PORT=8080
+      - APP_DATABASE__URI=mongodb://${DATABASE__USER}:${DATABASE__PASSWORD}@mongodb:27017/${DATABASE__NAME}?authSource=admin
+      - APP_REDIS__URL=redis://:${REDIS__PASSWORD:-change_me}@redis:6379/
+    volumes:
+      - ./crates/kms-service/config:/app/config:ro
+      - kms_ceremony_data:/app/ceremony:ro
+      - vhsm_sockets:/run/vhsm
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      vhsm-daemon:
+        condition: service_healthy
+    healthcheck:
+      <<: *common-healthcheck
+      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+  # endregion
+
+  # region KMS CEREMONY CLI (TOOLING)
+  kms-ceremony-cli:
+    <<: *common-settings
+    build:
+      context: .
+      dockerfile: crates/kms-service/Dockerfile
+    container_name: kms_ceremony_cli
+    profiles:
+      - tools
+    entrypoint: ["/app/kms-ceremony-cli"]
+    volumes:
+      - kms_ceremony_data:/app/ceremony
   # endregion
 # endregion
 
@@ -92,6 +139,10 @@ volumes:
   mongo_data:
     driver: local
   redis_data:
+    driver: local
+  kms_ceremony_data:
+    driver: local
+  vhsm_sockets:
     driver: local
 # endregion
 

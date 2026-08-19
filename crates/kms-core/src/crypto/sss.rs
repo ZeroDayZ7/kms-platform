@@ -1,6 +1,6 @@
-use crate::crypto::keys::{SecretKey, KEY_SIZE};
-use anyhow::{bail, Result};
-use ssss::{gen_shares, unlock, SsssConfig};
+use crate::crypto::keys::{KEY_SIZE, SecretKey};
+use anyhow::{Result, bail};
+use ssss::{SsssConfig, gen_shares, unlock};
 
 pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec<(u8, String)>> {
     if shares == 0 {

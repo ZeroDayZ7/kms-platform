@@ -37,13 +37,7 @@ fn handle_generate(shares: u8, threshold: u8, output_dir: PathBuf) -> Result<()>
 
     let mut share_paths = Vec::new();
     for (index, share_hex) in share_items.iter() {
-        let file_path = write_share_file(
-            &share_dir,
-            *index,
-            threshold,
-            shares,
-            share_hex.clone(),
-        )?;
+        let file_path = write_share_file(&share_dir, *index, threshold, shares, share_hex.clone())?;
         share_paths.push(file_path.file_name().unwrap().to_string_lossy().to_string());
     }
 
@@ -56,9 +50,15 @@ fn handle_generate(shares: u8, threshold: u8, output_dir: PathBuf) -> Result<()>
         encrypted_storage_key.ciphertext.clone(),
     )?;
 
-    println!("[OK] Generated master key, storage key, and SSS shares in {}", output_dir.display());
+    println!(
+        "[OK] Generated master key, storage key, and SSS shares in {}",
+        output_dir.display()
+    );
     println!("[OK] Share files created in {}", share_dir.display());
-    println!("[OK] Ceremony manifest written to {}", output_dir.join("ceremony_manifest.json").display());
+    println!(
+        "[OK] Ceremony manifest written to {}",
+        output_dir.join("ceremony_manifest.json").display()
+    );
 
     Ok(())
 }
@@ -80,8 +80,9 @@ fn handle_recover(shares_dir: PathBuf, output_key: PathBuf) -> Result<()> {
     let total_shares = sorted[0].total_shares;
     if sorted.len() < threshold as usize {
         bail!(
-            "Not enough shares to recover the secret: {} available, {} required", 
-            sorted.len(), threshold
+            "Not enough shares to recover the secret: {} available, {} required",
+            sorted.len(),
+            threshold
         );
     }
 
@@ -101,7 +102,7 @@ fn handle_recover(shares_dir: PathBuf, output_key: PathBuf) -> Result<()> {
 }
 
 fn interactive_walkthrough() -> Result<()> {
-    use dialoguer::{Input, Confirm};
+    use dialoguer::{Confirm, Input};
 
     let shares: u8 = Input::new()
         .with_prompt("Number of shares")
@@ -141,10 +142,17 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Some(Commands::Generate { shares, threshold, output_dir }) => {
+        Some(Commands::Generate {
+            shares,
+            threshold,
+            output_dir,
+        }) => {
             handle_generate(shares, threshold, output_dir)?;
         }
-        Some(Commands::Recover { shares_dir, output_key }) => {
+        Some(Commands::Recover {
+            shares_dir,
+            output_key,
+        }) => {
             handle_recover(shares_dir, output_key)?;
         }
         Some(Commands::Interactive { output_dir }) => {

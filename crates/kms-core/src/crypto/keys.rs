@@ -1,5 +1,5 @@
-use zeroize::{Zeroize, ZeroizeOnDrop};
 use getrandom::getrandom;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub const KEY_SIZE: usize = 32;
 
