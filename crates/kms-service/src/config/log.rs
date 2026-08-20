@@ -1,7 +1,7 @@
 // src/config/log.rs
 use serde::Deserialize;
 
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogLevel {
     Debug,
@@ -23,7 +23,16 @@ impl AsRef<str> for LogLevel {
     }
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum LogFormat {
+    Json,
+    Compact,
+    Pretty,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct LogConfig {
     pub level: LogLevel,
+    pub format: LogFormat,
 }

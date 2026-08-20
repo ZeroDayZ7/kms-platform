@@ -1,0 +1,20 @@
+# Rust compilation artifacts
+/target
+/out
+**/*.rs.bk
+
+# Git & Version Control
+.git
+.gitignore
+
+# Environment & Configs (jeśli nie chcesz ich w image)
+.env
+.env.*
+
+# Docker files
+Dockerfile
+docker-compose.yml
+
+# Dokumentacja i inne
+README.md
+docs/

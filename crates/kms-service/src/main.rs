@@ -1,11 +1,10 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use kms_service::application::use_cases::rewrap_keys::{RewrapKeysInput, rewrap_keys};
-use kms_service::bootstrap::{bootstrap_keys, recover_storage_key_from_ceremony};
+use kms_service::bootstrap::{bootstrap_keys, wait_for_vhsm_unsealed};
 use kms_service::config;
 use kms_service::server::{self, state::AppState};
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::{error, info};
 
@@ -19,13 +18,6 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Serve,
-    Bootstrap {
-        #[arg(long)]
-        manifest: PathBuf,
-        #[arg(long)]
-        shares_dir: PathBuf,
-    },
-    Lock,
     Rewrap {
         #[arg(long)]
         target_version: i32,
@@ -47,28 +39,29 @@ async fn main() {
 
 async fn run_command(cli: Cli) -> anyhow::Result<()> {
     let settings = Arc::new(config::load().context("Failed to load configuration")?);
-    server::logger::init_logging(settings.log.level);
+    server::logger::init_logging(&settings.log);
     info!("⚙️ Configuration loaded");
 
     match cli.command {
         Command::Serve => {
+            // 1. Sprawdzamy gotowość HSM przed podłączeniem do bazy danych i bootstrapem
+            wait_for_vhsm_unsealed(&settings.crypto.hsm_socket_path).await?;
+
+            // 2. Inicjalizacja połączenia z bazy MongoDB / Redis
             let state = AppState::new(settings.clone())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;
 
             info!("🧠 Application state initialized");
 
-            if state.is_unlocked() {
-                bootstrap_keys(
-                    &settings.acl,
-                    state.key_repo.clone(),
-                    state.crypto_service.clone(),
-                )
-                .await
-                .context("Krytyczny błąd bootstrapu kluczy KMS")?;
-            } else {
-                info!("KMS is locked; skipping automatic bootstrap of service keys.");
-            }
+            // 3. Generowanie i zaszyfrowanie brakujących kluczy w MongoDB
+            bootstrap_keys(
+                &settings.acl,
+                state.key_repo.clone(),
+                state.crypto_service.clone(),
+            )
+            .await
+            .context("Krytyczny błąd bootstrapu kluczy KMS")?;
 
             let addr: SocketAddr = format!("{}:{}", settings.server.host, settings.server.port)
                 .parse()
@@ -82,40 +75,12 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
 
             info!("✅ Server shutdown complete");
         }
-        Command::Bootstrap {
-            manifest,
-            shares_dir,
-        } => {
-            let state = AppState::new(settings.clone())
-                .await
-                .context("Krytyczny błąd inicjalizacji AppState")?;
-
-            let recovered_storage_key = recover_storage_key_from_ceremony(&manifest, &shares_dir)
-                .context(
-                "Failed to recover the storage key from ceremony manifest and shares",
-            )?;
-
-            let state = state;
-            state.set_storage_key(recovered_storage_key).await;
-
-            info!(
-                "✅ Ceremony bootstrap succeeded. Storage key recovered in memory and marked as READY/UNLOCKED."
-            );
-
-            bootstrap_keys(
-                &settings.acl,
-                state.key_repo.clone(),
-                state.crypto_service.clone(),
-            )
-            .await
-            .context("Krytyczny błąd bootstrapu kluczy KMS")?;
-
-            info!("✅ Bootstrap completed successfully");
-        }
         Command::Rewrap {
             target_version,
             batch_size,
         } => {
+            wait_for_vhsm_unsealed(&settings.crypto.hsm_socket_path).await?;
+
             let state = AppState::new(settings.clone())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;
@@ -135,14 +100,6 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                 "✅ Rewrapped {} keys to master version {}",
                 count, target_version
             );
-        }
-        Command::Lock => {
-            let state = AppState::new(settings.clone())
-                .await
-                .context("Krytyczny błąd inicjalizacji AppState")?;
-
-            state.clear_storage_key().await;
-            info!("🔒 KMS locked: master key cleared from memory.");
         }
     }
 

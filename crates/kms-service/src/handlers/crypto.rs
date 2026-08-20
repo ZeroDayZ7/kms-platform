@@ -55,7 +55,11 @@ pub async fn encrypt_handler(
     State(state): State<AppState>,
     Json(payload): Json<EncryptRequest>,
 ) -> AppResult<Json<EncryptResponse>> {
-    let encrypted = state.use_cases.encrypt_data.execute(&payload.plaintext)?;
+    let encrypted = state
+        .use_cases
+        .encrypt_data
+        .execute(&payload.plaintext)
+        .await?;
 
     Ok(Json(EncryptResponse {
         ciphertext: encrypted.ciphertext,
@@ -74,7 +78,11 @@ pub async fn decrypt_handler(
         master_key_version: payload.master_key_version,
     };
 
-    let decrypted = state.use_cases.decrypt_data.execute(&payload_struct)?;
+    let decrypted = state
+        .use_cases
+        .decrypt_data
+        .execute(&payload_struct)
+        .await?;
 
     Ok(Json(DecryptResponse {
         plaintext: decrypted,

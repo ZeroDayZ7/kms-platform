@@ -3,6 +3,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use kms_core::hsm::client::HsmClientError;
 use serde::Serialize;
 use std::borrow::Cow;
 use thiserror::Error;
@@ -27,6 +28,9 @@ pub enum AppError {
     #[error("Błąd usługi Redis")]
     RedisError(#[from] fred::error::Error),
 
+    #[error("Błąd komunikacji z HSM: {0}")]
+    HsmError(#[from] HsmClientError),
+
     #[error("Błąd timeout")]
     TimeoutError,
 
@@ -34,10 +38,11 @@ pub enum AppError {
     ConfigError(String),
 
     #[error("Błąd serializacji/deserializacji: {0}")]
-    SerializationError(#[from] serde_json::Error),
+    SerializationError(String),
 
     #[error("Błąd środowiska wykonawczego: {0}")]
     RuntimeError(String),
+
     #[error("Zasób w konflikcie: {0}")]
     Conflict(String),
 
@@ -46,6 +51,12 @@ pub enum AppError {
 
     #[error("Wystąpił nieoczekiwany błąd serwera: {0}")]
     Internal(String),
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(err: serde_json::Error) -> Self {
+        Self::SerializationError(err.to_string())
+    }
 }
 
 #[derive(Serialize)]
@@ -66,6 +77,7 @@ impl AppError {
             Self::CryptoError(_) => "CRYPTO_FAILURE",
             Self::DatabaseError(_) => "DATABASE_ERROR",
             Self::RedisError(_) => "CACHE_ERROR",
+            Self::HsmError(_) => "HSM_COMMUNICATION_ERROR",
             Self::TimeoutError => "TIMEOUT_ERROR",
             Self::ConfigError(_) => "CONFIG_INVALID",
             Self::SerializationError(_) => "SERIALIZATION_FAILED",
@@ -94,6 +106,10 @@ impl IntoResponse for AppError {
             Self::RedisError(err) => {
                 tracing::error!(target: "infra::redis", %err, "Redis Error");
                 StatusCode::INTERNAL_SERVER_ERROR
+            }
+            Self::HsmError(err) => {
+                tracing::error!(target: "infra::hsm", %err, "HSM Error");
+                StatusCode::BAD_GATEWAY
             }
             Self::SerializationError(err) => {
                 tracing::warn!(%err, "JSON Serialization failed");
@@ -128,6 +144,7 @@ impl IntoResponse for AppError {
                 | Self::ConfigError(d)
                 | Self::RuntimeError(d)
                 | Self::ExternalServiceError(d) => Some(d.clone()),
+                Self::HsmError(err) => Some(err.to_string()),
                 Self::Internal(d) => Some(d.clone()),
                 _ => None,
             },

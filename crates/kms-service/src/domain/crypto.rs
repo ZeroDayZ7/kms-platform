@@ -30,11 +30,12 @@ pub struct RawKeyPair {
     pub private_key_bytes: Vec<u8>,
 }
 
+#[async_trait::async_trait]
 pub trait KmsCryptoService: Send + Sync {
     fn generate_ed25519_keypair(&self) -> AppResult<RawKeyPair>;
     fn generate_x25519_keypair(&self) -> AppResult<RawKeyPair>;
     fn generate_symmetric_key(&self) -> AppResult<RawKeyPair>;
-    fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey>;
-    fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>>;
+    async fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey>;
+    async fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>>;
     fn current_master_key_version(&self) -> i32;
 }

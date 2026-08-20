@@ -1,6 +1,8 @@
-.PHONY: all fmt check clippy test docker-up docker-down
+.PHONY: all fmt check clippy test docker-up docker-down lock unlock run
 
 all: fmt check clippy test
+
+fcc: fmt check clippy
 
 fmt:
 	cargo fmt --all
@@ -19,3 +21,12 @@ docker-up:
 
 docker-down:
 	docker compose down -v
+
+lock:
+	bash crates/kms-service/scripts/lock.sh
+
+unlock:
+	bash crates/kms-service/scripts/unlock.sh
+
+run:
+	cargo run -p kms-service --bin kms-service -- serve

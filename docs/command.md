@@ -10,17 +10,29 @@ key_pairs
 cargo run
 cargo run -- serve
 cargo build --release
+cargo build --release -p vhsm-daemon
 
-cargo fmt --all
-cargo fmt --all -- --check
-cargo check --workspace --all-targets --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-targets --all-features
+# Buduje wszystkie serwisy produkcyjne (mongodb, redis, vhsm-daemon, kms-service)
 
-curl -X GET http://localhost:8080/status
+docker compose build
 
-cargo run -- generate -s 5 -t 3 -o ./out
-cargo run recover --shares-dir ./out/shares --output-key ./recovered.key
+# Buduje wszystkie serwisy łącznie z narzędziami CLI (kms-ceremony-cli)
 
-kms-ceremony-cli generate --shares 5 --threshold 3 --output-dir ./out
-kms-ceremony-cli recover --shares-dir ./out/shares --output-key ./recovered.key
+docker compose --profile tools build
+
+# Uruchamia główne usługi w tle (MongoDB, Redis, vHSM Daemon, KMS Service)
+
+docker compose up -d
+
+# Jeśli chcesz uruchomić również narzędzia (np. kms-ceremony-cli)
+
+docker compose --profile tools run --rm kms-ceremony-cli
+MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
+
+docker compose --profile tools up -d
+
+docker compose build vhsm-daemon
+docker compose up -d vhsm-daemon
+
+docker compose --profile tools build kms-ceremony-cli
+docker compose --profile tools run --rm kms-ceremony-cli

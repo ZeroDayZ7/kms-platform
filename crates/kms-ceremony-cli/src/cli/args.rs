@@ -2,44 +2,136 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Debug, Parser)]
-#[command(name = "kms-ceremony-cli")]
-#[command(about = "Offline KMS Key Ceremony CLI")]
-pub struct Cli {
+#[command(
+    name = "kms-ceremony-cli",
+    author,
+    version,
+    about = "KMS Key Ceremony & vHSM CLI Tool"
+)]
+pub struct CliArgs {
     #[command(subcommand)]
-    pub command: Option<Commands>,
+    pub command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    /// Generate a new master key, encrypt the storage key, and split the master key into shares.
-    Generate {
-        #[arg(short = 's', long, default_value_t = 5)]
-        shares: u8,
-
-        #[arg(short = 't', long, default_value_t = 3)]
-        threshold: u8,
-
-        #[arg(short = 'o', long, default_value = "./out")]
-        output_dir: PathBuf,
-    },
-
-    /// Recover the master key from a directory containing share JSON files.
-    Recover {
-        #[arg(short = 'd', long, value_name = "DIR", default_value = "./out/shares")]
-        shares_dir: PathBuf,
+    /// Interaktywna ceremonia generowania klucza głównego bezpośrednio w pamięci vHSM
+    Interactive {
+        #[arg(
+            short,
+            long,
+            help = "Ścieżka do gniazda Unix vHSM",
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
+        socket_path: String,
 
         #[arg(
-            short = 'k',
+            short = 's',
             long,
-            value_name = "FILE",
-            default_value = "./recovered.key"
+            default_value_t = 5,
+            help = "Całkowita liczba udziałów"
         )]
-        output_key: PathBuf,
+        shares: u8,
+
+        #[arg(
+            short = 't',
+            long,
+            default_value_t = 3,
+            help = "Próg wymaganych udziałów (K)"
+        )]
+        threshold: u8,
+
+        #[arg(
+            short = 'o',
+            long,
+            default_value = "./out",
+            help = "Katalog wyjściowy na pliki udziałów"
+        )]
+        output_dir: PathBuf,
     },
 
-    /// Run the step-by-step interactive key ceremony prompting at the terminal.
-    Interactive {
-        #[arg(short = 'o', long, default_value = "./out")]
-        output_dir: PathBuf,
+    /// Odblokowuje (Unseal) HSM, wczytując udziały z katalogu lub wprowadzając je interaktywnie
+    Unseal {
+        #[arg(
+            short,
+            long,
+            help = "Ścieżka do gniazda Unix vHSM",
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
+        socket_path: String,
+
+        #[arg(
+            short,
+            long,
+            help = "Próg wymaganych udziałów (K)",
+            default_value_t = 3
+        )]
+        threshold: u8,
+
+        #[arg(
+            short = 'd',
+            long = "shares-dir",
+            help = "Katalog z plikami JSON udziałów (opcjonalnie)"
+        )]
+        shares_dir: Option<PathBuf>,
+    },
+
+    /// Inicjalizuje HSM kluczem głównym z udziałów przekazanych jako argumenty CLI (format INDEX:HEX)
+    InitMasterKey {
+        #[arg(
+            short,
+            long,
+            help = "Ścieżka do gniazda Unix vHSM",
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
+        socket_path: String,
+
+        #[arg(
+            short,
+            long,
+            help = "Próg wymaganych udziałów (K)",
+            default_value_t = 3
+        )]
+        threshold: u8,
+
+        #[arg(
+            short,
+            long,
+            tag = "share",
+            help = "Udziały w formacie INDEX:HEX (np. 1:a3f5...)",
+            required = true
+        )]
+        shares: Vec<String>,
+    },
+
+    /// Szyfruje podany tekst za pomocą klucza HSM
+    Encrypt {
+        #[arg(
+            short,
+            long,
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
+        socket_path: String,
+
+        #[arg(short, long, help = "Dane jawne w postaci tekstu")]
+        plaintext: String,
+    },
+
+    /// Odszyfrowuje szyfrogram (zawierający 12-bajtowy nonce na początku)
+    Decrypt {
+        #[arg(
+            short,
+            long,
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
+        socket_path: String,
+
+        #[arg(short, long, help = "Szyfrogram w formacie HEX (Nonce + Ciphertext)")]
+        ciphertext_hex: String,
     },
 }

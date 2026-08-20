@@ -2,164 +2,251 @@ mod cli;
 mod crypto;
 mod storage;
 
-use anyhow::{bail, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
+use dialoguer::{Input, Password};
 use std::fs;
 use std::path::PathBuf;
+use zeroize::Zeroizing;
 
-use crate::cli::args::{Cli, Commands};
-use crate::crypto::aes::encrypt_storage_key;
-use crate::crypto::keys::generate_master_key;
-use crate::crypto::sss::{combine_shares, split_shares};
-use crate::storage::files::{
-    load_share_directory, write_manifest, write_master_key_file, write_share_file,
-};
+use kms_core::hsm::client::send_hsm_request;
+use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
-fn handle_generate(shares: u8, threshold: u8, output_dir: PathBuf) -> Result<()> {
-    if shares == 0 || threshold == 0 {
-        bail!("Shares and threshold must be greater than zero");
+use crate::cli::args::{CliArgs, Commands};
+use crate::storage::files::{load_share_directory, write_share_file};
+
+/// 1. Interaktywna ceremonia inicjalizacji Master Key wewnątrz vHSM
+async fn handle_interactive_ceremony(
+    socket_path: String,
+    shares_count: u8,
+    threshold: u8,
+    output_dir: PathBuf,
+) -> Result<()> {
+    if shares_count == 0 || threshold == 0 {
+        bail!("Liczba udziałów i próg muszą być większe od zera.");
     }
-    if threshold > shares {
-        bail!("Threshold cannot exceed total shares");
-    }
-    if threshold < 2 {
-        bail!("Threshold must be at least 2 for a KMS ceremony");
+    if threshold > shares_count {
+        bail!("Próg nie może być większy niż całkowita liczba udziałów.");
     }
 
-    let master_key = generate_master_key();
-    let storage_key = generate_master_key();
-    let encrypted_storage_key = encrypt_storage_key(&master_key, &storage_key)?;
-    let share_items = split_shares(&master_key, shares, threshold)?;
+    println!(
+        "[INFO] Łączenie z vHSM ({}) w celu wygenerowania Master Key...",
+        socket_path
+    );
+
+    let request = HsmRequest::GenerateCeremony {
+        threshold,
+        total_shares: shares_count,
+    };
+
+    let response = send_hsm_request(&socket_path, &request)
+        .await
+        .context("Nie udało się połączyć z daemonem vHSM")?;
+
+    let raw_shares = match response {
+        HsmResponse::CeremonyGenerated { shares } => shares,
+        HsmResponse::Error { code, message } => bail!("Błąd HSM [{code}]: {message}"),
+        _ => bail!("Otrzymano nieoczekiwaną odpowiedź z vHSM"),
+    };
 
     fs::create_dir_all(&output_dir)?;
     let share_dir = output_dir.join("shares");
     fs::create_dir_all(&share_dir)?;
 
-    let mut share_paths = Vec::new();
-    for (index, share_hex) in share_items.iter() {
-        let file_path = write_share_file(&share_dir, *index, threshold, shares, share_hex.clone())?;
-        share_paths.push(file_path.file_name().unwrap().to_string_lossy().to_string());
-    }
-
-    write_manifest(
-        &output_dir,
-        shares,
-        threshold,
-        &share_paths,
-        encrypted_storage_key.nonce.clone(),
-        encrypted_storage_key.ciphertext.clone(),
-    )?;
-
+    println!("\n[CEREMONY] vHSM wygenerował Master Key w pamięci RAM!");
     println!(
-        "[OK] Generated master key, storage key, and SSS shares in {}",
-        output_dir.display()
-    );
-    println!("[OK] Share files created in {}", share_dir.display());
-    println!(
-        "[OK] Ceremony manifest written to {}",
-        output_dir.join("ceremony_manifest.json").display()
+        "[CEREMONY] Rozpoczynamy zabezpieczanie {} udziałów dla Oficerów Bezpieczeństwa.\n",
+        raw_shares.len()
     );
 
-    Ok(())
-}
+    for (index, hex_val) in raw_shares {
+        println!("--------------------------------------------------");
+        println!("Oficerzie nr {index}, podejmij swój udział.");
 
-fn handle_recover(shares_dir: PathBuf, output_key: PathBuf) -> Result<()> {
-    if !shares_dir.exists() {
-        bail!("Shares directory does not exist: {}", shares_dir.display());
-    }
+        let password = Password::new()
+            .with_prompt(format!(
+                "Podaj hasło/PIN do zaszyfrowania Udziału nr {index}"
+            ))
+            .interact()?;
 
-    let share_records = load_share_directory(&shares_dir)?;
-    if share_records.is_empty() {
-        bail!("No share files found in {}", shares_dir.display());
-    }
+        let confirm = Password::new().with_prompt("Potwierdź hasło").interact()?;
 
-    let mut sorted = share_records;
-    sorted.sort_by_key(|item| item.index);
+        if password != confirm {
+            bail!("Hasła się nie zgadzają! Przerwano ceremonię.");
+        }
 
-    let threshold = sorted[0].threshold;
-    let total_shares = sorted[0].total_shares;
-    if sorted.len() < threshold as usize {
-        bail!(
-            "Not enough shares to recover the secret: {} available, {} required",
-            sorted.len(),
-            threshold
+        let file_path = write_share_file(&share_dir, index, threshold, shares_count, hex_val)?;
+        println!(
+            "[OK] Udział nr {index} został pomyślnie zapisany w {}",
+            file_path.display()
         );
     }
 
-    let shares: Vec<(u8, String)> = sorted
-        .iter()
-        .map(|record| (record.index, record.share_hex.clone()))
-        .collect();
-
-    let recovered_key = combine_shares(&shares)?;
-    write_master_key_file(&output_key, &recovered_key)?;
-
-    println!("[OK] Reconstructed master key from {} shares", sorted.len());
-    println!("[OK] Saved recovered key to {}", output_key.display());
-    println!("[INFO] Threshold: {threshold}, total shares: {total_shares}");
-
+    println!("\n[SUCCESS] Ceremonia zakończona! vHSM jest gotowy do pracy.");
     Ok(())
 }
 
-fn interactive_walkthrough() -> Result<()> {
-    use dialoguer::{Confirm, Input};
+/// 2. Odblokowanie (Unseal) HSM poprzez wczytanie udziałów z plików/terminala
+async fn handle_unseal_hsm(
+    socket_path: String,
+    threshold: u8,
+    shares_dir: Option<PathBuf>,
+) -> Result<()> {
+    let mut shares_to_send: Vec<(u8, String)> = Vec::new();
 
-    let shares: u8 = Input::new()
-        .with_prompt("Number of shares")
-        .default(5)
-        .interact()?;
+    if let Some(dir) = shares_dir {
+        println!("[INFO] Wczytywanie udziałów z katalogu: {}", dir.display());
+        let records = load_share_directory(&dir)?;
 
-    let threshold: u8 = Input::new()
-        .with_prompt("Recovery threshold")
-        .default(3)
-        .interact()?;
+        if records.len() < threshold as usize {
+            bail!(
+                "Znaleziono za mało plików udziałów: {} (wymagane: {})",
+                records.len(),
+                threshold
+            );
+        }
 
-    let output_dir: String = Input::new()
-        .with_prompt("Output directory")
-        .default("./out".to_string())
-        .interact()?;
+        for record in records.into_iter().take(threshold as usize) {
+            shares_to_send.push((record.index, record.share_hex));
+        }
+    } else {
+        println!("[INFO] Tryb interaktywnego wprowadzania udziałów.");
+        for i in 1..=threshold {
+            let index: u8 = Input::new()
+                .with_prompt(format!("Podaj numer Oficera ({i}/{threshold})"))
+                .interact()?;
 
-    let output_dir = PathBuf::from(output_dir);
-    handle_generate(shares, threshold, output_dir.clone())?;
+            let share_hex: String = Password::new()
+                .with_prompt(format!("Wklej treść udziału dla Oficera nr {index}"))
+                .interact()?;
 
-    let recover_now = Confirm::new()
-        .with_prompt("Do you want to recover the key immediately from the created shares?")
-        .default(false)
-        .interact()?;
+            shares_to_send.push((index, share_hex.trim().to_string()));
+        }
+    }
 
-    if recover_now {
-        let recovered_path: String = Input::new()
-            .with_prompt("Recovered key output path")
-            .default("./recovered.key".to_string())
-            .interact()?;
-        handle_recover(output_dir.join("shares"), PathBuf::from(recovered_path))?;
+    let request = HsmRequest::InitMasterKey {
+        threshold,
+        shares: shares_to_send,
+    };
+
+    match send_hsm_request(&socket_path, &request).await {
+        Ok(HsmResponse::MasterKeyInitialized) => {
+            println!("✅ Master Key został pomyślnie odtworzony w vHSM! Daemon jest gotowy.")
+        }
+        Ok(HsmResponse::Error { code, message }) => {
+            bail!("Błąd odblokowania vHSM [{code}]: {message}")
+        }
+        Ok(_) => bail!("Nieoczekiwana odpowiedź z vHSM"),
+        Err(err) => bail!("Błąd komunikacji z vHSM: {err}"),
     }
 
     Ok(())
 }
 
-fn main() -> Result<()> {
-    let cli = Cli::parse();
+#[tokio::main]
+async fn main() -> Result<()> {
+    let cli = CliArgs::parse();
 
     match cli.command {
-        Some(Commands::Generate {
+        Commands::Interactive {
+            socket_path,
             shares,
             threshold,
             output_dir,
-        }) => {
-            handle_generate(shares, threshold, output_dir)?;
+        } => {
+            handle_interactive_ceremony(socket_path, shares, threshold, output_dir).await?;
         }
-        Some(Commands::Recover {
+
+        Commands::Unseal {
+            socket_path,
+            threshold,
             shares_dir,
-            output_key,
-        }) => {
-            handle_recover(shares_dir, output_key)?;
+        } => {
+            handle_unseal_hsm(socket_path, threshold, shares_dir).await?;
         }
-        Some(Commands::Interactive { output_dir }) => {
-            handle_generate(5, 3, output_dir)?;
+
+        Commands::InitMasterKey {
+            socket_path,
+            threshold,
+            shares,
+        } => {
+            let mut parsed_shares = Vec::new();
+            for raw_share in shares {
+                if let Some((idx_str, hex_str)) = raw_share.split_once(':') {
+                    let idx = idx_str
+                        .parse::<u8>()
+                        .context("Nieprawidłowy indeks udziału")?;
+                    parsed_shares.push((idx, hex_str.trim().to_string()));
+                } else {
+                    bail!("Udział podany w CLI musi mieć format 'INDEX:HEX' (np. '1:a3f5...')");
+                }
+            }
+
+            let request = HsmRequest::InitMasterKey {
+                threshold,
+                shares: parsed_shares,
+            };
+
+            match send_hsm_request(&socket_path, &request).await {
+                Ok(HsmResponse::MasterKeyInitialized) => {
+                    println!("✅ Klucz główny vHSM został pomyślnie załadowany.")
+                }
+                Ok(HsmResponse::Error { code, message }) => {
+                    bail!("Błąd HSM [{code}]: {message}")
+                }
+                Ok(_) => bail!("Otrzymano nieoczekiwaną odpowiedź z HSM"),
+                Err(err) => bail!("Błąd komunikacji z HSM: {err}"),
+            }
         }
-        None => {
-            interactive_walkthrough()?;
+
+        Commands::Encrypt {
+            socket_path,
+            plaintext,
+        } => {
+            let request = HsmRequest::Encrypt {
+                key_id: "master_key".to_string(),
+                key_version: None,
+                plaintext: plaintext.into_bytes(),
+            };
+
+            match send_hsm_request(&socket_path, &request).await {
+                Ok(HsmResponse::Encrypted { ciphertext }) => {
+                    println!("Ciphertext (HEX): {}", hex::encode(ciphertext));
+                }
+                Ok(HsmResponse::Error { code, message }) => {
+                    bail!("Błąd szyfrowania [{code}]: {message}")
+                }
+                Ok(_) => bail!("Otrzymano nieoczekiwaną odpowiedź z HSM"),
+                Err(err) => bail!("Błąd komunikacji z HSM: {err}"),
+            }
+        }
+
+        Commands::Decrypt {
+            socket_path,
+            ciphertext_hex,
+        } => {
+            let ciphertext =
+                hex::decode(ciphertext_hex.trim()).context("Nieprawidłowy HEX szyfrogramu")?;
+            let request = HsmRequest::Decrypt {
+                key_id: "master_key".to_string(),
+                key_version: None,
+                ciphertext,
+            };
+
+            match send_hsm_request(&socket_path, &request).await {
+                Ok(HsmResponse::Decrypted { plaintext }) => {
+                    let decrypted_str = Zeroizing::new(
+                        String::from_utf8(plaintext)
+                            .context("Tekst odszyfrowany nie jest prawidłowym UTF-8")?,
+                    );
+                    println!("Plaintext: {}", *decrypted_str);
+                }
+                Ok(HsmResponse::Error { code, message }) => {
+                    bail!("Błąd dekodowania [{code}]: {message}")
+                }
+                Ok(_) => bail!("Otrzymano nieoczekiwaną odpowiedź z HSM"),
+                Err(err) => bail!("Błąd komunikacji z HSM: {err}"),
+            }
         }
     }
 
