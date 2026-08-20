@@ -1,14 +1,14 @@
 {
   // === Explorer & Search ===
   "files.exclude": {
-    "**/target": true,
-    "**/Cargo.lock": true,
-    "**/.git": true,
-    "**/.github": true,
-    "**/docker-entrypoint-initdb.d": true,
+    "**/target": true
+    // "**/Cargo.lock": true,
+    // "**/.git": true,
+    // "**/.github": true,
+    // "**/docker-entrypoint-initdb.d": true,
     // "**/.vscode": true,
-    "**/tests": true,
-    "**/LICENSE": true
+    // "**/tests": true,
+    // "**/LICENSE": true
     // "**/.env.example": true
     // "**/.env": true
     // "**/README.md": true
