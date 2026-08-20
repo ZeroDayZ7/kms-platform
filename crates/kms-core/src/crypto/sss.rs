@@ -76,16 +76,31 @@ pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec
     let shared = split_secret(&secret_bytes, threshold, shares)?;
     Ok(shared
         .into_iter()
-        .map(|share| (share.index, share.value))
+        .map(|share| {
+            // Dopisywanie wiodącego zera dla nieparzystej długości
+            let formatted_value = if share.value.len() % 2 != 0 {
+                format!("0{}", share.value)
+            } else {
+                share.value
+            };
+            (share.index, formatted_value)
+        })
         .collect())
 }
 
 pub fn combine_shares_legacy(shares: &[(u8, String)]) -> Result<SecretKey> {
     let secret_shares: Vec<SecretShare> = shares
         .iter()
-        .map(|(index, value)| SecretShare {
-            index: *index,
-            value: value.clone(),
+        .map(|(index, value)| {
+            let formatted_value = if value.len() % 2 != 0 {
+                format!("0{value}")
+            } else {
+                value.clone()
+            };
+            SecretShare {
+                index: *index,
+                value: formatted_value,
+            }
         })
         .collect();
 

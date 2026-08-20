@@ -12,38 +12,16 @@ cargo run -- serve
 cargo build --release
 cargo build --release -p vhsm-daemon
 
-# Buduje wszystkie serwisy produkcyjne (mongodb, redis, vhsm-daemon, kms-service)
-
-docker compose build
-docker compose up --build -d
-
-# Buduje wszystkie serwisy łącznie z narzędziami CLI (kms-ceremony-cli)
-
-docker compose --profile tools build
-
-# Uruchamia główne usługi w tle (MongoDB, Redis, vHSM Daemon, KMS Service)
+# ================================================================
 
 docker compose down -v
+docker compose build --no-cache
 docker compose up -d
 
-# Jeśli chcesz uruchomić również narzędzia (np. kms-ceremony-cli)
+docker compose down -v && docker compose up --build --force-recreate -d
 
-docker compose --profile tools run --rm kms-ceremony-cli
-
-MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
+# ============================ -it ================================
 
 MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
 
-MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
-
 MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
-
-docker compose restart vhsm-daemon
-
-docker compose --profile tools up -d
-
-docker compose build vhsm-daemon
-docker compose up -d vhsm-daemon
-
-docker compose --profile tools build kms-ceremony-cli
-docker compose --profile tools run --rm kms-ceremony-cli

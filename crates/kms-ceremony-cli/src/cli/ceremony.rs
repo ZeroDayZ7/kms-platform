@@ -1,10 +1,10 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use dialoguer::Password;
 use std::fs;
 use std::path::PathBuf;
 
 use kms_core::crypto::aes::encrypt_with_password;
-use kms_core::crypto::keys::SecretKey;
+use kms_core::crypto::keys::{KEY_SIZE, SecretKey};
 use kms_core::hsm::client::send_hsm_request;
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
@@ -66,8 +66,23 @@ pub async fn handle_interactive_ceremony(
             bail!("Hasła się nie zgadzają! Przerwano ceremonię.");
         }
 
-        let raw_share_bytes = hex::decode(&hex_val)?;
-        let share_secret = SecretKey::from_bytes(raw_share_bytes.try_into().unwrap());
+        // 1. Normalizacja HEX – zabezpieczenie przed nieparzystą liczbą znaków
+        let formatted_hex = if hex_val.len() % 2 != 0 {
+            format!("0{hex_val}")
+        } else {
+            hex_val
+        };
+
+        // 2. Dekodowanie z HEX na bajty
+        let raw_share_bytes = hex::decode(&formatted_hex)
+            .context("Nie udało się zdekodować udziału z formatu HEX")?;
+
+        // 3. Bezpieczne konwertowanie na tablicę stałego rozmiaru [u8; 32] bez .unwrap()
+        let share_bytes_arr: [u8; KEY_SIZE] = raw_share_bytes.try_into().map_err(|_| {
+            anyhow!("Nieprawidłowa długość bajtów udziału (oczekiwano {KEY_SIZE} B)")
+        })?;
+
+        let share_secret = SecretKey::from_bytes(share_bytes_arr);
 
         // Bezpieczne derywowanie klucza z Argon2 + losowa sól + AES-GCM
         let encrypted_container = encrypt_with_password(&password, &share_secret)?;
