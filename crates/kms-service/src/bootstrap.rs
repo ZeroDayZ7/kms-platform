@@ -1,5 +1,9 @@
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{info, warn};
+
+use kms_core::hsm::client::send_hsm_request;
+use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
 use crate::{
     config::acl::AclSettings,
@@ -12,6 +16,46 @@ use crate::{
     },
     errors::AppResult,
 };
+
+/// Sprawdza w pętli dostępność i stan odblokowania (unseal) vHSM przed podjęciem operacji bootstrapu
+pub async fn wait_for_vhsm_unsealed(socket_path: &str) -> anyhow::Result<()> {
+    info!(
+        "🔍 Sprawdzanie dostępności i stanu vHSM na gnieździe: {}",
+        socket_path
+    );
+
+    loop {
+        let test_req = HsmRequest::Encrypt {
+            key_id: "master_key".to_string(),
+            key_version: None,
+            plaintext: b"healthcheck".to_vec(),
+        };
+
+        match send_hsm_request(socket_path, &test_req).await {
+            Ok(HsmResponse::Encrypted { .. }) => {
+                info!("✅ vHSM jest podłączony i ODBLOKOWANY (Unsealed). Kontynuacja startu...");
+                return Ok(());
+            }
+            Ok(HsmResponse::Error { code, message }) => {
+                warn!(
+                    "⏳ vHSM jest podłączony, ale ZABLOKOWANY (Sealed) lub niezainicjalizowany. Kod: {}, Wiadomość: '{}'. Oczekiwanie na Unseal via CLI...",
+                    code, message
+                );
+            }
+            Err(err) => {
+                warn!(
+                    "⏳ Brak połączenia z gniazdem vHSM ({}) [{}]. Oczekiwanie na uruchomienie daemona...",
+                    socket_path, err
+                );
+            }
+            _ => {
+                warn!("⏳ Otrzymano nieoczekiwaną odpowiedź z vHSM. Ponawianie próby...");
+            }
+        }
+
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
 
 pub async fn bootstrap_keys<R>(
     acl_settings: &AclSettings,
@@ -56,8 +100,9 @@ where
                     ),
                 };
 
-                let encrypted_private_key =
-                    crypto_service.encrypt_private_key(&generated_key.private_key_bytes).await?;
+                let encrypted_private_key = crypto_service
+                    .encrypt_private_key(&generated_key.private_key_bytes)
+                    .await?;
 
                 let new_key = KeyPairEntity {
                     id: uuid::Uuid::now_v7(),

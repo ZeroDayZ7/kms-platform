@@ -64,10 +64,5 @@ struct StatusResponse {
 }
 
 pub async fn status(State(_state): State<AppState>) -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        Json(StatusResponse {
-            status: "READY",
-        }),
-    )
+    (StatusCode::OK, Json(StatusResponse { status: "READY" }))
 }

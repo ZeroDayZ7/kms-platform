@@ -1,9 +1,8 @@
 use serde::Deserialize;
-use std::net::IpAddr;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct DatabaseConfig {
-    pub host: IpAddr,
+    pub host: String,
     pub port: u16,
     pub user: Option<String>,
     pub password: Option<String>,

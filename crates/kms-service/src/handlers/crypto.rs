@@ -56,10 +56,10 @@ pub async fn encrypt_handler(
     Json(payload): Json<EncryptRequest>,
 ) -> AppResult<Json<EncryptResponse>> {
     let encrypted = state
-    .use_cases
-    .encrypt_data
-    .execute(&payload.plaintext)
-    .await?;
+        .use_cases
+        .encrypt_data
+        .execute(&payload.plaintext)
+        .await?;
 
     Ok(Json(EncryptResponse {
         ciphertext: encrypted.ciphertext,
@@ -79,10 +79,10 @@ pub async fn decrypt_handler(
     };
 
     let decrypted = state
-    .use_cases
-    .decrypt_data
-    .execute(&payload_struct)
-    .await?;
+        .use_cases
+        .decrypt_data
+        .execute(&payload_struct)
+        .await?;
 
     Ok(Json(DecryptResponse {
         plaintext: decrypted,

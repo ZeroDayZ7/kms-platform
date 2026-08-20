@@ -2,7 +2,7 @@
 x-common-settings: &common-settings
   restart: ${DOCKER_RESTART_POLICY:-unless-stopped}
   networks:
-    - zero-day-network
+    - obywatel_app_net
     - citizen-app-net
 
 x-common-healthcheck: &common-healthcheck
@@ -12,13 +12,12 @@ x-common-healthcheck: &common-healthcheck
   start_period: 15s
 # endregion
 
-# region SERVICES
 services:
   # region MONGODB
   mongodb:
     <<: *common-settings
     image: mongo:8
-    container_name: zero_day_mongo
+    container_name: obywatel_app_mongo
     ports:
       - "27017:27017"
     environment:
@@ -48,28 +47,28 @@ services:
   # endregion
 
   # region REDIS
-  redis:
-    <<: *common-settings
-    image: redis:8.6-alpine
-    container_name: zero_day_redis
-    ports:
-      - "6380:6379"
-    command:
-      - redis-server
-      - --requirepass
-      - ${REDIS__PASSWORD:-change_me}
-      - --appendonly
-      - "yes"
-      - --save
-      - "60"
-      - "1"
-      - --loglevel
-      - warning
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      <<: *common-healthcheck
-      test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-change_me}", "ping"]
+  # redis:
+  #   <<: *common-settings
+  #   image: redis:8.6-alpine
+  #   container_name: zero_day_redis
+  #   ports:
+  #     - "6380:6379"
+  #   command:
+  #     - redis-server
+  #     - --requirepass
+  #     - ${REDIS__PASSWORD:-change_me}
+  #     - --appendonly
+  #     - "yes"
+  #     - --save
+  #     - "60"
+  #     - "1"
+  #     - --loglevel
+  #     - warning
+  #   volumes:
+  #     - redis_data:/data
+  #   healthcheck:
+  #     <<: *common-healthcheck
+  #     test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-change_me}", "ping"]
   # endregion
 
   # region VHSM DAEMON
@@ -77,9 +76,15 @@ services:
     <<: *common-settings
     build:
       context: .
-      dockerfile: Dockerfile.vhsm
+      dockerfile: Dockerfile
+      target: vhsm-daemon
     container_name: vhsm_daemon
     entrypoint: ["/app/vhsm-daemon"]
+    environment:
+      - APP_ENVIRONMENT=${APP_ENVIRONMENT:-development}
+      - RUST_LOG=${RUST_LOG:-info,vhsm_daemon=debug}
+      - VHSM__SOCKET_PATH=${CRYPTO__HSM_SOCKET_PATH:-/run/vhsm/vhsm.sock}
+      - LOG__FORMAT=${LOG__FORMAT:-compact}
     volumes:
       - vhsm_sockets:/run/vhsm
     healthcheck:
@@ -92,24 +97,30 @@ services:
     <<: *common-settings
     build:
       context: .
-      dockerfile: Dockerfile.kms
+      dockerfile: Dockerfile
+      target: kms-service
     container_name: kms_service
+    command: ["serve"]
     ports:
       - "8081:8080"
     environment:
+      - APP_CONFIG_PATH=/app/config/settings.toml
       - RUST_LOG=${RUST_LOG:-info,kms_service=debug}
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080
-      - APP_DATABASE__URI=mongodb://${DATABASE__USER}:${DATABASE__PASSWORD}@mongodb:27017/${DATABASE__NAME}?authSource=admin
+      - DATABASE__HOST=mongodb
+      - DATABASE__PORT=${DATABASE__PORT}
+      - DATABASE__NAME=${DATABASE__NAME}
+      - DATABASE__USER=${DATABASE__USER}
+      - DATABASE__PASSWORD=${DATABASE__PASSWORD}
+      - DATABASE__AUTH_SOURCE=${DATABASE__AUTH_SOURCE}
       - APP_REDIS__URL=redis://:${REDIS__PASSWORD:-change_me}@redis:6379/
     volumes:
-      - ./crates/kms-service/config:/app/config:ro
+      - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - kms_ceremony_data:/app/ceremony:ro
       - vhsm_sockets:/run/vhsm
     depends_on:
       mongodb:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       vhsm-daemon:
         condition: service_healthy
@@ -123,15 +134,19 @@ services:
     <<: *common-settings
     build:
       context: .
-      dockerfile: Dockerfile.kms
+      dockerfile: Dockerfile
+      target: kms-ceremony-cli
     container_name: kms_ceremony_cli
     profiles:
       - tools
     entrypoint: ["/app/kms-ceremony-cli"]
     volumes:
       - kms_ceremony_data:/app/ceremony
+      - vhsm_sockets:/run/vhsm
+    depends_on:
+      vhsm-daemon:
+        condition: service_healthy
   # endregion
-# endregion
 
 # region VOLUMES
 volumes:
@@ -147,7 +162,7 @@ volumes:
 
 # region NETWORKS
 networks:
-  zero-day-network:
+  obywatel_app_net:
     driver: bridge
 
   citizen-app-net:

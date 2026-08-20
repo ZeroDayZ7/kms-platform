@@ -1,8 +1,8 @@
-use std::sync::Arc;
 use ed25519_dalek::{SigningKey, pkcs8::EncodePublicKey};
 use pkcs8::LineEnding;
-use rand::rngs::OsRng;
 use rand::RngCore;
+use rand::rngs::OsRng;
+use std::sync::Arc;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
@@ -70,11 +70,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
     }
 
     async fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey> {
-        let hex_plain = hex::encode(private_key);
-        let ciphertext_hex = self.client.encrypt(&hex_plain).await?;
-        
-        let ciphertext = hex::decode(ciphertext_hex)
-            .map_err(|e| AppError::SerializationError(format!("Błąd dekodowania hex z vHSM: {e}")))?;
+        let ciphertext = self.client.encrypt(private_key).await?;
 
         Ok(EncryptedPrivateKey {
             ciphertext,
@@ -84,11 +80,8 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
     }
 
     async fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>> {
-        let hex_cipher = hex::encode(&encrypted.ciphertext);
-        let plaintext_hex = self.client.decrypt(&hex_cipher).await?;
-
-        hex::decode(plaintext_hex)
-            .map_err(|e| AppError::SerializationError(format!("Błąd dekodowania odszyfrowanego hex: {e}")))
+        let plaintext = self.client.decrypt(&encrypted.ciphertext).await?;
+        Ok(plaintext)
     }
 
     fn current_master_key_version(&self) -> i32 {

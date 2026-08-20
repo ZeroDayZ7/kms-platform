@@ -6,12 +6,12 @@ use crate::config::Settings;
 use crate::domain::rate_limiter::{InMemoryRateLimiter, RateLimiter};
 use crate::errors::AppResult;
 use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
+use crate::infrastructure::crypto::vhsm_client::VhsmClient;
 use crate::infrastructure::mongodb::audit::MongoAuditRepository;
 use crate::infrastructure::mongodb::client::init_mongo;
 use crate::infrastructure::mongodb::keys::MongoKeyRepository;
 use crate::infrastructure::redis::client::RedisManager;
 use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
-use crate::infrastructure::crypto::vhsm_client::VhsmClient;
 use mongodb::Database;
 use std::sync::Arc;
 
@@ -70,8 +70,8 @@ impl AppState {
 
         key_repo.ensure_indexes().await?;
 
-      let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
-let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
+        let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
+        let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
         let _ =
             crate::workers::expiration::run_expiration_worker(key_repo.clone(), audit_repo.clone())

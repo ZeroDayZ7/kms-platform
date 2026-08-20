@@ -111,9 +111,9 @@ where
 
         // 3. Odszyfrowanie klucza prywatnego Master Keyem
         let decrypted_private_key = self
-    .crypto_service
-    .decrypt_private_key(&active_key.encrypted_private_key)
-    .await?;
+            .crypto_service
+            .decrypt_private_key(&active_key.encrypted_private_key)
+            .await?;
 
         // 4. Rejestracja udanego odczytu w audycie
         self.audit_repo

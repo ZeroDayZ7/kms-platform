@@ -122,9 +122,9 @@ where
         };
 
         let encrypted_private_key = self
-    .crypto_service
-    .encrypt_private_key(&generated_pair.private_key_bytes)
-    .await?;
+            .crypto_service
+            .encrypt_private_key(&generated_pair.private_key_bytes)
+            .await?;
 
         let new_entity = KeyPairEntity {
             id: uuid::Uuid::now_v7(),

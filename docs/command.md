@@ -11,24 +11,27 @@ cargo run
 cargo run -- serve
 cargo build --release
 cargo build --release -p vhsm-daemon
-docker compose build --no-cache vhsm-daemon
+
+# Buduje wszystkie serwisy produkcyjne (mongodb, redis, vhsm-daemon, kms-service)
+
+docker compose build
+
+# Buduje wszystkie serwisy łącznie z narzędziami CLI (kms-ceremony-cli)
+
+docker compose --profile tools build
+
+# Uruchamia główne usługi w tle (MongoDB, Redis, vHSM Daemon, KMS Service)
+
+docker compose up -d
+
+# Jeśli chcesz uruchomić również narzędzia (np. kms-ceremony-cli)
+
+docker compose --profile tools run --rm kms-ceremony-cli
+
+docker compose --profile tools up -d
 
 docker compose build vhsm-daemon
 docker compose up -d vhsm-daemon
 
-./scripts/unlock.sh
-./scripts/lock.sh
-
-cargo fmt --all
-cargo fmt --all -- --check
-cargo check --workspace --all-targets --all-features
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-targets --all-features
-
-curl -X GET http://localhost:8080/status
-
-cargo run -- generate -s 5 -t 3 -o ./out
-cargo run recover --shares-dir ./out/shares --output-key ./recovered.key
-
-kms-ceremony-cli generate --shares 5 --threshold 3 --output-dir ./out
-kms-ceremony-cli recover --shares-dir ./out/shares --output-key ./recovered.key
+docker compose --profile tools build kms-ceremony-cli
+docker compose --profile tools run --rm kms-ceremony-cli

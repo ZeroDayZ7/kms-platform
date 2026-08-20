@@ -1,7 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 use kms_service::application::use_cases::rewrap_keys::{RewrapKeysInput, rewrap_keys};
-use kms_service::bootstrap::bootstrap_keys; // Zostaje tylko bootstrap kluczy serwisowych w MongoDB na bazie ACL
+use kms_service::bootstrap::{bootstrap_keys, wait_for_vhsm_unsealed};
 use kms_service::config;
 use kms_service::server::{self, state::AppState};
 use std::net::SocketAddr;
@@ -44,13 +44,17 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
 
     match cli.command {
         Command::Serve => {
+            // 1. Sprawdzamy gotowość HSM przed podłączeniem do bazy danych i bootstrapem
+            wait_for_vhsm_unsealed(&settings.crypto.hsm_socket_path).await?;
+
+            // 2. Inicjalizacja połączenia z bazy MongoDB / Redis
             let state = AppState::new(settings.clone())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;
 
             info!("🧠 Application state initialized");
 
-            // Automatyczne sprawdzenie i wygenerowanie brakujących kluczy serwisowych w MongoDB
+            // 3. Generowanie i zaszyfrowanie brakujących kluczy w MongoDB
             bootstrap_keys(
                 &settings.acl,
                 state.key_repo.clone(),
@@ -75,6 +79,8 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
             target_version,
             batch_size,
         } => {
+            wait_for_vhsm_unsealed(&settings.crypto.hsm_socket_path).await?;
+
             let state = AppState::new(settings.clone())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;

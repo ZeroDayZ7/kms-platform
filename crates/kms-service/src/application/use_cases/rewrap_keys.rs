@@ -44,9 +44,7 @@ where
                 .await?;
 
             // DODANO: .await
-            let reencrypted = crypto_service
-                .encrypt_private_key(&decrypted)
-                .await?;
+            let reencrypted = crypto_service.encrypt_private_key(&decrypted).await?;
 
             updated_keys.push((key.id, reencrypted, current_version));
         }

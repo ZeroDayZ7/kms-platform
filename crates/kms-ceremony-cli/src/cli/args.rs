@@ -15,34 +15,7 @@ pub struct CliArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum Commands {
-    // --- OFFLINE CEREMONY COMMANDS ---
-    /// Generate a new master key, encrypt the storage key, and split the master key into shares.
-    Generate {
-        #[arg(short = 's', long, default_value_t = 5)]
-        shares: u8,
-
-        #[arg(short = 't', long, default_value_t = 3)]
-        threshold: u8,
-
-        #[arg(short = 'o', long, default_value = "./out")]
-        output_dir: PathBuf,
-    },
-
-    /// Recover the master key from a directory containing share JSON files.
-    Recover {
-        #[arg(short = 'd', long, value_name = "DIR", default_value = "./out/shares")]
-        shares_dir: PathBuf,
-
-        #[arg(
-            short = 'k',
-            long,
-            value_name = "FILE",
-            default_value = "./recovered.key"
-        )]
-        output_key: PathBuf,
-    },
-
-    /// Run the step-by-step interactive key ceremony prompting at the terminal with vHSM daemon.
+    /// Interaktywna ceremonia generowania klucza głównego bezpośrednio w pamięci vHSM
     Interactive {
         #[arg(
             short,
@@ -77,8 +50,33 @@ pub enum Commands {
         output_dir: PathBuf,
     },
 
-    // --- DAEMON / HSM INTERACTION COMMANDS ---
-    /// Inicjalizuje HSM kluczem głównym z odzyskanych udziałów Shamira
+    /// Odblokowuje (Unseal) HSM, wczytując udziały z katalogu lub wprowadzając je interaktywnie
+    Unseal {
+        #[arg(
+            short,
+            long,
+            help = "Ścieżka do gniazda Unix vHSM",
+            default_value = "/tmp/vhsm.sock"
+        )]
+        socket_path: String,
+
+        #[arg(
+            short,
+            long,
+            help = "Próg wymaganych udziałów (K)",
+            default_value_t = 3
+        )]
+        threshold: u8,
+
+        #[arg(
+            short = 'd',
+            long = "shares-dir",
+            help = "Katalog z plikami JSON udziałów (opcjonalnie)"
+        )]
+        shares_dir: Option<PathBuf>,
+    },
+
+    /// Inicjalizuje HSM kluczem głównym z udziałów przekazanych jako argumenty CLI (format INDEX:HEX)
     InitMasterKey {
         #[arg(
             short,
@@ -99,7 +97,7 @@ pub enum Commands {
         #[arg(
             short,
             long = "share",
-            help = "Udziały w formacie hex (podaj wielokrotnie)",
+            help = "Udziały w formacie INDEX:HEX (np. 1:a3f5...)",
             required = true
         )]
         shares: Vec<String>,
