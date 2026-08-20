@@ -50,6 +50,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     guard.master_key = Some(raw_master_key);
                     guard.initialized = true;
                     guard.active_key_version = 1;
+                    guard.touch_activity();
 
                     tracing::info!("vHSM wygenerował wewnątrz nowy Master Key i podzielił go SSS.");
 
@@ -89,6 +90,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     guard.master_key = Some(recovered);
                     guard.initialized = true;
                     guard.active_key_version = 1;
+                    guard.touch_activity();
 
                     tracing::info!("vHSM został pomyślnie odblokowany kluczem głównym.");
 
@@ -114,7 +116,13 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            let master_key = state.read().await.master_key.clone();
+            let mut guard = state.write().await;
+            let master_key = guard.master_key.clone();
+
+            if master_key.is_some() {
+                guard.touch_activity();
+            }
+            drop(guard);
 
             match master_key {
                 Some(key) => match crypto::encrypt_bytes(&key, plaintext.as_ref()) {
@@ -145,7 +153,13 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            let master_key = state.read().await.master_key.clone();
+            let mut guard = state.write().await;
+            let master_key = guard.master_key.clone();
+
+            if master_key.is_some() {
+                guard.touch_activity();
+            }
+            drop(guard);
 
             match master_key {
                 Some(key) => match crypto::decrypt_bytes(&key, ciphertext.as_ref()) {

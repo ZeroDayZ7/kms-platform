@@ -19,6 +19,7 @@ impl VhsmState {
     }
 
     /// Odświeża znacznik czasu aktywności
+    #[allow(dead_code)]
     pub fn touch_activity(&mut self) {
         self.last_activity = Instant::now();
     }
