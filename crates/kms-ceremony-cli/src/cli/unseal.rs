@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, bail};
 use dialoguer::{Input, Password};
 use std::collections::HashSet;
+use std::io::{IsTerminal, stdin};
 use std::path::PathBuf;
 
 use kms_core::crypto::aes::{EncryptedContainer, decrypt_with_password};
@@ -14,11 +15,16 @@ pub async fn handle_unseal_hsm(
     threshold: u8,
     shares_dir: Option<PathBuf>,
 ) -> Result<()> {
+    // Sprawdzenie, czy terminal działa w trybie interaktywnym (TTY)
+    if !stdin().is_terminal() {
+        bail!("Błąd: Brak interaktywnego terminala TTY!");
+    }
+
     let mut shares_to_send: Vec<(u8, String)> = Vec::new();
 
     if let Some(dir) = shares_dir {
         println!("[INFO] Wczytywanie udziałów z katalogu: {}", dir.display());
-        let records = load_share_directory(&dir)?;
+        let mut records = load_share_directory(&dir)?;
 
         if records.len() < threshold as usize {
             bail!(
@@ -28,15 +34,35 @@ pub async fn handle_unseal_hsm(
             );
         }
 
-        for record in records.into_iter().take(threshold as usize) {
-            let password = Password::new()
-                .with_prompt(format!("Podaj PIN/hasło dla Oficera nr {}", record.index))
-                .interact()?;
+        // Sortowanie udziałów po indeksie Oficera
+        records.sort_by_key(|r| r.index);
 
-            let container: EncryptedContainer = serde_json::from_str(&record.share_hex)?;
-            let decrypted_key = decrypt_with_password(&password, &container)?;
+        println!("\n[UNSEAL] Wymagana autoryzacja {} Oficerów.", threshold);
+
+        for record in records.into_iter().take(threshold as usize) {
+            // Pętla wymuszająca podanie niepustego hasła dla każdego Oficera
+            let password = loop {
+                let pass = Password::new()
+                    .with_prompt(format!("Podaj PIN/hasło dla Oficera nr {}", record.index))
+                    .allow_empty_password(false)
+                    .interact()
+                    .context("Błąd odczytu z terminala")?;
+
+                if !pass.trim().is_empty() {
+                    break pass;
+                }
+                println!("Hasło nie może być puste! Spróbuj ponownie.");
+            };
+
+            let container: EncryptedContainer = serde_json::from_str(&record.share_hex)
+                .context("Błąd parsowania struktury zaszyfrowanego udziału")?;
+
+            // Próba odszyfrowania - jeśli hasło jest błędne, tu zgłaszany jest błąd
+            let decrypted_key = decrypt_with_password(&password, &container)
+                .with_context(|| format!("Niepoprawne hasło dla Oficera nr {}!", record.index))?;
 
             shares_to_send.push((record.index, hex::encode(decrypted_key.as_bytes())));
+            println!("[OK] Odszyfrowano udział Oficera nr {}", record.index);
         }
     } else {
         println!("[INFO] Tryb interaktywnego wprowadzania udziałów.");
@@ -81,7 +107,6 @@ async fn send_init_master_key_request(
     threshold: u8,
     shares: Vec<(u8, String)>,
 ) -> Result<()> {
-    // Walidacja unikalności indeksów Oficerów po stronie CLI (Fast Fail UX)
     let mut seen_indices = HashSet::with_capacity(shares.len());
     for (index, _) in &shares {
         if !seen_indices.insert(index) {

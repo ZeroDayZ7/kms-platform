@@ -52,6 +52,7 @@ pub fn write_share_file(
 pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
     let mut records = Vec::new();
     let entries = fs::read_dir(dir)?;
+
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
@@ -60,7 +61,18 @@ pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
         }
 
         let content = fs::read_to_string(&path)?;
-        let record: ShareFileRecord = serde_json::from_str(&content)?;
+        let record: ShareFileRecord = serde_json::from_str(&content)
+            .with_context(|| format!("Uszkodzona struktura JSON w pliku: {}", path.display()))?;
+
+        // --- WERYFIKACJA HASHA SHA-256 ---
+        let expected_sha256 = compute_sha256_hex(&record.share_hex);
+        if record.share_sha256 != expected_sha256 {
+            anyhow::bail!(
+                "Błąd integralności! Plik {} został zmodyfikowany lub uszkodzony (niezgodny hash SHA-256).",
+                path.display()
+            );
+        }
+
         records.push(record);
     }
     Ok(records)
