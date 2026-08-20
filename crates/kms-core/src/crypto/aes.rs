@@ -90,7 +90,9 @@ pub fn encrypt_storage_key(
     master_key: &SecretKey,
     storage_key: &SecretKey,
 ) -> Result<EncryptedContainer> {
-    let (_pass_key, salt_str) = derive_key_from_password("default-pass")?;
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    let salt_str = salt.to_string();
+
     let cipher = Aes256Gcm::new_from_slice(master_key.as_bytes())?;
 
     let mut nonce_bytes = [0u8; 12];
