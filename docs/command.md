@@ -29,7 +29,12 @@ docker compose up -d
 # Jeśli chcesz uruchomić również narzędzia (np. kms-ceremony-cli)
 
 docker compose --profile tools run --rm kms-ceremony-cli
+
 MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
+
+MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
+
+docker compose restart vhsm-daemon
 
 docker compose --profile tools up -d
 
