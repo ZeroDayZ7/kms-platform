@@ -1,6 +1,6 @@
 [server]
-host = "127.0.0.1"
-port = 7000
+host = "0.0.0.0"
+port = 8080
 shutdown_timeout = 30
 
 [log]

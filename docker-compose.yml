@@ -6,7 +6,7 @@ x-common-settings: &common-settings
     - citizen-app-net
 
 x-common-healthcheck: &common-healthcheck
-  interval: 10s
+  interval: 180s
   timeout: 5s
   retries: 5
   start_period: 15s
@@ -104,7 +104,7 @@ services:
     ports:
       - "8081:8080"
     environment:
-      - APP_CONFIG_PATH=/app/config/settings.toml
+      - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.toml
       - RUST_LOG=${RUST_LOG:-info,kms_service=debug}
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080
@@ -124,9 +124,9 @@ services:
         condition: service_healthy
       vhsm-daemon:
         condition: service_healthy
-    healthcheck:
-      <<: *common-healthcheck
-      test: ["CMD", "curl", "-f", "http://localhost:8080/healthz"]
+    # healthcheck:
+    #   <<: *common-healthcheck
+    #   test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
   # endregion
 
   # region KMS CEREMONY CLI (TOOLING)

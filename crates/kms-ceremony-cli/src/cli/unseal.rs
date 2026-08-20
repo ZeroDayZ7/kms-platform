@@ -1,5 +1,6 @@
 use anyhow::{Context, Result, bail};
 use dialoguer::{Input, Password};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use kms_core::crypto::aes::{EncryptedContainer, decrypt_with_password};
@@ -80,6 +81,16 @@ async fn send_init_master_key_request(
     threshold: u8,
     shares: Vec<(u8, String)>,
 ) -> Result<()> {
+    // Walidacja unikalności indeksów Oficerów po stronie CLI (Fast Fail UX)
+    let mut seen_indices = HashSet::with_capacity(shares.len());
+    for (index, _) in &shares {
+        if !seen_indices.insert(index) {
+            bail!(
+                "Wykryto powielony indeks Oficera ({index})! Każdy udział musi pochodzić od innego Oficera."
+            );
+        }
+    }
+
     let request = HsmRequest::InitMasterKey { threshold, shares };
 
     match send_hsm_request(&socket_path, &request).await {
