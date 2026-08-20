@@ -27,42 +27,45 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
-        HsmRequest::GenerateCeremony {
-            threshold,
-            total_shares,
-        } => {
-            let guard = state.read().await;
+   // src/handler.rs
 
-            if guard.initialized {
-                return HsmResponse::Error {
-                    code: 400,
-                    message: "vHSM is already initialized. Reset required to re-run ceremony."
-                        .to_string(),
-                };
-            }
+HsmRequest::GenerateCeremony {
+    threshold,
+    total_shares,
+} => {
+    let guard = state.read().await;
 
-            drop(guard);
+    if guard.initialized {
+        return HsmResponse::Error {
+            code: 400,
+            message: "vHSM is already initialized. Reset required to re-run ceremony."
+                .to_string(),
+        };
+    }
 
-            match crypto::generate_and_split_master_key(total_shares, threshold) {
-                Ok((raw_master_key, shares)) => {
-                    let mut guard = state.write().await;
+    drop(guard);
 
-                    guard.master_key = Some(raw_master_key);
-                    guard.initialized = true;
-                    guard.active_key_version = 1;
-                    guard.touch_activity();
+    match crypto::generate_and_split_master_key(total_shares, threshold) {
+        Ok((raw_master_key, shares)) => {
+            let mut guard = state.write().await;
 
-                    tracing::info!("vHSM wygenerował wewnątrz nowy Master Key i podzielił go SSS.");
+            guard.master_key = Some(raw_master_key);
+            guard.initialized = true;
+            guard.active_key_version = 1;
+            guard.touch_activity();
 
-                    HsmResponse::CeremonyGenerated { shares }
-                }
+            // LOGI DIAGNOSTYCZNE
+            tracing::info!("vHSM wygenerował wewnątrz nowy Master Key i podzielił go SSS.");
 
-                Err(msg) => HsmResponse::Error {
-                    code: 500,
-                    message: msg,
-                },
-            }
+            HsmResponse::CeremonyGenerated { shares }
         }
+
+        Err(msg) => HsmResponse::Error {
+            code: 500,
+            message: msg,
+        },
+    }
+}
 
         HsmRequest::InitMasterKey { threshold, shares } => {
             if threshold == 0 {

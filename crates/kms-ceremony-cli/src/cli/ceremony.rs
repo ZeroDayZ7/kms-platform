@@ -1,10 +1,9 @@
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use dialoguer::Password;
 use std::fs;
 use std::path::PathBuf;
 
 use kms_core::crypto::aes::encrypt_bytes_with_password;
-use kms_core::crypto::keys::{KEY_SIZE, SecretKey};
 use kms_core::hsm::client::send_hsm_request;
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
@@ -50,7 +49,7 @@ pub async fn handle_interactive_ceremony(
         raw_shares.len()
     );
 
-    for (index, hex_val) in raw_shares {
+    for (index, raw_share_str) in raw_shares {
         println!("--------------------------------------------------");
         println!("Oficerzie nr {index}, podejmij swój udział.");
 
@@ -66,35 +65,13 @@ pub async fn handle_interactive_ceremony(
             bail!("Hasła się nie zgadzają! Przerwano ceremonię.");
         }
 
-        // 1. Usunięcie prefiksu typu "1-", jeśli występuje w ciągu udziału
-        let clean_hex = if let Some((_, data)) = hex_val.split_once('-') {
-            data
-        } else {
-            &hex_val
-        };
+        // Pobieramy surowe bajty z wartości SSS zwrócenie z vHSM (bez dekodowania z HEX)
+        let share_bytes = raw_share_str.as_bytes();
 
-        // 2. Normalizacja – obsługa nieparzystej długości HEX zgodnie z wymogami Clippy
-        let formatted_hex = if !clean_hex.len().is_multiple_of(2) {
-            format!("0{clean_hex}")
-        } else {
-            clean_hex.to_string()
-        };
+        // Szyfrowanie udziału SSS hasłem Oficera
+        let encrypted_container = encrypt_bytes_with_password(&password, share_bytes)?;
 
-        // 3. Dekodowanie z formatu HEX na bajty
-        let raw_share_bytes = hex::decode(&formatted_hex)
-            .with_context(|| format!("Nieprawidłowy format HEX udziału nr {index}"))?;
-
-        // 4. Bezpieczna konwersja na bajty klucza bez .unwrap()
-        let share_bytes_arr: [u8; KEY_SIZE] = raw_share_bytes.try_into().map_err(|_| {
-            anyhow!("Nieprawidłowa długość bajtów udziału nr {index} (oczekiwano {KEY_SIZE} B)")
-        })?;
-
-        let share_secret = SecretKey::from_bytes(share_bytes_arr);
-
-        // 5. Szyfrowanie kluczem wygenerowanym z hasła
-        let encrypted_container = encrypt_bytes_with_password(&password, share_secret.as_bytes())?;
-
-        // 6. Zapis kontenera do pliku
+        // Zapis kontenera do pliku
         let file_path = write_share_file(
             &share_dir,
             index,
