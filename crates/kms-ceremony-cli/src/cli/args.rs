@@ -21,7 +21,7 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
@@ -57,7 +57,7 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
@@ -84,7 +84,7 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
@@ -99,8 +99,7 @@ pub enum Commands {
 
         #[arg(
             short,
-            long,
-            tag = "share",
+            long = "share",
             help = "Udziały w formacie INDEX:HEX (np. 1:a3f5...)",
             required = true
         )]
@@ -112,7 +111,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
@@ -126,7 +125,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,

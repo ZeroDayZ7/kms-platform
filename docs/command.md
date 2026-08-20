@@ -15,6 +15,7 @@ cargo build --release -p vhsm-daemon
 # Buduje wszystkie serwisy produkcyjne (mongodb, redis, vhsm-daemon, kms-service)
 
 docker compose build
+docker compose up --build -d
 
 # Buduje wszystkie serwisy łącznie z narzędziami CLI (kms-ceremony-cli)
 
@@ -22,6 +23,7 @@ docker compose --profile tools build
 
 # Uruchamia główne usługi w tle (MongoDB, Redis, vHSM Daemon, KMS Service)
 
+docker compose down -v
 docker compose up -d
 
 # Jeśli chcesz uruchomić również narzędzia (np. kms-ceremony-cli)

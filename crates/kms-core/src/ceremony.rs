@@ -1,3 +1,4 @@
+use crate::crypto::aes::EncryptedContainer;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -18,7 +19,7 @@ pub struct ShareFileRecord {
     pub index: u8,
     pub threshold: u8,
     pub total_shares: u8,
-    pub share_hex: String,
+    pub container: EncryptedContainer, // Zamiast jawnego share_hex przechowujemy pełny kontener (salt, nonce, ciphertext)
     pub share_sha256: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }

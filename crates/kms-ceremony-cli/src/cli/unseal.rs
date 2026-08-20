@@ -1,0 +1,96 @@
+use anyhow::{Context, Result, bail};
+use dialoguer::{Input, Password};
+use std::path::PathBuf;
+
+use kms_core::crypto::aes::{EncryptedContainer, decrypt_with_password};
+use kms_core::hsm::client::send_hsm_request;
+use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
+
+use crate::storage::files::load_share_directory;
+
+pub async fn handle_unseal_hsm(
+    socket_path: String,
+    threshold: u8,
+    shares_dir: Option<PathBuf>,
+) -> Result<()> {
+    let mut shares_to_send: Vec<(u8, String)> = Vec::new();
+
+    if let Some(dir) = shares_dir {
+        println!("[INFO] Wczytywanie udziałów z katalogu: {}", dir.display());
+        let records = load_share_directory(&dir)?;
+
+        if records.len() < threshold as usize {
+            bail!(
+                "Znaleziono za mało plików udziałów: {} (wymagane: {})",
+                records.len(),
+                threshold
+            );
+        }
+
+        for record in records.into_iter().take(threshold as usize) {
+            let password = Password::new()
+                .with_prompt(format!("Podaj PIN/hasło dla Oficera nr {}", record.index))
+                .interact()?;
+
+            let container: EncryptedContainer = serde_json::from_str(&record.share_hex)?;
+            let decrypted_key = decrypt_with_password(&password, &container)?;
+
+            shares_to_send.push((record.index, hex::encode(decrypted_key.as_bytes())));
+        }
+    } else {
+        println!("[INFO] Tryb interaktywnego wprowadzania udziałów.");
+        for i in 1..=threshold {
+            let index: u8 = Input::new()
+                .with_prompt(format!("Podaj numer Oficera ({i}/{threshold})"))
+                .interact()?;
+
+            let share_hex: String = Password::new()
+                .with_prompt(format!("Wklej treść udziału dla Oficera nr {index}"))
+                .interact()?;
+
+            shares_to_send.push((index, share_hex.trim().to_string()));
+        }
+    }
+
+    send_init_master_key_request(socket_path, threshold, shares_to_send).await
+}
+
+pub async fn handle_init_master_key(
+    socket_path: String,
+    threshold: u8,
+    shares: Vec<String>,
+) -> Result<()> {
+    let mut parsed_shares = Vec::new();
+    for raw_share in shares {
+        if let Some((idx_str, hex_str)) = raw_share.split_once(':') {
+            let idx = idx_str
+                .parse::<u8>()
+                .context("Nieprawidłowy indeks udziału")?;
+            parsed_shares.push((idx, hex_str.trim().to_string()));
+        } else {
+            bail!("Udział podany w CLI musi mieć format 'INDEX:HEX' (np. '1:a3f5...')");
+        }
+    }
+
+    send_init_master_key_request(socket_path, threshold, parsed_shares).await
+}
+
+async fn send_init_master_key_request(
+    socket_path: String,
+    threshold: u8,
+    shares: Vec<(u8, String)>,
+) -> Result<()> {
+    let request = HsmRequest::InitMasterKey { threshold, shares };
+
+    match send_hsm_request(&socket_path, &request).await {
+        Ok(HsmResponse::MasterKeyInitialized) => {
+            println!("✅ Master Key został pomyślnie odtworzony w vHSM! Daemon jest gotowy.");
+            Ok(())
+        }
+        Ok(HsmResponse::Error { code, message }) => {
+            bail!("Błąd odblokowania vHSM [{code}]: {message}")
+        }
+        Ok(_) => bail!("Nieoczekiwana odpowiedź z vHSM"),
+        Err(err) => bail!("Błąd komunikacji z vHSM: {err}"),
+    }
+}
