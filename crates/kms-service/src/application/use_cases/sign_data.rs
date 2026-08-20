@@ -145,8 +145,9 @@ where
         };
 
         let mut private_key_bytes = match self
-            .crypto_service
-            .decrypt_private_key(&key.encrypted_private_key)
+    .crypto_service
+    .decrypt_private_key(&key.encrypted_private_key)
+    .await
         {
             Ok(bytes) => bytes,
             Err(err) => {

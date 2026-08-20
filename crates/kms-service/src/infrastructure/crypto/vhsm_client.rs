@@ -1,5 +1,3 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::UnixStream;
 use serde::{Deserialize, Serialize};
 use crate::errors::{AppError, AppResult};
 
@@ -18,6 +16,7 @@ pub enum VhsmResponse {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct VhsmClient {
     socket_path: String,
 }
@@ -29,7 +28,11 @@ impl VhsmClient {
         }
     }
 
+    #[cfg(unix)]
     async fn send_request(&self, command: &VhsmCommand) -> AppResult<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::UnixStream;
+
         let payload = serde_json::to_vec(command)
             .map_err(|e| AppError::SerializationError(e.to_string()))?;
 
@@ -37,12 +40,7 @@ impl VhsmClient {
 
         let mut stream = UnixStream::connect(&self.socket_path).await.map_err(|e| {
             AppError::RuntimeError(format!("Nie udało się połączyć z vhsm-daemon pod ścieżką {}: {e}", self.socket_path))
-        });
-
-        let mut stream = match stream {
-            Ok(s) => s,
-            Err(e) => return Err(e),
-        };
+        })?;
 
         stream.write_all(&len_header).await.map_err(|e| {
             AppError::RuntimeError(format!("Błąd zapisu nagłówka do vHSM: {e}"))
@@ -73,6 +71,13 @@ impl VhsmClient {
                 "vHSM zwrócił błąd: {message}"
             ))),
         }
+    }
+
+    #[cfg(not(unix))]
+    async fn send_request(&self, _command: &VhsmCommand) -> AppResult<String> {
+        Err(AppError::RuntimeError(
+            "vHSM Unix Domain Sockets są wspierane wyłącznie na systemach Unix/Linux. Uruchom aplikację w WSL2 lub kontenerze Docker.".to_string()
+        ))
     }
 
     pub async fn encrypt(&self, plaintext_hex: &str) -> AppResult<String> {

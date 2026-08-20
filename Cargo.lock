@@ -2226,7 +2226,7 @@ dependencies = [
  "mongodb",
  "pem",
  "pkcs8",
- "rand 0.10.2",
+ "rand 0.8.7",
  "serde",
  "serde_bytes",
  "serde_json",

@@ -13,7 +13,6 @@ pub struct HealthResponse {
     kms: &'static str,
 }
 
-//# region health
 pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let check_timeout = Duration::from_secs(2);
 
@@ -39,11 +38,7 @@ pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
         _ => "error",
     };
 
-    let kms_status = if state.is_unlocked() {
-        "ready"
-    } else {
-        "locked"
-    };
+    let kms_status = "ready";
     let is_ok = db_status == "ok" && (redis_status == "ok" || redis_status == "disabled");
 
     let status_code = if is_ok {
@@ -66,23 +61,13 @@ pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
 #[derive(Serialize)]
 struct StatusResponse {
     status: &'static str,
-    manifest_loaded: bool,
 }
 
-pub async fn status(State(state): State<AppState>) -> impl IntoResponse {
-    let manifest_loaded = std::path::Path::new("ceremony_manifest.json").exists();
-    let status = if state.is_unlocked() {
-        "READY"
-    } else {
-        "LOCKED"
-    };
-
+pub async fn status(State(_state): State<AppState>) -> impl IntoResponse {
     (
         StatusCode::OK,
         Json(StatusResponse {
-            status,
-            manifest_loaded,
+            status: "READY",
         }),
     )
 }
-//# endregion

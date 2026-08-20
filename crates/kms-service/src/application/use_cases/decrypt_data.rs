@@ -17,7 +17,7 @@ where
         Self { crypto }
     }
 
-    pub fn execute(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>> {
-        self.crypto.decrypt_private_key(encrypted)
+    pub async fn execute(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>> {
+        self.crypto.decrypt_private_key(encrypted).await
     }
 }

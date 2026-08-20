@@ -71,7 +71,6 @@ where
             &KeyAccessLevel::SymmetricKey,
         );
 
-        // 1. Weryfikacja ACL i audytowanie próby nieautoryzowanego dostępu
         if !is_allowed {
             self.audit_repo
                 .record(AuditLog {
@@ -89,7 +88,6 @@ where
             return Err(AppError::Unauthorized);
         }
 
-        // 2. Pobieramy aktywny klucz (TYLKO Active) dla kluczy symetrycznych
         let key_entity = match self
             .key_repo
             .get_active_key(&input.target_service, input.algorithm)
@@ -117,11 +115,12 @@ where
             }
         };
 
+        // DODANO: .await
         let decrypted = self
             .crypto_service
-            .decrypt_private_key(&key_entity.encrypted_private_key)?;
+            .decrypt_private_key(&key_entity.encrypted_private_key)
+            .await?;
 
-        // 3. Rejestracja udanego odczytu w audycie
         self.audit_repo
             .record(AuditLog {
                 id: Uuid::now_v7(),

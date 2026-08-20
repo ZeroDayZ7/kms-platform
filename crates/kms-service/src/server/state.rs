@@ -2,22 +2,21 @@ use crate::application::use_cases::{
     DecryptDataUseCase, EncryptDataUseCase, GenerateKeyPairUseCase, GetPrivateKeyUseCase,
     GetPublicKeyUseCase, GetSymmetricKeyUseCase, RotateKeyUseCase, SignDataUseCase,
 };
-use crate::bootstrap::SecureStorageKey;
 use crate::config::Settings;
 use crate::domain::rate_limiter::{InMemoryRateLimiter, RateLimiter};
 use crate::errors::AppResult;
-use crate::infrastructure::crypto::kms_service::KmsCryptoService;
+use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
 use crate::infrastructure::mongodb::audit::MongoAuditRepository;
 use crate::infrastructure::mongodb::client::init_mongo;
 use crate::infrastructure::mongodb::keys::MongoKeyRepository;
 use crate::infrastructure::redis::client::RedisManager;
 use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
-
+use crate::infrastructure::crypto::vhsm_client::VhsmClient;
 use mongodb::Database;
 use std::sync::Arc;
 
-pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<KmsCryptoService>;
-pub type ConcreteDecryptDataUseCase = DecryptDataUseCase<KmsCryptoService>;
+pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService>;
+pub type ConcreteDecryptDataUseCase = DecryptDataUseCase<VhsmCryptoService>;
 pub type ConcreteGenerateKeyPairUseCase = GenerateKeyPairUseCase<MongoKeyRepository>;
 pub type ConcreteGetPublicKeyUseCase = GetPublicKeyUseCase<MongoKeyRepository>;
 pub type ConcreteGetPrivateKeyUseCase =
@@ -46,14 +45,10 @@ pub struct AppState {
     pub db: Database,
     pub redis_manager: Option<Arc<RedisManager>>,
     pub key_repo: Arc<MongoKeyRepository>,
-    pub crypto_service: Arc<KmsCryptoService>,
-    pub storage_key: Arc<tokio::sync::RwLock<Option<Arc<SecureStorageKey>>>>,
-    /// Simple, synchronous flag to indicate whether KMS is unlocked and ready.
-    pub kms_unlocked: Arc<std::sync::atomic::AtomicBool>,
+    pub crypto_service: Arc<VhsmCryptoService>,
 }
 
 impl AppState {
-    //# region new
     pub async fn new(settings: Arc<Settings>) -> AppResult<Self> {
         let mongo_db = init_mongo(&settings.database).await?;
 
@@ -75,7 +70,8 @@ impl AppState {
 
         key_repo.ensure_indexes().await?;
 
-        let crypto_service = Arc::new(KmsCryptoService::new(&settings.crypto)?);
+      let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
+let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
         let _ =
             crate::workers::expiration::run_expiration_worker(key_repo.clone(), audit_repo.clone())
@@ -137,30 +133,6 @@ impl AppState {
             redis_manager,
             key_repo,
             crypto_service,
-            storage_key: Arc::new(tokio::sync::RwLock::new(None)),
-            kms_unlocked: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
-
-    /// Set the in-memory storage key and mark KMS as unlocked.
-    pub async fn set_storage_key(&self, key: SecureStorageKey) {
-        let arc_key = Arc::new(key);
-        let mut w = self.storage_key.write().await;
-        *w = Some(arc_key);
-        self.kms_unlocked
-            .store(true, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    /// Clear the in-memory storage key and mark KMS as locked.
-    pub async fn clear_storage_key(&self) {
-        let mut w = self.storage_key.write().await;
-        *w = None;
-        self.kms_unlocked
-            .store(false, std::sync::atomic::Ordering::SeqCst);
-    }
-
-    pub fn is_unlocked(&self) -> bool {
-        self.kms_unlocked.load(std::sync::atomic::Ordering::SeqCst)
-    }
-    //# endregion
 }

@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use ed25519_dalek::{SigningKey, pkcs8::EncodePublicKey};
 use pkcs8::LineEnding;
-use rand_core::RngCore;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
@@ -22,9 +23,8 @@ impl VhsmCryptoService {
 
 #[async_trait::async_trait]
 impl KmsCryptoServiceTrait for VhsmCryptoService {
-    // Generowanie kryptograficznych par kluczy pozostaje w kms-service (czysty algorytm lokalny)
     fn generate_ed25519_keypair(&self) -> AppResult<RawKeyPair> {
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = OsRng;
         let signing_key = SigningKey::generate(&mut rng);
         let verifying_key = signing_key.verifying_key();
 
@@ -41,7 +41,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
     }
 
     fn generate_x25519_keypair(&self) -> AppResult<RawKeyPair> {
-        let rng = rand::rngs::OsRng;
+        let rng = OsRng;
         let secret = StaticSecret::random_from_rng(rng);
         let public = X25519PublicKey::from(&secret);
 
@@ -58,7 +58,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
 
     fn generate_symmetric_key(&self) -> AppResult<RawKeyPair> {
         let mut key_bytes = [0u8; 32];
-        let mut rng = rand::rngs::OsRng;
+        let mut rng = OsRng;
 
         rng.try_fill_bytes(&mut key_bytes)
             .map_err(|e| AppError::CryptoError(format!("RNG error: {e}")))?;
@@ -69,7 +69,6 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         })
     }
 
-    // Szyfrowanie klucza prywatnego delegujemy asynchronicznie do vhsm-daemon przez socket
     async fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey> {
         let hex_plain = hex::encode(private_key);
         let ciphertext_hex = self.client.encrypt(&hex_plain).await?;
@@ -79,12 +78,11 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
 
         Ok(EncryptedPrivateKey {
             ciphertext,
-            nonce: Vec::new(), // vHSM zarządza szyfrowaniem wewnętrznie, nonce nie jest potrzebne w kms-service
+            nonce: Vec::new(),
             master_key_version: 1,
         })
     }
 
-    // Odszyfrowywanie klucza prywatnego przez socket vHSM
     async fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>> {
         let hex_cipher = hex::encode(&encrypted.ciphertext);
         let plaintext_hex = self.client.decrypt(&hex_cipher).await?;

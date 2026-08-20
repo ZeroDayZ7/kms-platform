@@ -17,7 +17,7 @@ where
         Self { crypto }
     }
 
-    pub fn execute(&self, plaintext: &[u8]) -> AppResult<EncryptedPrivateKey> {
-        self.crypto.encrypt_private_key(plaintext)
+    pub async fn execute(&self, plaintext: &[u8]) -> AppResult<EncryptedPrivateKey> {
+        self.crypto.encrypt_private_key(plaintext).await
     }
 }

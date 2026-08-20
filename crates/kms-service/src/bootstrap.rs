@@ -57,7 +57,7 @@ where
                 };
 
                 let encrypted_private_key =
-                    crypto_service.encrypt_private_key(&generated_key.private_key_bytes)?;
+                    crypto_service.encrypt_private_key(&generated_key.private_key_bytes).await?;
 
                 let new_key = KeyPairEntity {
                     id: uuid::Uuid::now_v7(),

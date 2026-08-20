@@ -6,7 +6,6 @@ use axum::{
     routing::{get, post},
 };
 
-//# region router
 pub fn router(state: AppState) -> Router {
     let cors = middleware::create_cors_layer(&state.settings);
     let security = middleware::create_security_headers_layer().into_inner();
@@ -17,10 +16,6 @@ pub fn router(state: AppState) -> Router {
         middleware::redis_rate_limit_middleware,
     );
 
-    let kms_mw =
-        axum::middleware::from_fn_with_state(state.clone(), middleware::kms_lock_middleware);
-
-    let enable_lock = state.settings.crypto.enable_http_lock;
     let enable_rewrap = state.settings.crypto.enable_http_rewrap;
 
     let mut router = Router::new()
@@ -57,10 +52,6 @@ pub fn router(state: AppState) -> Router {
             post(crypto::sign_data_handler).layer(rate_limits.auth.clone()),
         )
         .route(
-            "/api/v1/admin/ceremony/unlock",
-            post(admin::unlock_handler).layer(rate_limits.auth.clone()),
-        )
-        .route(
             "/api/v1/encrypt",
             post(crypto::encrypt_handler).layer(rate_limits.auth.clone()),
         )
@@ -76,20 +67,11 @@ pub fn router(state: AppState) -> Router {
         );
     }
 
-    if enable_lock {
-        router = router.route(
-            "/api/v1/admin/ceremony/lock",
-            post(admin::lock_handler).layer(rate_limits.auth.clone()),
-        );
-    }
-
     router
         .route_layer(rate_limits.global.clone())
         .layer(redis_mw)
-        .layer(kms_mw)
         .layer(security)
         .layer(cors)
         .layer(middleware::http_trace_layer())
         .with_state(state)
 }
-//# endregion
