@@ -1,32 +1,33 @@
 # KMS Platform
 
-An enterprise-grade, microservice-based Key Management System (KMS) written in Rust, designed for secure key lifecycle management, envelope encryption, and virtualized HSM hardware isolation.
+A Rust-based mono-repo Key Management System built to stop keys from floating around as plaintext in configurations and databases. Powered by microservices, vHSM isolation, and Shamir's ceremonies.
 
-## Architecture Overview
+<p align="center">
+  <img src="docs/assets/banner.png" alt="KMS Platform Architecture" />
+</p>
 
-The platform is structured as a Rust workspace composed of decoupled, single-responsibility crates separating shared cryptographic primitives, core API services, ceremony tooling, and virtual HSM daemons.
+## Workspace Layout
 
-| Component              | Type            | Primary Responsibility                                                                                                              |
-| :--------------------- | :-------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
-| **`kms-core`**         | Shared Library  | Domain models, serialization primitives, SSS algorithms, IPC framing protocols, and shared cryptographic primitives.                |
-| **`kms-service`**      | Core Service    | High-level API managing Data Encryption Key (DEK) lifecycle, key rotation, versioning, and cryptographic delegation.                |
-| **`vhsm-daemon`**      | Isolated Daemon | Virtual Hardware Security Module (vHSM) managing root key reconstruction in memory and processing crypto commands over IPC sockets. |
-| **`kms-ceremony-cli`** | CLI Utility     | Operational tool for executing zero-trust key generation ceremonies and splitting master secrets into SSS shares.                   |
+| Component              | Role        | What it does                                                                              |
+| :--------------------- | :---------- | :---------------------------------------------------------------------------------------- |
+| **`kms-core`**         | Library     | Shared models, SSS (Shamir's Secret Sharing), IPC protocol, and cryptographic primitives. |
+| **`kms-service`**      | API Service | Lifecycle management for DEK/KEK, key rotation, and versioning.                           |
+| **`vhsm-daemon`**      | vHSM Daemon | Isolated process holding the master key strictly in RAM; handles IPC over sockets.        |
+| **`kms-ceremony-cli`** | CLI Utility | Executes key split ceremonies and generates operator shares.                              |
 
 ---
 
-## Key Cryptographic Concepts & Design
+## Architecture & Security
 
-- **Dual Master Key Provider Engine:**
-  - **`local` Mode:** `kms-service` loads master key material directly into service memory. Suitable for standalone deployments or development environments.
-  - **`hsm` Mode:** `kms-service` retains zero knowledge of the master keys. All cryptographic operations (encrypt/decrypt/rewrap) are delegated via IPC socket directly to the `vhsm-daemon`.
+- **Master Key Providers:**
+  - **`local`**: Dev/standalone mode (direct access to the key within the service).(deprecated)
+  - **`hsm`**: Zero-trust mode. `kms-service` has zero knowledge of the master key; every cryptographic operation is delegated via Unix Socket to `vhsm-daemon`.
 
-- **Isolated Virtual HSM (vHSM):**
-  - Operates as a separate daemon process listening on Unix Domain Sockets (with abstract transport boundaries for IPC/TCP extension).
-  - Enforces a deterministic 4-byte big-endian length-prefixed binary message framing protocol for safe payload parsing.
-  - Maintains root key material strictly in-memory (`RAM`) with secure zeroization on process termination or reset.
+- **Virtual HSM (vHSM):**
+  - Runs as an isolated process with memory sandboxing.
+  - Binary communication based on a length-prefixed protocol (4-byte big-endian header).
+  - Zero disk persistence for the root key; requires a formal ceremony unlock sequence.
 
 - **Shamir's Secret Sharing (SSS) Ceremony:**
-  - Root master keys are generated during formal key ceremonies using `kms-ceremony-cli`.
-  - Secrets are split into $N$ key shares with an $M$-of-$N$ threshold requirement.
-  - Unlocking the `vhsm-daemon` requires submitting the valid $M$ threshold shares via the `InitMasterKey` protocol request.
+  - The root master key is generated and split into $N$ shares with an $M$-of-$N$ threshold requirement.
+  - Unlocking the `vhsm-daemon` requires submitting the required number of valid, decrypted-on-the-fly shares via the CLI.
