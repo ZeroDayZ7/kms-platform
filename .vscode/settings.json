@@ -1,17 +1,17 @@
 {
   // === Explorer & Search ===
   "files.exclude": {
-    "**/target": true
-    // "**/Cargo.lock": true,
-    // "**/.git": true,
-    // "**/.github": true,
-    // "**/docker-entrypoint-initdb.d": true,
-    // "**/.vscode": true,
-    // "**/tests": true,
-    // "**/LICENSE": true
-    // "**/.env.example": true
-    // "**/.env": true
-    // "**/README.md": true
+    "**/target": true,
+    "**/Cargo.lock": true,
+    "**/.git": true,
+    "**/.github": true,
+    "**/docker-entrypoint-initdb.d": true,
+    "**/tests": true,
+    "**/LICENSE": true,
+    "**/.env.example": true,
+    "**/.env": true,
+    "**/README.md": true,
+    "**/SECURITY.md": true
   },
   "search.exclude": {
     "**/target": true,
@@ -24,6 +24,7 @@
     "**/docker-entrypoint-initdb.d": true,
     "**/.env.example": true,
     "**/README.md": true,
+    "**/SECURITY.md": true,
     "**/combined.txt": true
   },
 

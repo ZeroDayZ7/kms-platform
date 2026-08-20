@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::io::{IsTerminal, stdin};
 use std::path::PathBuf;
 
-use kms_core::crypto::aes::{EncryptedContainer, decrypt_bytes_with_password};
+use kms_core::crypto::aes::decrypt_bytes_with_password;
 use kms_core::hsm::client::send_hsm_request;
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
@@ -54,14 +54,11 @@ pub async fn handle_unseal_hsm(
                 println!("Hasło nie może być puste! Spróbuj ponownie.");
             };
 
-            let container: EncryptedContainer = serde_json::from_str(&record.share_hex)
-                .context("Błąd parsowania struktury zaszyfrowanego udziału")?;
-
-            // Próba odszyfrowania - jeśli hasło jest błędne, tu zgłaszany jest błąd
-            let plaintext = decrypt_bytes_with_password(&password, &container)
+            // BEZPOŚREDNIE UŻYCIE record.container (bez parsowania ze stringa share_hex!)
+            let plaintext = decrypt_bytes_with_password(&password, &record.container)
                 .with_context(|| format!("Niepoprawne hasło dla Oficera nr {}!", record.index))?;
 
-            // Prefer UTF-8 share string; fall back to hex encoding of bytes.
+            // Przekształcenie odtworzonych bajtów udziału do formatu tekstowego
             let share_str = match String::from_utf8(plaintext.clone()) {
                 Ok(s) => s,
                 Err(_) => hex::encode(&plaintext),
