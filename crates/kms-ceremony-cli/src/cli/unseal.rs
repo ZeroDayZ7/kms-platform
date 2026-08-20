@@ -54,7 +54,7 @@ pub async fn handle_unseal_hsm(
                 println!("Hasło nie może być puste! Spróbuj ponownie.");
             };
 
-            // BEZPOŚREDNIE UŻYCIE record.container (bez parsowania ze stringa share_hex!)
+            // BEZPOŚREDNIE UŻYCIE record.container
             let plaintext = decrypt_bytes_with_password(&password, &record.container)
                 .with_context(|| format!("Niepoprawne hasło dla Oficera nr {}!", record.index))?;
 
@@ -83,26 +83,6 @@ pub async fn handle_unseal_hsm(
     }
 
     send_init_master_key_request(socket_path, threshold, shares_to_send).await
-}
-
-pub async fn handle_init_master_key(
-    socket_path: String,
-    threshold: u8,
-    shares: Vec<String>,
-) -> Result<()> {
-    let mut parsed_shares = Vec::new();
-    for raw_share in shares {
-        if let Some((idx_str, hex_str)) = raw_share.split_once(':') {
-            let idx = idx_str
-                .parse::<u8>()
-                .context("Nieprawidłowy indeks udziału")?;
-            parsed_shares.push((idx, hex_str.trim().to_string()));
-        } else {
-            bail!("Udział podany w CLI musi mieć format 'INDEX:HEX' (np. '1:a3f5...')");
-        }
-    }
-
-    send_init_master_key_request(socket_path, threshold, parsed_shares).await
 }
 
 async fn send_init_master_key_request(

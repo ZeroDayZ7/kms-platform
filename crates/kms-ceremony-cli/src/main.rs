@@ -8,7 +8,7 @@ use clap::Parser;
 use crate::cli::args::{CliArgs, Commands};
 use crate::cli::ceremony::handle_interactive_ceremony;
 use crate::cli::crypto_ops::{handle_decrypt, handle_encrypt};
-use crate::cli::unseal::{handle_init_master_key, handle_unseal_hsm};
+use crate::cli::unseal::handle_unseal_hsm;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -30,14 +30,6 @@ async fn main() -> Result<()> {
             shares_dir,
         } => {
             handle_unseal_hsm(socket_path, threshold, shares_dir).await?;
-        }
-
-        Commands::InitMasterKey {
-            socket_path,
-            threshold,
-            shares,
-        } => {
-            handle_init_master_key(socket_path, threshold, shares).await?;
         }
 
         Commands::Encrypt {
