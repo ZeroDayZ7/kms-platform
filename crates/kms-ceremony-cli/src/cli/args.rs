@@ -21,7 +21,8 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            default_value = "/tmp/vhsm.sock"
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
 
@@ -56,7 +57,8 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            default_value = "/tmp/vhsm.sock"
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
 
@@ -82,7 +84,8 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            default_value = "/tmp/vhsm.sock"
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
 
@@ -96,7 +99,8 @@ pub enum Commands {
 
         #[arg(
             short,
-            long = "share",
+            long,
+            tag = "share",
             help = "Udziały w formacie INDEX:HEX (np. 1:a3f5...)",
             required = true
         )]
@@ -105,7 +109,12 @@ pub enum Commands {
 
     /// Szyfruje podany tekst za pomocą klucza HSM
     Encrypt {
-        #[arg(short, long, default_value = "/tmp/vhsm.sock")]
+        #[arg(
+            short,
+            long,
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
         socket_path: String,
 
         #[arg(short, long, help = "Dane jawne w postaci tekstu")]
@@ -114,7 +123,12 @@ pub enum Commands {
 
     /// Odszyfrowuje szyfrogram (zawierający 12-bajtowy nonce na początku)
     Decrypt {
-        #[arg(short, long, default_value = "/tmp/vhsm.sock")]
+        #[arg(
+            short,
+            long,
+            env = "VHSM__SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
         socket_path: String,
 
         #[arg(short, long, help = "Szyfrogram w formacie HEX (Nonce + Ciphertext)")]
