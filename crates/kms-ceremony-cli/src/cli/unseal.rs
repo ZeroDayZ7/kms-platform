@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::io::{IsTerminal, stdin};
 use std::path::PathBuf;
 
-use kms_core::crypto::aes::{EncryptedContainer, decrypt_with_password};
+use kms_core::crypto::aes::{EncryptedContainer, decrypt_bytes_with_password};
 use kms_core::hsm::client::send_hsm_request;
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
@@ -58,10 +58,16 @@ pub async fn handle_unseal_hsm(
                 .context("Błąd parsowania struktury zaszyfrowanego udziału")?;
 
             // Próba odszyfrowania - jeśli hasło jest błędne, tu zgłaszany jest błąd
-            let decrypted_key = decrypt_with_password(&password, &container)
+            let plaintext = decrypt_bytes_with_password(&password, &container)
                 .with_context(|| format!("Niepoprawne hasło dla Oficera nr {}!", record.index))?;
 
-            shares_to_send.push((record.index, hex::encode(decrypted_key.as_bytes())));
+            // Prefer UTF-8 share string; fall back to hex encoding of bytes.
+            let share_str = match String::from_utf8(plaintext.clone()) {
+                Ok(s) => s,
+                Err(_) => hex::encode(&plaintext),
+            };
+
+            shares_to_send.push((record.index, share_str));
             println!("[OK] Odszyfrowano udział Oficera nr {}", record.index);
         }
     } else {

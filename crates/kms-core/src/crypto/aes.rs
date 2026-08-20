@@ -11,8 +11,8 @@ use zeroize::Zeroize;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedContainer {
-    pub salt: String,       // Pole przechowywujące sól dla Argon2
-    pub nonce: String,      // Unikalny IV dla AES-GCM
+    pub salt: String,       // Sól dla Argon2
+    pub nonce: String,      // IV dla AES-GCM
     pub ciphertext: String, // Zaszyfrowane dane
 }
 
@@ -46,11 +46,8 @@ pub fn derive_key_with_salt(password: &str, salt_str: &str) -> Result<SecretKey>
     Ok(SecretKey::from_bytes(key_bytes))
 }
 
-/// Szyfruje surowy klucz/dane za pomocą klucza derywowanego z hasła (używane w ceremonii)
-pub fn encrypt_with_password(
-    password: &str,
-    secret_data: &SecretKey,
-) -> Result<EncryptedContainer> {
+/// Szyfruje dowolne bajty za pomocą klucza derywowanego z hasła (Argon2id -> AES-GCM)
+pub fn encrypt_bytes_with_password(password: &str, data: &[u8]) -> Result<EncryptedContainer> {
     let (key, salt) = derive_key_from_password(password)?;
     let cipher = Aes256Gcm::new_from_slice(key.as_bytes())?;
 
@@ -59,7 +56,7 @@ pub fn encrypt_with_password(
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let ciphertext = cipher
-        .encrypt(nonce, secret_data.as_bytes().as_slice())
+        .encrypt(nonce, data)
         .map_err(|e| anyhow!(e.to_string()))?;
 
     Ok(EncryptedContainer {
@@ -69,8 +66,11 @@ pub fn encrypt_with_password(
     })
 }
 
-/// Odszyfrowuje kontener za pomocą hasła i zawartej w nim soli (używane w unseal)
-pub fn decrypt_with_password(password: &str, container: &EncryptedContainer) -> Result<SecretKey> {
+/// Odszyfrowuje dowolne bajty za pomocą klucza derywowanego z hasła i soli z kontenera
+pub fn decrypt_bytes_with_password(
+    password: &str,
+    container: &EncryptedContainer,
+) -> Result<Vec<u8>> {
     let key = derive_key_with_salt(password, &container.salt)?;
     let cipher = Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|e| anyhow!(e.to_string()))?;
 
@@ -79,20 +79,11 @@ pub fn decrypt_with_password(password: &str, container: &EncryptedContainer) -> 
         hex::decode(&container.ciphertext).map_err(|e| anyhow!(e.to_string()))?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
-    let mut decrypted_bytes = cipher
+    let decrypted_bytes = cipher
         .decrypt(nonce, ciphertext_bytes.as_slice())
         .map_err(|e| anyhow!(e.to_string()))?;
 
-    if decrypted_bytes.len() != KEY_SIZE {
-        decrypted_bytes.zeroize();
-        return Err(anyhow!("Invalid key length recovered"));
-    }
-
-    let mut out = [0u8; KEY_SIZE];
-    out.copy_from_slice(&decrypted_bytes);
-    decrypted_bytes.zeroize();
-
-    Ok(SecretKey::from_bytes(out))
+    Ok(decrypted_bytes)
 }
 
 pub fn encrypt_storage_key(

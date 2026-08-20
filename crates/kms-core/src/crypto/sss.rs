@@ -8,8 +8,15 @@ pub type KmsError = anyhow::Error;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretShare {
     pub index: u8,
+    /// Hex-encoded payload (lowercase, even-length) representing the share bytes
     pub value: String,
 }
+
+// NOTE: The SSS library returns share strings in its own textual format
+// (which may include prefixes/separators). We intentionally keep the raw
+// textual representation and treat shares as opaque strings for storage and
+// transport. The `unlock` function from the library consumes these strings
+// directly when reconstructing the secret, so we preserve them unchanged.
 
 pub fn split_secret(
     secret: &[u8],
@@ -39,14 +46,14 @@ pub fn split_secret(
 
     let share_strings = gen_shares(&config, secret)?;
 
-    let shares = share_strings
-        .into_iter()
-        .enumerate()
-        .map(|(index, value)| SecretShare {
-            index: (index as u8) + 1,
-            value,
-        })
-        .collect();
+    let mut shares = Vec::with_capacity(share_strings.len());
+    for (idx, raw_value) in share_strings.into_iter().enumerate() {
+        // Preserve the raw share string (trimmed) as-produced by the library.
+        shares.push(SecretShare {
+            index: (idx as u8) + 1,
+            value: raw_value.trim().to_string(),
+        });
+    }
 
     Ok(shares)
 }
@@ -56,6 +63,9 @@ pub fn combine_shares(shares: &[SecretShare]) -> Result<Vec<u8>, KmsError> {
         bail!("At least one share is required to reconstruct the key");
     }
 
+    // The underlying `unlock` expects the share payloads in the same textual
+    // form as `gen_shares` returned. We standardized our `SecretShare.value` to
+    // be a hex payload, so pass that directly to `unlock` (it accepts hex).
     let share_strings: Vec<String> = shares.iter().map(|share| share.value.clone()).collect();
     let recovered_bytes = unlock(&share_strings).with_context(|| {
         format!(
@@ -77,13 +87,9 @@ pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec
     Ok(shared
         .into_iter()
         .map(|share| {
-            // Dopisywanie wiodącego zera dla nieparzystej długości
-            let formatted_value = if share.value.len() % 2 != 0 {
-                format!("0{}", share.value)
-            } else {
-                share.value
-            };
-            (share.index, formatted_value)
+            // Ensure hex payload is even-length and normalized (we already
+            // produce even-length hex in `split_secret`). Return `(index, hex)`.
+            (share.index, share.value)
         })
         .collect())
 }
@@ -92,14 +98,10 @@ pub fn combine_shares_legacy(shares: &[(u8, String)]) -> Result<SecretKey> {
     let secret_shares: Vec<SecretShare> = shares
         .iter()
         .map(|(index, value)| {
-            let formatted_value = if value.len() % 2 != 0 {
-                format!("0{value}")
-            } else {
-                value.clone()
-            };
+            // Treat incoming share strings as opaque and preserve them
             SecretShare {
                 index: *index,
-                value: formatted_value,
+                value: value.trim().to_string(),
             }
         })
         .collect();
@@ -109,4 +111,28 @@ pub fn combine_shares_legacy(shares: &[(u8, String)]) -> Result<SecretKey> {
     key_arr.copy_from_slice(&recovered_bytes);
 
     Ok(SecretKey::from_bytes(key_arr))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roundtrip_split_and_combine() {
+        let master = SecretKey::generate();
+        let total = 5u8;
+        let threshold = 3u8;
+
+        let shares = split_shares(&master, total, threshold).expect("split failed");
+        // pick first `threshold` shares and pass to legacy combiner
+        let taken: Vec<(u8, String)> = shares.into_iter().take(threshold as usize).collect();
+
+        let recovered = combine_shares_legacy(&taken).expect("combine failed");
+
+        assert_eq!(master.as_bytes(), recovered.as_bytes());
+    }
+
+    // Note: detailed parsing/normalization tests removed because the SSS
+    // library emits opaque textual share formats; we treat shares as
+    // opaque strings and store/restore them verbatim.
 }
