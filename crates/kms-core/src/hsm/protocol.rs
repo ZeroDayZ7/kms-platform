@@ -12,7 +12,7 @@ pub enum HsmRequest {
     // Stare InitMasterKey zostawiamy np. do odzyskiwania
     InitMasterKey {
         threshold: u8,
-        shares: Vec<String>,
+        shares: Vec<(u8, String)>,
     },
     Encrypt {
         key_id: String,
@@ -35,7 +35,7 @@ pub enum HsmResponse {
     },
     // Odpowiedź z udziałami wygenerowanymi wewnątrz HSM
     CeremonyGenerated {
-        shares: Vec<(u8, String)>, // (index, hex_value)
+        shares: Vec<(u8, String)>,
     },
     MasterKeyInitialized,
     Encrypted {

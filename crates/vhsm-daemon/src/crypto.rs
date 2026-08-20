@@ -1,10 +1,11 @@
 #[cfg(unix)]
 use aes_gcm::{
-    aead::{rand_core::RngCore, Aead, OsRng},
     Aes256Gcm, KeyInit, Nonce,
+    aead::{Aead, OsRng, rand_core::RngCore},
 };
+
 #[cfg(unix)]
-use kms_core::crypto::sss::{combine_shares, split_shares, SecretShare};
+use kms_core::crypto::sss::{combine_shares, split_shares};
 
 #[cfg(unix)]
 pub fn generate_and_split_master_key(
@@ -14,28 +15,27 @@ pub fn generate_and_split_master_key(
     let master_key = kms_core::crypto::keys::generate_master_key();
     let raw_bytes = master_key.as_bytes().to_vec();
 
-    let shares = split_shares(&raw_bytes, total, threshold)
+    let shares = split_shares(&master_key, total, threshold)
         .map_err(|e| format!("Failed to split master key: {e}"))?;
 
     Ok((raw_bytes, shares))
 }
 
 #[cfg(unix)]
-pub fn reconstruct_master_key(shares: &[Vec<u8>]) -> Result<Vec<u8>, String> {
+pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Vec<u8>, String> {
     if shares.is_empty() {
         return Err("At least one share is required".to_string());
     }
 
-    let share_items: Vec<SecretShare> = shares
+    let secret_shares = shares
         .iter()
-        .enumerate()
-        .map(|(index, value)| SecretShare {
-            index: (index as u8) + 1,
+        .map(|(index, value)| kms_core::crypto::sss::SecretShare {
+            index: *index,
             value: value.clone(),
         })
-        .collect();
+        .collect::<Vec<_>>();
 
-    let recovered = combine_shares(&share_items)
+    let recovered = combine_shares(&secret_shares)
         .map_err(|err| format!("Failed to reconstruct master key from shares: {err}"))?;
 
     if recovered.len() != 32 {
@@ -52,6 +52,7 @@ pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
 
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
+
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let mut ciphertext = cipher
@@ -60,6 +61,7 @@ pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
 
     let mut payload = nonce_bytes.to_vec();
     payload.append(&mut ciphertext);
+
     Ok(payload)
 }
 

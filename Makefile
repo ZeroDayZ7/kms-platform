@@ -2,6 +2,8 @@
 
 all: fmt check clippy test
 
+fcc: fmt check clippy
+
 fmt:
 	cargo fmt --all
 

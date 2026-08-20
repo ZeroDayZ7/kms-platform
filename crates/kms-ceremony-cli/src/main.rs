@@ -2,7 +2,7 @@ mod cli;
 mod crypto;
 mod storage;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use dialoguer::Password;
 use std::fs;
@@ -81,7 +81,10 @@ async fn handle_interactive_ceremony(
         bail!("Threshold cannot exceed total shares");
     }
 
-    println!("[INFO] Łączenie z vHSM na {} w celu przeprowadzenia wewnętrznej ceremonii...", socket_path);
+    println!(
+        "[INFO] Łączenie z vHSM na {} w celu przeprowadzenia wewnętrznej ceremonii...",
+        socket_path
+    );
 
     let request = HsmRequest::GenerateCeremony {
         threshold,
@@ -116,9 +119,7 @@ async fn handle_interactive_ceremony(
             .with_prompt(format!("Podaj hasło/PIN dla Oficera nr {index}"))
             .interact()?;
 
-        let confirm = Password::new()
-            .with_prompt("Potwierdź hasło")
-            .interact()?;
+        let confirm = Password::new().with_prompt("Potwierdź hasło").interact()?;
 
         if password != confirm {
             bail!("Hasła się nie zgadzają! Przerwano ceremonię ze względów bezpieczeństwa.");
@@ -215,8 +216,14 @@ async fn main() -> Result<()> {
             threshold,
             shares,
         } => {
-            let cleaned_shares: Vec<String> =
-                shares.into_iter().map(|s| s.trim().to_string()).collect();
+            let cleaned_shares: Vec<(u8, String)> = shares
+                .into_iter()
+                .enumerate()
+                .map(|(index, share)| {
+                    let index = (index + 1) as u8;
+                    (index, share.trim().to_string())
+                })
+                .collect();
 
             let request = HsmRequest::InitMasterKey {
                 threshold,

@@ -10,6 +10,11 @@ key_pairs
 cargo run
 cargo run -- serve
 cargo build --release
+cargo build --release -p vhsm-daemon
+docker compose build --no-cache vhsm-daemon
+
+docker compose build vhsm-daemon
+docker compose up -d vhsm-daemon
 
 ./scripts/unlock.sh
 ./scripts/lock.sh

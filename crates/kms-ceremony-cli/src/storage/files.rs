@@ -6,7 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-use crate::crypto::keys::{SecretKey, KEY_SIZE};
+use crate::crypto::keys::{KEY_SIZE, SecretKey};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShareFileRecord {

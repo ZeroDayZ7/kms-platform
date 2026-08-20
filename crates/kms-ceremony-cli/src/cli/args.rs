@@ -52,13 +52,28 @@ pub enum Commands {
         )]
         socket_path: String,
 
-        #[arg(short = 's', long, default_value_t = 5, help = "Całkowita liczba udziałów")]
+        #[arg(
+            short = 's',
+            long,
+            default_value_t = 5,
+            help = "Całkowita liczba udziałów"
+        )]
         shares: u8,
 
-        #[arg(short = 't', long, default_value_t = 3, help = "Próg wymaganych udziałów (K)")]
+        #[arg(
+            short = 't',
+            long,
+            default_value_t = 3,
+            help = "Próg wymaganych udziałów (K)"
+        )]
         threshold: u8,
 
-        #[arg(short = 'o', long, default_value = "./out", help = "Katalog wyjściowy na pliki udziałów")]
+        #[arg(
+            short = 'o',
+            long,
+            default_value = "./out",
+            help = "Katalog wyjściowy na pliki udziałów"
+        )]
         output_dir: PathBuf,
     },
 
