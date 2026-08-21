@@ -14,7 +14,7 @@ use crate::{
             repository::KeyRepository,
         },
     },
-    errors::AppResult,
+    errors::{AppError, AppResult},
 };
 
 /// Sprawdza w pętli dostępność i stan odblokowania (unseal) vHSM przed podjęciem operacji bootstrapu
@@ -61,6 +61,7 @@ pub async fn bootstrap_keys<R>(
     acl_settings: &AclSettings,
     key_repo: Arc<R>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
+    key_cache: Arc<crate::server::state::KeyCache>,
 ) -> AppResult<()>
 where
     R: KeyRepository,
@@ -69,61 +70,87 @@ where
 
     for service_cfg in acl_settings.services.values() {
         for rule in &service_cfg.allowed_access {
+            if !rule.preload {
+                continue;
+            }
+
             let target_service = rule.target_service.clone();
             let algorithm = rule.algorithm;
 
             let existing_key = key_repo.get_active_key(&target_service, algorithm).await?;
+            let active_key = match existing_key {
+                Some(key) => key,
+                None => {
+                    warn!(
+                        service = %target_service.0,
+                        alg = ?algorithm,
+                        "Brak aktywnego klucza w MongoDB. Generowanie nowego klucza..."
+                    );
 
-            if existing_key.is_none() {
-                warn!(
-                    service = %target_service.0,
-                    alg = ?algorithm,
-                    "Brak aktywnego klucza w MongoDB. Generowanie nowego klucza..."
-                );
+                    let (generated_key, purpose) = match algorithm {
+                        KeyAlgorithm::Ed25519 => (
+                            crypto_service.generate_ed25519_keypair()?,
+                            KeyPurpose::Signing,
+                        ),
+                        KeyAlgorithm::X25519 => (
+                            crypto_service.generate_x25519_keypair()?,
+                            KeyPurpose::Encryption,
+                        ),
+                        KeyAlgorithm::AES256GCM => (
+                            crypto_service.generate_symmetric_key()?,
+                            KeyPurpose::Encryption,
+                        ),
+                        KeyAlgorithm::HmacSha256 => (
+                            crypto_service.generate_symmetric_key()?,
+                            KeyPurpose::Authentication,
+                        ),
+                    };
 
-                let (generated_key, purpose) = match algorithm {
-                    KeyAlgorithm::Ed25519 => (
-                        crypto_service.generate_ed25519_keypair()?,
-                        KeyPurpose::Signing,
-                    ),
-                    KeyAlgorithm::X25519 => (
-                        crypto_service.generate_x25519_keypair()?,
-                        KeyPurpose::Encryption,
-                    ),
-                    KeyAlgorithm::AES256GCM => (
-                        crypto_service.generate_symmetric_key()?,
-                        KeyPurpose::Encryption,
-                    ),
-                    KeyAlgorithm::HmacSha256 => (
-                        crypto_service.generate_symmetric_key()?,
-                        KeyPurpose::Authentication,
-                    ),
-                };
+                    let encrypted_private_key = crypto_service
+                        .encrypt_private_key(&generated_key.private_key_bytes)
+                        .await?;
 
-                let encrypted_private_key = crypto_service
-                    .encrypt_private_key(&generated_key.private_key_bytes)
-                    .await?;
+                    let new_key = KeyPairEntity {
+                        id: uuid::Uuid::now_v7(),
+                        service_id: target_service.clone(),
+                        algorithm,
+                        purpose,
+                        public_key_pem: generated_key.public_key_pem.clone(),
+                        encrypted_private_key,
+                        version: 1,
+                        status: KeyStatus::Active,
+                        created_at: chrono::Utc::now(),
+                        expires_at: None,
+                    };
 
-                let new_key = KeyPairEntity {
-                    id: uuid::Uuid::now_v7(),
-                    service_id: target_service.clone(),
-                    algorithm,
-                    purpose,
-                    public_key_pem: generated_key.public_key_pem.clone(),
-                    encrypted_private_key,
-                    version: 1,
-                    status: KeyStatus::Active,
-                    created_at: chrono::Utc::now(),
-                    expires_at: None,
-                };
+                    key_repo.save_key(&new_key).await?;
+                    info!(
+                        service = %target_service.0,
+                        alg = ?algorithm,
+                        "Pomyślnie utworzono i zaszyfrowano klucz w MongoDB."
+                    );
+                    new_key
+                }
+            };
 
-                key_repo.save_key(&new_key).await?;
-                info!(
-                    service = %target_service.0,
-                    alg = ?algorithm,
-                    "Pomyślnie utworzono i zaszyfrowano klucz w MongoDB."
-                );
-            }
+            let private_key = crypto_service
+                .decrypt_private_key(&active_key.encrypted_private_key)
+                .await
+                .map_err(|err| {
+                    AppError::CryptoError(format!(
+                        "Błąd odczytu/odszyfrowania klucza preload: service={}, algorithm={:?}, error={}",
+                        target_service.0,
+                        algorithm,
+                        err
+                    ))
+                })?;
+
+            key_cache.insert(&target_service, algorithm, active_key.version, private_key);
+            info!(
+                service = %target_service.0,
+                alg = ?algorithm,
+                "✅ Klucz preloaded do KeyCache z reguły ACL preload=true."
+            );
         }
     }
 

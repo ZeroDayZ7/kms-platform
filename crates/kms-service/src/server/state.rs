@@ -3,6 +3,7 @@ use crate::application::use_cases::{
     GetPublicKeyUseCase, GetSymmetricKeyUseCase, RotateKeyUseCase, SignDataUseCase,
 };
 use crate::config::Settings;
+use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
 use crate::domain::rate_limiter::{InMemoryRateLimiter, RateLimiter};
 use crate::errors::AppResult;
 use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
@@ -13,7 +14,9 @@ use crate::infrastructure::mongodb::keys::MongoKeyRepository;
 use crate::infrastructure::redis::client::RedisManager;
 use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
 use mongodb::Database;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService>;
 pub type ConcreteDecryptDataUseCase = DecryptDataUseCase<VhsmCryptoService>;
@@ -25,6 +28,96 @@ pub type ConcreteGetSymmetricKeyUseCase =
     GetSymmetricKeyUseCase<MongoKeyRepository, MongoAuditRepository>;
 pub type ConcreteRotateKeyUseCase = RotateKeyUseCase<MongoKeyRepository, MongoAuditRepository>;
 pub type ConcreteSignDataUseCase = SignDataUseCase<MongoKeyRepository, MongoAuditRepository>;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct KeyCacheKey {
+    pub target_service: String,
+    pub algorithm: KeyAlgorithm,
+}
+
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+pub struct SecureKeyBytes(pub Vec<u8>);
+
+#[derive(Debug, Clone)]
+pub struct CachedKeyValue {
+    pub version: u32,
+    pub bytes: SecureKeyBytes,
+}
+
+#[derive(Clone, Default)]
+pub struct KeyCache {
+    entries: Arc<RwLock<HashMap<KeyCacheKey, CachedKeyValue>>>,
+}
+
+impl KeyCache {
+    pub fn new() -> Self {
+        Self {
+            entries: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
+    pub fn get(
+        &self,
+        target_service: &ServiceId,
+        algorithm: KeyAlgorithm,
+    ) -> Option<(u32, Vec<u8>)> {
+        let key = KeyCacheKey {
+            target_service: target_service.0.clone(),
+            algorithm,
+        };
+
+        self.entries
+            .read()
+            .ok()?
+            .get(&key)
+            .map(|value| (value.version, value.bytes.0.clone()))
+    }
+
+    pub fn insert(
+        &self,
+        target_service: &ServiceId,
+        algorithm: KeyAlgorithm,
+        version: u32,
+        value: Vec<u8>,
+    ) {
+        let key = KeyCacheKey {
+            target_service: target_service.0.clone(),
+            algorithm,
+        };
+
+        if let Ok(mut guard) = self.entries.write() {
+            guard.insert(
+                key,
+                CachedKeyValue {
+                    version,
+                    bytes: SecureKeyBytes(value),
+                },
+            );
+        }
+    }
+
+    pub fn remove(&self, target_service: &ServiceId, algorithm: KeyAlgorithm) {
+        let key = KeyCacheKey {
+            target_service: target_service.0.clone(),
+            algorithm,
+        };
+
+        if let Ok(mut guard) = self.entries.write()
+            && let Some(mut value) = guard.remove(&key)
+        {
+            value.bytes.zeroize();
+        }
+    }
+
+    pub fn clear(&self) {
+        if let Ok(mut guard) = self.entries.write() {
+            for value in guard.values_mut() {
+                value.bytes.zeroize();
+            }
+            guard.clear();
+        }
+    }
+}
 
 pub struct UseCases {
     pub encrypt_data: Arc<ConcreteEncryptDataUseCase>,
@@ -46,6 +139,7 @@ pub struct AppState {
     pub redis_manager: Option<Arc<RedisManager>>,
     pub key_repo: Arc<MongoKeyRepository>,
     pub crypto_service: Arc<VhsmCryptoService>,
+    pub key_cache: Arc<KeyCache>,
 }
 
 impl AppState {
@@ -67,6 +161,7 @@ impl AppState {
 
         let key_repo = Arc::new(MongoKeyRepository::new(Arc::clone(&db_pool)));
         let audit_repo = Arc::new(MongoAuditRepository::new(&mongo_db));
+        let key_cache = Arc::new(KeyCache::new());
 
         key_repo.ensure_indexes().await?;
 
@@ -91,6 +186,7 @@ impl AppState {
             key_repo.clone(),
             audit_repo.clone(),
             crypto_service.clone(),
+            key_cache.clone(),
             Arc::new(settings.acl.clone()),
         ));
 
@@ -98,6 +194,7 @@ impl AppState {
             key_repo.clone(),
             audit_repo.clone(),
             crypto_service.clone(),
+            key_cache.clone(),
             Arc::new(settings.acl.clone()),
         ));
 
@@ -105,6 +202,7 @@ impl AppState {
             key_repo.clone(),
             crypto_service.clone(),
             audit_repo.clone(),
+            key_cache.clone(),
             settings.crypto.grace_period_minutes,
             Arc::new(settings.acl.clone()),
         ));
@@ -113,6 +211,7 @@ impl AppState {
             key_repo.clone(),
             audit_repo.clone(),
             crypto_service.clone(),
+            key_cache.clone(),
             Arc::new(settings.acl.clone()),
         ));
 
@@ -133,6 +232,11 @@ impl AppState {
             redis_manager,
             key_repo,
             crypto_service,
+            key_cache,
         })
+    }
+
+    pub fn clear_key_cache(&self) {
+        self.key_cache.clear();
     }
 }

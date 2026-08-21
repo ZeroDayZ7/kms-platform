@@ -18,6 +18,8 @@ pub struct AccessRule {
     pub target_service: ServiceId,
     pub algorithm: KeyAlgorithm,
     pub access_level: KeyAccessLevel,
+    #[serde(default)]
+    pub preload: bool,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -59,6 +61,14 @@ impl AclSettings {
             rule.target_service == *target
                 && rule.algorithm == algorithm
                 && rule.access_level == *requested_access
+        })
+    }
+
+    pub fn should_preload_for(&self, target: &ServiceId, algorithm: KeyAlgorithm) -> bool {
+        self.services.values().any(|service_cfg| {
+            service_cfg.allowed_access.iter().any(|rule| {
+                rule.target_service == *target && rule.algorithm == algorithm && rule.preload
+            })
         })
     }
 

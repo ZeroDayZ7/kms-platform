@@ -18,6 +18,7 @@ use crate::{
         },
     },
     errors::{AppError, AppResult},
+    server::state::KeyCache,
 };
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,7 @@ where
     key_repo: Arc<R>,
     audit_repo: Arc<A>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
+    key_cache: Arc<KeyCache>,
     acl_settings: Arc<AclSettings>,
 }
 
@@ -57,12 +59,14 @@ where
         key_repo: Arc<R>,
         audit_repo: Arc<A>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
+        key_cache: Arc<KeyCache>,
         acl_settings: Arc<AclSettings>,
     ) -> Self {
         Self {
             key_repo,
             audit_repo,
             crypto_service,
+            key_cache,
             acl_settings,
         }
     }
@@ -111,61 +115,84 @@ where
             return Err(AppError::Unauthorized);
         }
 
-        let key = match input.key_version {
-            Some(version) => {
-                self.key_repo
-                    .get_key_by_version(&input.target_service, input.algorithm, version)
-                    .await?
-            }
-            None => {
-                self.key_repo
-                    .get_active_key(&input.target_service, input.algorithm)
-                    .await?
-            }
-        };
+        let cached_key = self.key_cache.get(&input.target_service, input.algorithm);
+        let mut private_key_bytes = if let Some((_, bytes)) = cached_key {
+            bytes
+        } else {
+            let key = match input.key_version {
+                Some(version) => {
+                    self.key_repo
+                        .get_key_by_version(&input.target_service, input.algorithm, version)
+                        .await?
+                }
+                None => {
+                    self.key_repo
+                        .get_active_key(&input.target_service, input.algorithm)
+                        .await?
+                }
+            };
 
-        let key = match key {
-            Some(key) => key,
-            None => {
-                self.audit_repo
-                    .record(AuditLog {
-                        id: Uuid::now_v7(),
-                        caller_service: input.caller_service.clone(),
-                        target_service: input.target_service.clone(),
-                        action: AuditAction::SignData,
-                        algorithm: input.algorithm,
-                        status: AuditStatus::NotFound,
-                        reason: Some("Signing key not found".to_string()),
-                        timestamp: Utc::now(),
-                    })
-                    .await?;
+            let key = match key {
+                Some(key) => key,
+                None => {
+                    self.audit_repo
+                        .record(AuditLog {
+                            id: Uuid::now_v7(),
+                            caller_service: input.caller_service.clone(),
+                            target_service: input.target_service.clone(),
+                            action: AuditAction::SignData,
+                            algorithm: input.algorithm,
+                            status: AuditStatus::NotFound,
+                            reason: Some("Signing key not found".to_string()),
+                            timestamp: Utc::now(),
+                        })
+                        .await?;
 
-                return Err(AppError::NotFound("Signing key not found".into()));
+                    return Err(AppError::NotFound("Signing key not found".into()));
+                }
+            };
+
+            let bytes = match self
+                .crypto_service
+                .decrypt_private_key(&key.encrypted_private_key)
+                .await
+            {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    self.audit_repo
+                        .record(AuditLog {
+                            id: Uuid::now_v7(),
+                            caller_service: input.caller_service.clone(),
+                            target_service: input.target_service.clone(),
+                            action: AuditAction::SignData,
+                            algorithm: input.algorithm,
+                            status: AuditStatus::Failure,
+                            reason: Some(err.to_string()),
+                            timestamp: Utc::now(),
+                        })
+                        .await?;
+
+                    return Err(err);
+                }
+            };
+
+            let preload_enabled = self.acl_settings.services.values().any(|service_cfg| {
+                service_cfg.allowed_access.iter().any(|rule| {
+                    rule.target_service == input.target_service
+                        && rule.algorithm == input.algorithm
+                        && rule.access_level == KeyAccessLevel::PrivateKey
+                        && rule.preload
+                })
+            });
+            if preload_enabled {
+                self.key_cache.insert(
+                    &input.target_service,
+                    input.algorithm,
+                    key.version,
+                    bytes.clone(),
+                );
             }
-        };
-
-        let mut private_key_bytes = match self
-            .crypto_service
-            .decrypt_private_key(&key.encrypted_private_key)
-            .await
-        {
-            Ok(bytes) => bytes,
-            Err(err) => {
-                self.audit_repo
-                    .record(AuditLog {
-                        id: Uuid::now_v7(),
-                        caller_service: input.caller_service.clone(),
-                        target_service: input.target_service.clone(),
-                        action: AuditAction::SignData,
-                        algorithm: input.algorithm,
-                        status: AuditStatus::Failure,
-                        reason: Some(err.to_string()),
-                        timestamp: Utc::now(),
-                    })
-                    .await?;
-
-                return Err(err);
-            }
+            bytes
         };
 
         if private_key_bytes.len() < 32 {
@@ -197,11 +224,22 @@ where
         private_key_array.zeroize();
         private_key_bytes.zeroize();
 
+        let output_target_service = input.target_service.clone();
+        let output_version = match input.key_version {
+            Some(version) => version,
+            None => self
+                .key_repo
+                .get_active_key(&output_target_service, input.algorithm)
+                .await?
+                .map(|key| key.version)
+                .unwrap_or(0),
+        };
+
         self.audit_repo
             .record(AuditLog {
                 id: Uuid::now_v7(),
                 caller_service: input.caller_service,
-                target_service: input.target_service,
+                target_service: output_target_service.clone(),
                 action: AuditAction::SignData,
                 algorithm: input.algorithm,
                 status: AuditStatus::Success,
@@ -211,9 +249,9 @@ where
             .await?;
 
         Ok(SignDataOutput {
-            service_id: key.service_id,
-            algorithm: key.algorithm,
-            key_version: key.version,
+            service_id: output_target_service,
+            algorithm: input.algorithm,
+            key_version: output_version,
             signature_bytes: signature.to_bytes().to_vec(),
         })
     }

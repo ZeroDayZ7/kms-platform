@@ -37,7 +37,7 @@ service_id = "auth-service"
 secret = "super-long-random-secret-for-auth-service-hmac-64-bytes"
 allowed_access = [
     { target_service = "auth-service", algorithm = "Ed25519", access_level = "PublicKey" },
-    { target_service = "shared-jwt", algorithm = "Ed25519", access_level = "PrivateKey" },
+    { target_service = "shared-jwt", algorithm = "Ed25519", access_level = "PrivateKey", preload = true },
 
     # Dostęp zarówno do ruch z Gatewaya, jak i z BFF
     { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey" },

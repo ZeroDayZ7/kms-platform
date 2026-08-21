@@ -59,6 +59,7 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                 &settings.acl,
                 state.key_repo.clone(),
                 state.crypto_service.clone(),
+                state.key_cache.clone(),
             )
             .await
             .context("Krytyczny błąd bootstrapu kluczy KMS")?;
@@ -67,12 +68,13 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                 .parse()
                 .context("Invalid server address")?;
 
-            let app = server::router(state);
+            let app = server::router(state.clone());
             info!("🚀 Server starting on {}", addr);
             server::http::serve(app, addr, settings.server.shutdown_timeout)
                 .await
                 .context("HTTP server crashed")?;
 
+            state.clear_key_cache();
             info!("✅ Server shutdown complete");
         }
         Command::Rewrap {

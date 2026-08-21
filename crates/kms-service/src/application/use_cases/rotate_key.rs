@@ -12,6 +12,7 @@ use crate::domain::keys::models::{
 };
 use crate::domain::keys::repository::KeyRepository;
 use crate::errors::{AppError, AppResult};
+use crate::server::state::KeyCache;
 
 pub struct RotateKeyInput {
     pub service_id: ServiceId,
@@ -29,6 +30,7 @@ where
     key_repo: Arc<R>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     audit_repo: Arc<A>,
+    key_cache: Arc<KeyCache>,
     grace_period_minutes: GracePeriodMinutes,
     acl_settings: Arc<AclSettings>,
 }
@@ -42,6 +44,7 @@ where
         key_repo: Arc<R>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         audit_repo: Arc<A>,
+        key_cache: Arc<KeyCache>,
         grace_period_minutes: GracePeriodMinutes,
         acl_settings: Arc<AclSettings>,
     ) -> Self {
@@ -49,6 +52,7 @@ where
             key_repo,
             crypto_service,
             audit_repo,
+            key_cache,
             grace_period_minutes,
             acl_settings,
         }
@@ -141,6 +145,8 @@ where
 
         // 4. Persist new key
         self.key_repo.save_key(&new_entity).await?;
+
+        self.key_cache.remove(&input.service_id, input.algorithm);
 
         // 5. Audit the rotation
         let audit = AuditLog {
