@@ -9,7 +9,8 @@ use tokio::sync::RwLock;
 
 use state::VhsmState;
 
-const AUTO_LOCK_TIMEOUT: Duration = Duration::from_secs(15 * 60); // 15 minut
+/// Maksymalny czas na dokończenie procedury Unseal (15 minut)
+const UNSEAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -18,16 +19,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = Arc::new(RwLock::new(VhsmState::new()));
 
-    // --- TASK AUTO-LOCK ---
+    // --- TASK UNSEAL TIMEOUT CHECKER ---
     let state_lock_checker = Arc::clone(&state);
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30)); // sprawdzaj co 30 sek
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
         loop {
             interval.tick().await;
             let mut guard = state_lock_checker.write().await;
-            if guard.initialized && guard.last_activity.elapsed() >= AUTO_LOCK_TIMEOUT {
+
+            if let Some(started_at) = guard.unseal_started_at
+                && guard.master_key.is_none()
+                && started_at.elapsed() >= UNSEAL_TIMEOUT
+            {
                 tracing::warn!(
-                    "[SECURITY] Osiągnięto limit bezczynności (15 min). Blokowanie vHSM i czyszczenie RAM!"
+                    "[SECURITY] Przekroczono limit czasowy ceremonii Unseal (15 min). Resetowanie próby!"
                 );
                 guard.zeroize_key();
             }
@@ -43,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let _ = state;
         tracing::warn!("Środowisko nie-UNIX - vHSM działa w trybie mock.");
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
             interval.tick().await;
         }

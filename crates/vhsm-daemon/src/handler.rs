@@ -51,7 +51,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     guard.master_key = Some(raw_master_key);
                     guard.initialized = true;
                     guard.active_key_version = 1;
-                    guard.touch_activity();
+                    guard.cancel_unseal_timer();
 
                     // LOGI DIAGNOSTYCZNE
                     tracing::info!("vHSM wygenerował wewnątrz nowy Master Key i podzielił go SSS.");
@@ -92,7 +92,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     guard.master_key = Some(recovered);
                     guard.initialized = true;
                     guard.active_key_version = 1;
-                    guard.touch_activity();
+                    guard.cancel_unseal_timer();
+                    guard.cancel_unseal_timer();
 
                     tracing::info!("vHSM został pomyślnie odblokowany kluczem głównym.");
 
@@ -122,7 +123,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let master_key = guard.master_key.clone();
 
             if master_key.is_some() {
-                guard.touch_activity();
+                guard.cancel_unseal_timer();
             }
             drop(guard);
 
@@ -159,7 +160,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let master_key = guard.master_key.clone();
 
             if master_key.is_some() {
-                guard.touch_activity();
+                guard.cancel_unseal_timer();
             }
             drop(guard);
 
