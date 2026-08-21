@@ -65,12 +65,6 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-impl From<mongodb::error::Error> for AppError {
-    fn from(err: mongodb::error::Error) -> Self {
-        Self::DatabaseError(err.to_string())
-    }
-}
-
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
         Self::DatabaseError(err.to_string())

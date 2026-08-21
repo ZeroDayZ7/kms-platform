@@ -112,7 +112,7 @@ where
             });
         }
 
-        // 2. Pobranie klucza z MongoDB (TYLKO Active)
+        // 2. Pobranie klucza z DB (TYLKO Active)
         let active_key = match self
             .key_repo
             .get_active_key(&input.target_service, input.algorithm)

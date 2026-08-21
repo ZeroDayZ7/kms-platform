@@ -48,7 +48,6 @@ chrono = { version = "0.4", features = ["serde"] }
 governor = "0.10.4"
 thiserror = "2.0.19"
 anyhow = "1.0.104"
-mongodb = "3.8.0"
 bson = { version = "2.15.0", features = ["uuid-1", "chrono-0_4"] }
 async-trait = "0.1.91"
 rand = "0.8"

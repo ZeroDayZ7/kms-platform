@@ -14,7 +14,7 @@ use crate::{
             repository::KeyRepository,
         },
     },
-    errors::{AppError, AppResult},
+    errors::AppResult,
 };
 
 /// Sprawdza w pętli dostępność i stan odblokowania (unseal) vHSM przed podjęciem operacji bootstrapu
@@ -81,7 +81,7 @@ where
                     warn!(
                         service = %target_service.0,
                         alg = ?algorithm,
-                        "Brak aktywnego klucza w MongoDB. Generowanie nowego klucza..."
+                        "Brak aktywnego klucza w DB. Generowanie nowego klucza..."
                     );
 
                     let (generated_key, purpose) = match algorithm {
@@ -124,16 +124,8 @@ where
                     info!(
                         service = %target_service.0,
                         alg = ?algorithm,
-                        "Brak aktywnego klucza w PostgreSQL. Generowanie nowego..."
+                        "✅ Pomyślnie wygenerowano i zapisano nowy klucz w PostgreSQL"
                     );
-                    
-                    // Generowanie i zapis do PostgreSQL
-                    let new_key = generate_and_save_key(
-                        &target_service, 
-                        algorithm, 
-                        crypto_service.as_ref(), 
-                        key_repo.as_ref()
-                    ).await?;
 
                     new_key
                 }
@@ -141,16 +133,16 @@ where
 
             // 2. Ładuj do RAM tylko wtedy, gdy preload == true
             if rule.preload {
-            let private_key = crypto_service
-                .decrypt_private_key(&active_key.encrypted_private_key)
+                let private_key = crypto_service
+                    .decrypt_private_key(&active_key.encrypted_private_key)
                     .await?;
 
-            key_cache.insert(&target_service, algorithm, active_key.version, private_key);
-            info!(
-                service = %target_service.0,
-                alg = ?algorithm,
-                    "✅ Klucz preloaded do KeyCache (RAM)."
-            );
+                key_cache.insert(&target_service, algorithm, active_key.version, private_key);
+                info!(
+                    service = %target_service.0,
+                    alg = ?algorithm,
+                        "✅ Klucz preloaded do KeyCache (RAM)."
+                );
             }
         }
     }

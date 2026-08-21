@@ -3,11 +3,11 @@ use axum::{
     extract::{FromRequestParts, Path},
     http::request::Parts,
 };
-use mongodb::bson::oid::ObjectId;
+use uuid::Uuid;
 
 use crate::errors::AppError;
 
-pub struct ValidatedId(pub ObjectId);
+pub struct ValidatedId(pub Uuid);
 
 impl<S> FromRequestParts<S> for ValidatedId
 where
@@ -20,10 +20,10 @@ where
             .await
             .map_err(|_| AppError::ValidationError("Brak identyfikatora w ścieżce".into()))?;
 
-        let object_id = ObjectId::parse_str(&path.0).map_err(|_| {
-            AppError::ValidationError(format!("Nieprawidłowy format ID: {}", path.0))
+        let uuid_id = Uuid::parse_str(&path.0).map_err(|_| {
+            AppError::ValidationError(format!("Nieprawidłowy format UUID: {}", path.0))
         })?;
 
-        Ok(ValidatedId(object_id))
+        Ok(ValidatedId(uuid_id))
     }
 }

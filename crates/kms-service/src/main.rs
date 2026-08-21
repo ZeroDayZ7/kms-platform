@@ -47,14 +47,14 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
             // 1. Sprawdzamy gotowość HSM przed podłączeniem do bazy danych i bootstrapem
             wait_for_vhsm_unsealed(&settings.crypto.hsm_socket_path).await?;
 
-            // 2. Inicjalizacja połączenia z bazy MongoDB / Redis
+            // 2. Inicjalizacja połączenia z bazy DB / Redis
             let state = AppState::new(settings.clone())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;
 
             info!("🧠 Application state initialized");
 
-            // 3. Generowanie i zaszyfrowanie brakujących kluczy w MongoDB
+            // 3. Generowanie i zaszyfrowanie brakujących kluczy w DB
             bootstrap_keys(
                 &settings.acl,
                 state.key_repo.clone(),
