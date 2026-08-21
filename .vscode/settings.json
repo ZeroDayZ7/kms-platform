@@ -3,9 +3,13 @@
   "files.exclude": {
     "**/target": true,
     "**/Cargo.lock": true,
+
     "**/.git": true,
+    "**/.gitattributes": true,
+    "**/.gitignore": true,
     "**/.github": true,
-    // "**/docker-entrypoint-initdb.d": true,
+    "**/.dockerignore": true,
+
     "**/tests": true,
     "**/LICENSE": true,
     // "**/.env.example": true,
@@ -16,13 +20,17 @@
   "search.exclude": {
     "**/target": true,
     "**/Cargo.lock": true,
+
     "**/.git": true,
+    "**/.gitattributes": true,
+    "**/.gitignore": true,
+    "**/.github": true,
+    "**/.dockerignore": true,
     "**/.vscode": true,
+
     "**/tests": true,
     "**/LICENSE": true,
     "**/docs": true,
-    // "**/docker-entrypoint-initdb.d": true,
-    "**/.env.example": true,
     "**/README.md": true,
     "**/SECURITY.md": true,
     "**/combined.txt": true

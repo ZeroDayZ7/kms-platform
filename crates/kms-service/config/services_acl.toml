@@ -16,7 +16,10 @@ allowed_access = [
     { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-gateway-messaging", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
-    { target_service = "hmac-gateway-officer-bff", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
+    { target_service = "hmac-gateway-officer-bff", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    # RabbitMQ dla Gateway
+    { target_service = "hmac-gateway-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.officer_bff]
@@ -38,7 +41,10 @@ allowed_access = [
     { target_service = "shared-jwt", algorithm = "Ed25519", access_level = "PrivateKey", preload = true },
 
     { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
-    { target_service = "hmac-bff-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
+    { target_service = "hmac-bff-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    # RabbitMQ dla Auth-Service
+    { target_service = "hmac-auth-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.identity_service]
