@@ -70,13 +70,10 @@ where
 
     for service_cfg in acl_settings.services.values() {
         for rule in &service_cfg.allowed_access {
-            if !rule.preload {
-                continue;
-            }
-
             let target_service = rule.target_service.clone();
             let algorithm = rule.algorithm;
 
+            // 1. Sprawdź lub utwórz w PostgreSQL (Zawsze!)
             let existing_key = key_repo.get_active_key(&target_service, algorithm).await?;
             let active_key = match existing_key {
                 Some(key) => key,
@@ -127,30 +124,34 @@ where
                     info!(
                         service = %target_service.0,
                         alg = ?algorithm,
-                        "Pomyślnie utworzono i zaszyfrowano klucz w MongoDB."
+                        "Brak aktywnego klucza w PostgreSQL. Generowanie nowego..."
                     );
+                    
+                    // Generowanie i zapis do PostgreSQL
+                    let new_key = generate_and_save_key(
+                        &target_service, 
+                        algorithm, 
+                        crypto_service.as_ref(), 
+                        key_repo.as_ref()
+                    ).await?;
+
                     new_key
                 }
             };
 
+            // 2. Ładuj do RAM tylko wtedy, gdy preload == true
+            if rule.preload {
             let private_key = crypto_service
                 .decrypt_private_key(&active_key.encrypted_private_key)
-                .await
-                .map_err(|err| {
-                    AppError::CryptoError(format!(
-                        "Błąd odczytu/odszyfrowania klucza preload: service={}, algorithm={:?}, error={}",
-                        target_service.0,
-                        algorithm,
-                        err
-                    ))
-                })?;
+                    .await?;
 
             key_cache.insert(&target_service, algorithm, active_key.version, private_key);
             info!(
                 service = %target_service.0,
                 alg = ?algorithm,
-                "✅ Klucz preloaded do KeyCache z reguły ACL preload=true."
+                    "✅ Klucz preloaded do KeyCache (RAM)."
             );
+            }
         }
     }
 
