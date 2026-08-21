@@ -20,7 +20,6 @@ pub enum KeyPurpose {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedPrivateKey {
     pub ciphertext: Vec<u8>,
-    pub nonce: Vec<u8>,
     pub master_key_version: i32,
 }
 

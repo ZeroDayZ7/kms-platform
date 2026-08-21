@@ -27,7 +27,6 @@ struct MongoKeyPairDocument {
     pub purpose: String,
     pub public_key_pem: String,
     pub encrypted_private_key: Binary,
-    pub nonce: Binary,
     pub version: i32,
     pub master_key_version: i32,
     pub status: String,
@@ -82,10 +81,6 @@ impl KeyRepository for MongoKeyRepository {
             encrypted_private_key: Binary {
                 subtype: BinarySubtype::Generic,
                 bytes: key_pair.encrypted_private_key.ciphertext.clone(),
-            },
-            nonce: Binary {
-                subtype: BinarySubtype::Generic,
-                bytes: key_pair.encrypted_private_key.nonce.clone(),
             },
             version: key_pair.version as i32,
             master_key_version: key_pair.encrypted_private_key.master_key_version,
@@ -289,7 +284,6 @@ impl KeyRepository for MongoKeyRepository {
         let filter = doc! { "id": key_id.to_string() };
         let update = doc! { "$set": {
             "encrypted_private_key": Binary { subtype: BinarySubtype::Generic, bytes: encrypted.ciphertext },
-            "nonce": Binary { subtype: BinarySubtype::Generic, bytes: encrypted.nonce },
             "master_key_version": encrypted.master_key_version
         }};
 
@@ -331,7 +325,6 @@ impl KeyRepository for MongoKeyRepository {
             let filter = doc! { "id": key_id.to_string() };
             let update = doc! { "$set": {
                 "encrypted_private_key": Binary { subtype: BinarySubtype::Generic, bytes: encrypted.ciphertext },
-                "nonce": Binary { subtype: BinarySubtype::Generic, bytes: encrypted.nonce },
                 "master_key_version": current_version
             }};
 
@@ -383,7 +376,6 @@ fn map_doc_to_entity(doc: MongoKeyPairDocument) -> AppResult<KeyPairEntity> {
         public_key_pem: doc.public_key_pem,
         encrypted_private_key: EncryptedPrivateKey {
             ciphertext: doc.encrypted_private_key.bytes,
-            nonce: doc.nonce.bytes,
             master_key_version: doc.master_key_version,
         },
         version: doc.version as u32,
