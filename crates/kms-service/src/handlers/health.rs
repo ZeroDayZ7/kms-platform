@@ -1,6 +1,5 @@
 use crate::server::state::AppState;
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
-use mongodb::bson::doc;
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -16,7 +15,13 @@ pub struct HealthResponse {
 pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let check_timeout = Duration::from_secs(2);
 
-    let db_res = timeout(check_timeout, state.db.run_command(doc! {"ping": 1})).await;
+    let db_res = timeout(check_timeout, async {
+        sqlx::query("SELECT 1")
+            .fetch_one(&state.db)
+            .await
+            .map(|_| ())
+    })
+    .await;
 
     let redis_status = match state.redis_manager.as_ref() {
         Some(redis) => match timeout(check_timeout, redis.ping()).await {

@@ -238,7 +238,7 @@ where
         self.audit_repo
             .record(AuditLog {
                 id: Uuid::now_v7(),
-                caller_service: input.caller_service,
+                caller_service: input.caller_service.clone(),
                 target_service: output_target_service.clone(),
                 action: AuditAction::SignData,
                 algorithm: input.algorithm,

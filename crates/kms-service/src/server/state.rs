@@ -8,26 +8,23 @@ use crate::domain::rate_limiter::{InMemoryRateLimiter, RateLimiter};
 use crate::errors::AppResult;
 use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
 use crate::infrastructure::crypto::vhsm_client::VhsmClient;
-use crate::infrastructure::mongodb::audit::MongoAuditRepository;
-use crate::infrastructure::mongodb::client::init_mongo;
-use crate::infrastructure::mongodb::keys::MongoKeyRepository;
+use crate::infrastructure::postgres::{PgAuditRepository, PgKeyRepository, init_postgres};
 use crate::infrastructure::redis::client::RedisManager;
 use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
-use mongodb::Database;
+use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService>;
 pub type ConcreteDecryptDataUseCase = DecryptDataUseCase<VhsmCryptoService>;
-pub type ConcreteGenerateKeyPairUseCase = GenerateKeyPairUseCase<MongoKeyRepository>;
-pub type ConcreteGetPublicKeyUseCase = GetPublicKeyUseCase<MongoKeyRepository>;
-pub type ConcreteGetPrivateKeyUseCase =
-    GetPrivateKeyUseCase<MongoKeyRepository, MongoAuditRepository>;
+pub type ConcreteGenerateKeyPairUseCase = GenerateKeyPairUseCase<PgKeyRepository>;
+pub type ConcreteGetPublicKeyUseCase = GetPublicKeyUseCase<PgKeyRepository>;
+pub type ConcreteGetPrivateKeyUseCase = GetPrivateKeyUseCase<PgKeyRepository, PgAuditRepository>;
 pub type ConcreteGetSymmetricKeyUseCase =
-    GetSymmetricKeyUseCase<MongoKeyRepository, MongoAuditRepository>;
-pub type ConcreteRotateKeyUseCase = RotateKeyUseCase<MongoKeyRepository, MongoAuditRepository>;
-pub type ConcreteSignDataUseCase = SignDataUseCase<MongoKeyRepository, MongoAuditRepository>;
+    GetSymmetricKeyUseCase<PgKeyRepository, PgAuditRepository>;
+pub type ConcreteRotateKeyUseCase = RotateKeyUseCase<PgKeyRepository, PgAuditRepository>;
+pub type ConcreteSignDataUseCase = SignDataUseCase<PgKeyRepository, PgAuditRepository>;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct KeyCacheKey {
@@ -38,7 +35,7 @@ pub struct KeyCacheKey {
 #[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct SecureKeyBytes(pub Vec<u8>);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
 pub struct CachedKeyValue {
     pub version: u32,
     pub bytes: SecureKeyBytes,
@@ -135,16 +132,16 @@ pub struct AppState {
     pub settings: Arc<Settings>,
     pub use_cases: Arc<UseCases>,
     pub rate_limiter: Arc<dyn RateLimiter>,
-    pub db: Database,
+    pub db: PgPool,
     pub redis_manager: Option<Arc<RedisManager>>,
-    pub key_repo: Arc<MongoKeyRepository>,
+    pub key_repo: Arc<PgKeyRepository>,
     pub crypto_service: Arc<VhsmCryptoService>,
     pub key_cache: Arc<KeyCache>,
 }
 
 impl AppState {
     pub async fn new(settings: Arc<Settings>) -> AppResult<Self> {
-        let mongo_db = init_mongo(&settings.database).await?;
+        let pg_pool = init_postgres(&settings.database).await?;
 
         let redis_manager = if settings.redis.enabled {
             Some(Arc::new(RedisManager::new(&settings.redis).await?))
@@ -157,13 +154,9 @@ impl AppState {
             None => Arc::new(InMemoryRateLimiter::new()),
         };
 
-        let db_pool = Arc::new(mongo_db.clone());
-
-        let key_repo = Arc::new(MongoKeyRepository::new(Arc::clone(&db_pool)));
-        let audit_repo = Arc::new(MongoAuditRepository::new(&mongo_db));
+        let key_repo = Arc::new(PgKeyRepository::new(pg_pool.clone()));
+        let audit_repo = Arc::new(PgAuditRepository::new(pg_pool.clone()));
         let key_cache = Arc::new(KeyCache::new());
-
-        key_repo.ensure_indexes().await?;
 
         let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
@@ -228,7 +221,7 @@ impl AppState {
                 sign_data: sign_data_use_case,
             }),
             rate_limiter,
-            db: mongo_db,
+            db: pg_pool,
             redis_manager,
             key_repo,
             crypto_service,

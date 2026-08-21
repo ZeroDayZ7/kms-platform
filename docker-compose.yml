@@ -46,6 +46,27 @@ services:
         ]
   # endregion
 
+  postgres:
+    <<: *common-settings
+    image: postgres:18.3-alpine
+    container_name: db_kms
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${DATABASE__NAME:-kms_db}
+      POSTGRES_USER: ${DATABASE__USER:-kms_user}
+      POSTGRES_PASSWORD: ${DATABASE__PASSWORD:-kms_password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      <<: *common-healthcheck
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DATABASE__USER:-kms_user} -d ${DATABASE__NAME:-kms_db}",
+        ]
+  # endregion
+
   # region REDIS
   # redis:
   #   <<: *common-settings
