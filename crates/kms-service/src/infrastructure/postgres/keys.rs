@@ -1,12 +1,9 @@
-use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
 use crate::{
     domain::{
-        audit::{models::AuditLog, repository::AuditRepository},
         crypto::{EncryptedPrivateKey, KeyAlgorithm},
         keys::{
             models::{KeyPairEntity, KeyPurpose, KeyStatus, ServiceId},
@@ -15,37 +12,6 @@ use crate::{
     },
     errors::{AppError, AppResult},
 };
-
-pub async fn init_postgres(db_set: &crate::config::DatabaseConfig) -> AppResult<PgPool> {
-    let credentials = match (db_set.user.as_deref(), db_set.password.as_deref()) {
-        (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
-            format!("{}:{}@", user, pass)
-        }
-        _ => String::new(),
-    };
-
-    let conn_str = format!(
-        "postgresql://{credentials}{host}:{port}/{database}",
-        credentials = credentials,
-        host = db_set.host,
-        port = db_set.port,
-        database = db_set.name,
-    );
-
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(db_set.pool_size)
-        .connect(&conn_str)
-        .await
-        .map_err(|err| AppError::ConfigError(format!("Błędny URI PostgreSQL: {}", err)))?;
-
-    sqlx::query("SELECT 1")
-        .fetch_one(&pool)
-        .await
-        .map_err(|err| AppError::ConfigError(format!("Błąd połączenia z PostgreSQL: {}", err)))?;
-
-    tracing::info!("✅ Connected to PostgreSQL");
-    Ok(pool)
-}
 
 pub struct PgKeyRepository {
     pool: PgPool,
@@ -200,10 +166,9 @@ impl KeyRepository for PgKeyRepository {
         let mut out = Vec::new();
         for row in rows {
             let entity = map_all_key_row(row)?;
-            if let KeyStatus::Deprecated { valid_until } = entity.status.clone() {
-                if valid_until <= now {
-                    out.push(entity);
-                }
+            if matches!(entity.status, KeyStatus::Deprecated { valid_until } if valid_until <= now)
+            {
+                out.push(entity);
             }
         }
         Ok(out)
@@ -220,14 +185,15 @@ impl KeyRepository for PgKeyRepository {
             .map_err(AppError::from)?;
         for row in rows {
             let entity = map_all_active_key_row(row)?;
-            if entity.service_id == *service_id && entity.algorithm == algo {
-                if matches!(entity.status, KeyStatus::Active)
-                    || matches!(entity.status, KeyStatus::Deprecated { valid_until } if valid_until > now)
-                {
-                    return Ok(Some(entity));
-                }
+            if entity.service_id == *service_id
+                && entity.algorithm == algo
+                && (matches!(entity.status, KeyStatus::Active)
+                    || matches!(entity.status, KeyStatus::Deprecated { valid_until } if valid_until > now))
+            {
+                return Ok(Some(entity));
             }
         }
+
         Ok(None)
     }
 
@@ -349,6 +315,7 @@ fn map_all_key_row(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn map_key_row(
     id: Uuid,
     service_id: String,
@@ -416,62 +383,4 @@ fn map_key_row(
         created_at,
         expires_at: None,
     })
-}
-
-pub struct PgAuditRepository {
-    pool: PgPool,
-}
-
-impl PgAuditRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
-    }
-}
-
-#[async_trait]
-impl AuditRepository for PgAuditRepository {
-    async fn record(&self, log: AuditLog) -> AppResult<()> {
-        // Pobieramy sygnaturę/hash ostatniego wstawionego rekordu
-        let prev_hash = sqlx::query_scalar::<_, Option<Vec<u8>>>(
-            "SELECT signature FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1",
-        )
-        .fetch_optional(&self.pool)
-        .await?
-        .flatten()
-        .map(hex::encode); // zamiana bajtów na ciąg hex
-
-        let payload = serde_json::json!({
-            "caller_service": log.caller_service.to_string(),
-            "target_service": log.target_service.to_string(),
-            "action": format!("{:?}", log.action),
-            "algorithm": format!("{:?}", log.algorithm),
-            "status": format!("{:?}", log.status),
-            "reason": log.reason,
-            "prev_hash": prev_hash,
-            "timestamp": log.timestamp.to_rfc3339(),
-        })
-        .to_string();
-
-        // Hash/podpis obecnego rekordu staje się "anchor-em" dla następnego
-        let signature = Sha256::digest(payload.as_bytes()).to_vec();
-
-        crate::infrastructure::sqlc::queries::insert_audit_log(
-            &self.pool,
-            crate::infrastructure::sqlc::queries::InsertAuditLogParams {
-                id: log.id,
-                caller_service: log.caller_service.0,
-                target_service: log.target_service.0,
-                action: format!("{:?}", log.action),
-                algorithm: format!("{:?}", log.algorithm),
-                status: format!("{:?}", log.status),
-                reason: log.reason,
-                prev_hash,
-                signature: Some(signature),
-            },
-        )
-        .await
-        .map_err(AppError::from)?;
-
-        Ok(())
-    }
 }

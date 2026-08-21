@@ -8,8 +8,8 @@
     // "**/docker-entrypoint-initdb.d": true,
     "**/tests": true,
     "**/LICENSE": true,
-    "**/.env.example": true,
-    "**/.env": true,
+    // "**/.env.example": true,
+    // "**/.env": true,
     "**/README.md": true,
     "**/SECURITY.md": true
   },

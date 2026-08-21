@@ -70,7 +70,7 @@ where
             .acl_settings
             .services
             .get(&input.caller_service.0)
-            .ok_or_else(|| AppError::Unauthorized)?;
+            .ok_or(AppError::Unauthorized)?;
 
         let allowed = caller_cfg
             .allowed_actions

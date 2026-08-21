@@ -7,7 +7,7 @@ plugins:
 sql:
   - engine: "postgresql"
     queries: "sqlc/queries/*.sql"
-    schema: "sqlc/schema/*.sql"
+    schema: "sqlc/migrations/*.sql"
     codegen:
       - plugin: "sqlc-gen-sqlx"
         out: "src/infrastructure/sqlc"

@@ -21,10 +21,9 @@ value = [
 
 [database]
 host = "127.0.0.1"
-port = 27017
+port = 5440
 name = "kms_db"
 pool_size = 5
-auth_source = "admin"
 
 [redis]
 enabled = false

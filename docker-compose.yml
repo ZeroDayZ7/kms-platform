@@ -13,45 +13,13 @@ x-common-healthcheck: &common-healthcheck
 # endregion
 
 services:
-  # region MONGODB
-  mongodb:
-    <<: *common-settings
-    image: mongo:8
-    container_name: obywatel_app_mongo
-    ports:
-      - "27017:27017"
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
-      MONGO_APP_USER: ${DATABASE__USER}
-      MONGO_APP_PASSWORD: ${DATABASE__PASSWORD}
-      MONGO_APP_DATABASE: ${DATABASE__NAME}
-    volumes:
-      - mongo_data:/data/db
-      - ./crates/kms-service/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
-    healthcheck:
-      <<: *common-healthcheck
-      test:
-        [
-          "CMD",
-          "mongosh",
-          "--username",
-          "${MONGO_ROOT_USER}",
-          "--password",
-          "${MONGO_ROOT_PASSWORD}",
-          "--authenticationDatabase",
-          "admin",
-          "--eval",
-          "db.getSiblingDB('admin').adminCommand('ping')",
-        ]
-  # endregion
-
+  # region POSTGRESQL
   postgres:
     <<: *common-settings
     image: postgres:18.3-alpine
     container_name: db_kms
     ports:
-      - "5432:5432"
+      - "5440:5432"
     environment:
       POSTGRES_DB: ${DATABASE__NAME:-kms_db}
       POSTGRES_USER: ${DATABASE__USER:-kms_user}
@@ -129,25 +97,20 @@ services:
       - RUST_LOG=${RUST_LOG:-info,kms_service=debug}
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080
-      - DATABASE__HOST=mongodb
-      - DATABASE__PORT=${DATABASE__PORT}
+      - DATABASE__HOST=postgres
+      - DATABASE__PORT=5432
       - DATABASE__NAME=${DATABASE__NAME}
       - DATABASE__USER=${DATABASE__USER}
       - DATABASE__PASSWORD=${DATABASE__PASSWORD}
-      - DATABASE__AUTH_SOURCE=${DATABASE__AUTH_SOURCE}
-      - APP_REDIS__URL=redis://:${REDIS__PASSWORD:-change_me}@redis:6379/
     volumes:
       - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - kms_ceremony_data:/app/ceremony:ro
       - vhsm_sockets:/run/vhsm
     depends_on:
-      mongodb:
+      postgres:
         condition: service_healthy
       vhsm-daemon:
         condition: service_healthy
-    # healthcheck:
-    #   <<: *common-healthcheck
-    #   test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
   # endregion
 
   # region KMS CEREMONY CLI (TOOLING)
@@ -175,7 +138,7 @@ services:
 
 # region VOLUMES
 volumes:
-  mongo_data:
+  postgres_data:
     driver: local
   redis_data:
     driver: local
