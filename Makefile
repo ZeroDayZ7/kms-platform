@@ -22,11 +22,15 @@ docker-up:
 docker-down:
 	docker compose down -v
 
-lock:
-	bash crates/kms-service/scripts/lock.sh
+restart:
+	docker compose down -v
+	docker compose up --build --force-recreate -d
+
+init:
+	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
 
 unlock:
-	bash crates/kms-service/scripts/unlock.sh
+	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
 
 run:
 	cargo run -p kms-service --bin kms-service -- serve

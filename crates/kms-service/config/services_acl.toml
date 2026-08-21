@@ -2,75 +2,81 @@
 service_id = "kms-cli"
 secret = "super-long-random-secret-for-kms-cli-hmac-64-bytes"
 allowed_access = [
-    { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey" }
+    { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.gateway_service]
 service_id = "gateway-service"
 secret = "super-long-random-secret-for-gateway-service-hmac-64-bytes"
 allowed_access = [
-    { target_service = "auth-service", algorithm = "Ed25519", access_level = "PublicKey" },
-    { target_service = "shared-jwt", algorithm = "Ed25519", access_level = "PublicKey" },
+    { target_service = "auth-service", algorithm = "Ed25519", access_level = "PublicKey", preload = true },
+    { target_service = "shared-jwt", algorithm = "Ed25519", access_level = "PublicKey", preload = true },
 
-    { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-gateway-messaging", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-gateway-officer-bff", algorithm = "HmacSha256", access_level = "SecretKey" }
+    { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-gateway-messaging", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-gateway-officer-bff", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    # RabbitMQ dla Gateway
+    { target_service = "hmac-gateway-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.officer_bff]
 service_id = "officer-bff"
 secret = "super-long-random-secret-for-officer-bff-hmac-64-bytes"
 allowed_access = [
-    # Przechwytywanie połączeń z Gatewaya
-    { target_service = "hmac-gateway-officer-bff", algorithm = "HmacSha256", access_level = "SecretKey" },
+    { target_service = "hmac-gateway-officer-bff", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
 
-    # Nowe klucze do komunikacji BFF -> Mikroserwisy
-    { target_service = "hmac-bff-auth", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-bff-identity", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey" }
+    { target_service = "hmac-bff-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-bff-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.auth_service]
 service_id = "auth-service"
 secret = "super-long-random-secret-for-auth-service-hmac-64-bytes"
 allowed_access = [
-    { target_service = "auth-service", algorithm = "Ed25519", access_level = "PublicKey" },
-    { target_service = "shared-jwt", algorithm = "Ed25519", access_level = "PrivateKey" },
+    { target_service = "auth-service", algorithm = "Ed25519", access_level = "PublicKey", preload = true },
+    { target_service = "shared-jwt", algorithm = "Ed25519", access_level = "PrivateKey", preload = true },
 
-    # Dostęp zarówno do ruch z Gatewaya, jak i z BFF
-    { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-bff-auth", algorithm = "HmacSha256", access_level = "SecretKey" }
+    { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-bff-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    # RabbitMQ dla Auth-Service
+    { target_service = "hmac-auth-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-identity-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.identity_service]
 service_id = "identity-service"
 secret = "super-long-random-secret-for-identity-service-hmac-64-bytes"
 allowed_access = [
-    { target_service = "identity-citizen-data", algorithm = "AES256GCM", access_level = "SecretKey" },
+    { target_service = "identity-citizen-data", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+    { target_service = "identity-pesel-blind-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
 
-    # Dostęp zarówno od Gatewaya, jak i od BFF
-    { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-bff-identity", algorithm = "HmacSha256", access_level = "SecretKey" }
+    { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-bff-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    { target_service = "hmac-auth-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-identity-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.citizen_docs_service]
 service_id = "citizen-docs-service"
 secret = "super-long-random-secret-for-docs-service-hmac-64-bytes"
 allowed_access = [
-    { target_service = "docs-id-cards", algorithm = "AES256GCM", access_level = "SecretKey" },
-    { target_service = "docs-driver-license", algorithm = "AES256GCM", access_level = "SecretKey" },
-    { target_service = "docs-passport", algorithm = "AES256GCM", access_level = "SecretKey" },
+    { target_service = "docs-id-cards", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+    { target_service = "docs-driver-license", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+    { target_service = "docs-passport", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
 
-    # Dostęp zarówno od Gatewaya, jak i od BFF
-    { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey" },
-    { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey" }
+    { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.messaging_service]
 service_id = "messaging-service"
 secret = "super-long-random-secret-for-messaging-service-hmac-64-bytes"
 allowed_access = [
-    { target_service = "hmac-gateway-messaging", algorithm = "HmacSha256", access_level = "SecretKey" }
+    { target_service = "hmac-gateway-messaging", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]

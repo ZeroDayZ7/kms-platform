@@ -4,21 +4,95 @@ use aes_gcm::{
     aead::{Aead, KeyInit},
 };
 use anyhow::{Result, anyhow};
+use argon2::{Argon2, password_hash::SaltString};
 use getrandom::getrandom;
-use zeroize::Zeroize;
-
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedContainer {
-    pub nonce: String,
-    pub ciphertext: String,
+    pub salt: String,       // Sól dla Argon2
+    pub nonce: String,      // IV dla AES-GCM
+    pub ciphertext: String, // Zaszyfrowane dane
+}
+
+/// Generuje losową sól i derywuje klucz symetryczny AES-256 z podanego hasła (Argon2id)
+pub fn derive_key_from_password(password: &str) -> Result<(SecretKey, String)> {
+    let mut rng_bytes = [0u8; 16];
+    getrandom(&mut rng_bytes).map_err(|e| anyhow!("Nie udało się wygenerować soli: {e}"))?;
+
+    let salt =
+        SaltString::encode_b64(&rng_bytes).map_err(|e| anyhow!("Błąd kodowania soli B64: {e}"))?;
+
+    let mut key_bytes = [0u8; KEY_SIZE];
+    Argon2::default()
+        .hash_password_into(
+            password.as_bytes(),
+            salt.as_str().as_bytes(),
+            &mut key_bytes,
+        )
+        .map_err(|e| anyhow!("Błąd derywacji klucza Argon2id: {e}"))?;
+
+    Ok((SecretKey::from_bytes(key_bytes), salt.to_string()))
+}
+
+/// Odtwarza klucz symetryczny z hasła na podstawie istniejącej soli z kontenera
+pub fn derive_key_with_salt(password: &str, salt_str: &str) -> Result<SecretKey> {
+    let mut key_bytes = [0u8; KEY_SIZE];
+    Argon2::default()
+        .hash_password_into(password.as_bytes(), salt_str.as_bytes(), &mut key_bytes)
+        .map_err(|e| anyhow!("Błąd derywacji klucza z solą: {e}"))?;
+
+    Ok(SecretKey::from_bytes(key_bytes))
+}
+
+/// Szyfruje dowolne bajty za pomocą klucza derywowanego z hasła (Argon2id -> AES-GCM)
+pub fn encrypt_bytes_with_password(password: &str, data: &[u8]) -> Result<EncryptedContainer> {
+    let (key, salt) = derive_key_from_password(password)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_bytes())?;
+
+    let mut nonce_bytes = [0u8; 12];
+    getrandom(&mut nonce_bytes).map_err(|e| anyhow!(e.to_string()))?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, data)
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    Ok(EncryptedContainer {
+        salt,
+        nonce: hex::encode(nonce_bytes),
+        ciphertext: hex::encode(ciphertext),
+    })
+}
+
+/// Odszyfrowuje dowolne bajty za pomocą klucza derywowanego z hasła i soli z kontenera
+pub fn decrypt_bytes_with_password(
+    password: &str,
+    container: &EncryptedContainer,
+) -> Result<Vec<u8>> {
+    let key = derive_key_with_salt(password, &container.salt)?;
+    let cipher = Aes256Gcm::new_from_slice(key.as_bytes()).map_err(|e| anyhow!(e.to_string()))?;
+
+    let nonce_bytes = hex::decode(&container.nonce).map_err(|e| anyhow!(e.to_string()))?;
+    let ciphertext_bytes =
+        hex::decode(&container.ciphertext).map_err(|e| anyhow!(e.to_string()))?;
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let decrypted_bytes = cipher
+        .decrypt(nonce, ciphertext_bytes.as_slice())
+        .map_err(|e| anyhow!(e.to_string()))?;
+
+    Ok(decrypted_bytes)
 }
 
 pub fn encrypt_storage_key(
     master_key: &SecretKey,
     storage_key: &SecretKey,
 ) -> Result<EncryptedContainer> {
+    let salt = SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    let salt_str = salt.to_string();
+
     let cipher = Aes256Gcm::new_from_slice(master_key.as_bytes())?;
 
     let mut nonce_bytes = [0u8; 12];
@@ -29,6 +103,7 @@ pub fn encrypt_storage_key(
         .map_err(|e| anyhow!(e.to_string()))?;
 
     Ok(EncryptedContainer {
+        salt: salt_str,
         nonce: hex::encode(nonce_bytes),
         ciphertext: hex::encode(ciphertext),
     })

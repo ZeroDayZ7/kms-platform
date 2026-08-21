@@ -4,9 +4,13 @@ mod listener;
 mod state;
 
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 
 use state::VhsmState;
+
+/// Maksymalny czas na dokończenie procedury Unseal (15 minut)
+const UNSEAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -14,6 +18,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Uruchamianie vHSM Daemon w trybie zero-trust...");
 
     let state = Arc::new(RwLock::new(VhsmState::new()));
+
+    // --- TASK UNSEAL TIMEOUT CHECKER ---
+    let state_lock_checker = Arc::clone(&state);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
+        loop {
+            interval.tick().await;
+            let mut guard = state_lock_checker.write().await;
+
+            if let Some(started_at) = guard.unseal_started_at
+                && guard.master_key.is_none()
+                && started_at.elapsed() >= UNSEAL_TIMEOUT
+            {
+                tracing::warn!(
+                    "[SECURITY] Przekroczono limit czasowy ceremonii Unseal (15 min). Resetowanie próby!"
+                );
+                guard.zeroize_key();
+            }
+        }
+    });
 
     #[cfg(unix)]
     {
@@ -24,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let _ = state;
         tracing::warn!("Środowisko nie-UNIX - vHSM działa w trybie mock.");
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        let mut interval = tokio::time::interval(Duration::from_secs(3600));
         loop {
             interval.tick().await;
         }

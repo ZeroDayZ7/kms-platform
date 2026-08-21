@@ -1,0 +1,15 @@
+version: "2"
+plugins:
+  - name: "sqlc-gen-sqlx"
+    wasm:
+      url: "https://github.com/mathematic-inc/sqlc-gen-sqlx/releases/download/v0.2.2/sqlc-gen-sqlx.wasm"
+      sha256: "b03b1b7fcf1887cbb1cdbdd2b83c0252badd92060764fac0017c0aaa22e4c923"
+sql:
+  - engine: "postgresql"
+    queries: "sqlc/queries/*.sql"
+    schema: "sqlc/migrations/*.sql"
+    codegen:
+      - plugin: "sqlc-gen-sqlx"
+        out: "src/infrastructure/sqlc"
+        options:
+          output: "queries.rs"

@@ -17,6 +17,7 @@ use crate::{
         },
     },
     errors::{AppError, AppResult},
+    server::state::KeyCache,
 };
 
 pub struct GetPrivateKeyInput {
@@ -36,6 +37,7 @@ pub struct GetPrivateKeyUseCase<R, A> {
     key_repo: Arc<R>,
     audit_repo: Arc<A>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
+    key_cache: Arc<KeyCache>,
     acl_settings: Arc<AclSettings>,
 }
 
@@ -48,12 +50,14 @@ where
         key_repo: Arc<R>,
         audit_repo: Arc<A>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
+        key_cache: Arc<KeyCache>,
         acl_settings: Arc<AclSettings>,
     ) -> Self {
         Self {
             key_repo,
             audit_repo,
             crypto_service,
+            key_cache,
             acl_settings,
         }
     }
@@ -84,7 +88,31 @@ where
             return Err(AppError::Unauthorized);
         }
 
-        // 2. Pobranie klucza z MongoDB (TYLKO Active)
+        if let Some((cached_version, cached_bytes)) =
+            self.key_cache.get(&input.target_service, input.algorithm)
+        {
+            self.audit_repo
+                .record(AuditLog {
+                    id: Uuid::now_v7(),
+                    caller_service: input.caller_service.clone(),
+                    target_service: input.target_service.clone(),
+                    action: AuditAction::GetPrivateKey,
+                    algorithm: input.algorithm,
+                    status: AuditStatus::Success,
+                    reason: Some("cache_hit".to_string()),
+                    timestamp: Utc::now(),
+                })
+                .await?;
+
+            return Ok(GetPrivateKeyOutput {
+                service_id: input.target_service.clone(),
+                algorithm: input.algorithm,
+                version: cached_version,
+                private_key_bytes: cached_bytes,
+            });
+        }
+
+        // 2. Pobranie klucza z DB (TYLKO Active)
         let active_key = match self
             .key_repo
             .get_active_key(&input.target_service, input.algorithm)
@@ -114,6 +142,23 @@ where
             .crypto_service
             .decrypt_private_key(&active_key.encrypted_private_key)
             .await?;
+
+        let preload_enabled = self.acl_settings.services.values().any(|service_cfg| {
+            service_cfg.allowed_access.iter().any(|rule| {
+                rule.target_service == input.target_service
+                    && rule.algorithm == input.algorithm
+                    && rule.access_level == KeyAccessLevel::PrivateKey
+                    && rule.preload
+            })
+        });
+        if preload_enabled {
+            self.key_cache.insert(
+                &input.target_service,
+                input.algorithm,
+                active_key.version,
+                decrypted_private_key.clone(),
+            );
+        }
 
         // 4. Rejestracja udanego odczytu w audycie
         self.audit_repo

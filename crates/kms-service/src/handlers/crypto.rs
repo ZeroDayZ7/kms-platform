@@ -16,8 +16,6 @@ pub struct EncryptRequest {
 pub struct EncryptResponse {
     #[serde(with = "serde_bytes")]
     pub ciphertext: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub nonce: Vec<u8>,
     pub master_key_version: i32,
 }
 
@@ -25,8 +23,6 @@ pub struct EncryptResponse {
 pub struct DecryptRequest {
     #[serde(with = "serde_bytes")]
     pub ciphertext: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub nonce: Vec<u8>,
     pub master_key_version: i32,
 }
 
@@ -63,7 +59,6 @@ pub async fn encrypt_handler(
 
     Ok(Json(EncryptResponse {
         ciphertext: encrypted.ciphertext,
-        nonce: encrypted.nonce,
         master_key_version: encrypted.master_key_version,
     }))
 }
@@ -74,7 +69,6 @@ pub async fn decrypt_handler(
 ) -> AppResult<Json<DecryptResponse>> {
     let payload_struct = EncryptedPrivateKey {
         ciphertext: payload.ciphertext,
-        nonce: payload.nonce,
         master_key_version: payload.master_key_version,
     };
 

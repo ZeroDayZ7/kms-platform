@@ -5,12 +5,15 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// Importujemy EncryptedContainer z kms-core
+use kms_core::crypto::aes::EncryptedContainer;
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ShareFileRecord {
     pub index: u8,
     pub threshold: u8,
     pub total_shares: u8,
-    pub share_hex: String,
+    pub container: EncryptedContainer, // <--- Zamiast share_hex: String
     pub share_sha256: String,
     pub created_at: DateTime<Utc>,
 }
@@ -26,17 +29,20 @@ pub fn write_share_file(
     index: u8,
     threshold: u8,
     total_shares: u8,
-    share_hex: String,
+    container: EncryptedContainer, // <--- Przyjmuje gotowy kontener
 ) -> Result<PathBuf> {
     let file_path = dir.join(format!("share_{index}.json"));
     let created_at = Utc::now();
-    let sha256 = compute_sha256_hex(&share_hex);
+
+    // Wyliczamy SHA-256 z zserializowanego kontenera
+    let container_json = serde_json::to_string(&container)?;
+    let sha256 = compute_sha256_hex(&container_json);
 
     let record = ShareFileRecord {
         index,
         threshold,
         total_shares,
-        share_hex: share_hex.clone(),
+        container,
         share_sha256: sha256,
         created_at,
     };
@@ -52,6 +58,7 @@ pub fn write_share_file(
 pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
     let mut records = Vec::new();
     let entries = fs::read_dir(dir)?;
+
     for entry in entries {
         let entry = entry?;
         let path = entry.path();
@@ -60,7 +67,20 @@ pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
         }
 
         let content = fs::read_to_string(&path)?;
-        let record: ShareFileRecord = serde_json::from_str(&content)?;
+        let record: ShareFileRecord = serde_json::from_str(&content)
+            .with_context(|| format!("Uszkodzona struktura JSON w pliku: {}", path.display()))?;
+
+        // --- WERYFIKACJA HASHA SHA-256 ---
+        let container_json = serde_json::to_string(&record.container)?;
+        let expected_sha256 = compute_sha256_hex(&container_json);
+
+        if record.share_sha256 != expected_sha256 {
+            anyhow::bail!(
+                "Błąd integralności! Plik {} został zmodyfikowany lub uszkodzony (niezgodny hash SHA-256).",
+                path.display()
+            );
+        }
+
         records.push(record);
     }
     Ok(records)
