@@ -59,7 +59,9 @@ allowed_access = [
     { target_service = "hmac-bff-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
 
     { target_service = "hmac-auth-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
-    { target_service = "hmac-identity-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
+    { target_service = "hmac-identity-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    { target_service = "identity-audit-hmac", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.citizen_docs_service]
