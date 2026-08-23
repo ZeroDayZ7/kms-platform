@@ -104,7 +104,7 @@ where
                     };
 
                     let encrypted_private_key = crypto_service
-                        .encrypt_private_key(&generated_key.private_key_bytes)
+                        .encrypt_private_key(generated_key.private_key_bytes.as_bytes())
                         .await?;
 
                     let new_key = KeyPairEntity {

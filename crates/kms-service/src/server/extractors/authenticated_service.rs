@@ -117,10 +117,7 @@ impl FromRequestParts<AppState> for AuthenticatedService {
             }
         }
 
-        debug!("🔍 [KMS-AUTH] Service: {}", service_name);
-        debug!("🔍 [KMS-AUTH] String do podpisu: '{}'", payload_to_sign);
-        debug!("🔑 [KMS-AUTH] Otrzymany podpis: {}", signature_hex);
-        debug!("🔑 [KMS-AUTH] Oczekiwany podpis: {}", expected_signature);
+        debug!(service = %service_name, nonce = %nonce, timestamp = %timestamp, "validated HMAC metadata");
 
         if signature_hex
             .as_bytes()

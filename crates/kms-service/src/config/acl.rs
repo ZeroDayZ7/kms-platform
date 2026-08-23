@@ -1,8 +1,17 @@
 // region: Imports
+use crate::domain::crypto::SecretBytes;
 use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 // endregion
+
+fn deserialize_secret<'de, D>(deserializer: D) -> Result<SecretBytes, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    Ok(SecretBytes::new(value.into_bytes()))
+}
 
 // region: Enums & Models
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -22,12 +31,24 @@ pub struct AccessRule {
     pub preload: bool,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize)]
 pub struct ServiceConfig {
     pub service_id: ServiceId,
-    pub secret: String,
+    #[serde(deserialize_with = "deserialize_secret")]
+    pub secret: SecretBytes,
     pub allowed_access: Vec<AccessRule>,
     pub allowed_actions: Option<Vec<ControlAction>>,
+}
+
+impl Clone for ServiceConfig {
+    fn clone(&self) -> Self {
+        Self {
+            service_id: self.service_id.clone(),
+            secret: SecretBytes::new(self.secret.as_bytes().to_vec()),
+            allowed_access: self.allowed_access.clone(),
+            allowed_actions: self.allowed_actions.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
@@ -38,7 +59,7 @@ pub enum ControlAction {
     RevokeKeys,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Default, Deserialize, Clone)]
 pub struct AclSettings {
     pub services: HashMap<String, ServiceConfig>,
 }

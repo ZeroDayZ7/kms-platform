@@ -32,13 +32,10 @@ pub struct KeyCacheKey {
     pub algorithm: KeyAlgorithm,
 }
 
-#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
-pub struct SecureKeyBytes(pub Vec<u8>);
-
-#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(ZeroizeOnDrop)]
 pub struct CachedKeyValue {
     pub version: u32,
-    pub bytes: SecureKeyBytes,
+    pub bytes: crate::domain::crypto::SecretBytes,
 }
 
 #[derive(Clone, Default)]
@@ -53,21 +50,22 @@ impl KeyCache {
         }
     }
 
-    pub fn get(
+    pub fn with_key<R>(
         &self,
         target_service: &ServiceId,
         algorithm: KeyAlgorithm,
-    ) -> Option<(u32, Vec<u8>)> {
+        f: impl FnOnce(u32, &[u8]) -> R,
+    ) -> Option<R> {
         let key = KeyCacheKey {
             target_service: target_service.0.clone(),
             algorithm,
         };
 
-        self.entries
-            .read()
-            .ok()?
-            .get(&key)
-            .map(|value| (value.version, value.bytes.0.clone()))
+        let guard = self.entries.read().ok()?;
+        let value = guard.get(&key)?;
+        let version = value.version;
+        let result = f(version, value.bytes.as_bytes());
+        Some(result)
     }
 
     pub fn insert(
@@ -87,7 +85,7 @@ impl KeyCache {
                 key,
                 CachedKeyValue {
                     version,
-                    bytes: SecureKeyBytes(value),
+                    bytes: crate::domain::crypto::SecretBytes::new(value),
                 },
             );
         }

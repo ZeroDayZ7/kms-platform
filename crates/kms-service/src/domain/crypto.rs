@@ -1,6 +1,7 @@
 use crate::errors::AppResult;
 use serde::{Deserialize, Serialize};
-use zeroize::ZeroizeOnDrop;
+use std::fmt;
+use zeroize::{Zeroize, ZeroizeOnDrop};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum KeyAlgorithm {
@@ -24,9 +25,54 @@ pub struct EncryptedPrivateKey {
 }
 
 #[derive(ZeroizeOnDrop)]
+pub struct SecretBytes(Vec<u8>);
+
+impl SecretBytes {
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(bytes)
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+
+    pub fn as_mut_bytes(&mut self) -> &mut [u8] {
+        &mut self.0
+    }
+
+    pub fn into_vec(&self) -> Vec<u8> {
+        self.0.clone()
+    }
+
+    pub fn clone_secret(&self) -> Self {
+        Self::new(self.0.clone())
+    }
+}
+
+impl fmt::Display for SecretBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl fmt::Debug for SecretBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SecretBytes(\"")?;
+        f.write_str("[REDACTED]")?;
+        f.write_str("\")")
+    }
+}
+
+impl Zeroize for SecretBytes {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+#[derive(ZeroizeOnDrop)]
 pub struct RawKeyPair {
     pub public_key_pem: String,
-    pub private_key_bytes: Vec<u8>,
+    pub private_key_bytes: SecretBytes,
 }
 
 #[async_trait::async_trait]

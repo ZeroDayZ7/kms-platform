@@ -88,9 +88,11 @@ where
             return Err(AppError::Unauthorized);
         }
 
-        if let Some((cached_version, cached_bytes)) =
-            self.key_cache.get(&input.target_service, input.algorithm)
-        {
+        if let Some(cached) = self.key_cache.with_key(
+            &input.target_service,
+            input.algorithm,
+            |cached_version, cached_bytes| (cached_version, cached_bytes.to_vec()),
+        ) {
             self.audit_repo
                 .record(AuditLog {
                     id: Uuid::now_v7(),
@@ -104,6 +106,7 @@ where
                 })
                 .await?;
 
+            let (cached_version, cached_bytes) = cached;
             return Ok(GetPrivateKeyOutput {
                 service_id: input.target_service.clone(),
                 algorithm: input.algorithm,

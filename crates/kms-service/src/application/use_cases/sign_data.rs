@@ -115,9 +115,12 @@ where
             return Err(AppError::Unauthorized);
         }
 
-        let cached_key = self.key_cache.get(&input.target_service, input.algorithm);
-        let mut private_key_bytes = if let Some((_, bytes)) = cached_key {
-            bytes
+        let mut private_key_bytes = if let Some(cached) =
+            self.key_cache
+                .with_key(&input.target_service, input.algorithm, |_, bytes| {
+                    bytes.to_vec()
+                }) {
+            cached
         } else {
             let key = match input.key_version {
                 Some(version) => {
