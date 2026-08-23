@@ -40,10 +40,6 @@ pub fn router(state: AppState) -> Router {
             post(keys::rotate_key_handler).layer(rate_limits.auth.clone()),
         )
         .route(
-            "/api/v1/keys/private",
-            post(keys::get_private_key_handler).layer(rate_limits.auth.clone()),
-        )
-        .route(
             "/api/v1/keys/symmetric",
             post(keys::get_symmetric_key_handler).layer(rate_limits.auth.clone()),
         )

@@ -14,6 +14,7 @@ use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService>;
@@ -32,13 +33,10 @@ pub struct KeyCacheKey {
     pub algorithm: KeyAlgorithm,
 }
 
-#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
-pub struct SecureKeyBytes(pub Vec<u8>);
-
-#[derive(Debug, Clone, Zeroize, ZeroizeOnDrop)]
+#[derive(ZeroizeOnDrop)]
 pub struct CachedKeyValue {
     pub version: u32,
-    pub bytes: SecureKeyBytes,
+    pub bytes: crate::domain::crypto::SecretBytes,
 }
 
 #[derive(Clone, Default)]
@@ -53,21 +51,22 @@ impl KeyCache {
         }
     }
 
-    pub fn get(
+    pub fn with_key<R>(
         &self,
         target_service: &ServiceId,
         algorithm: KeyAlgorithm,
-    ) -> Option<(u32, Vec<u8>)> {
+        f: impl FnOnce(u32, &[u8]) -> R,
+    ) -> Option<R> {
         let key = KeyCacheKey {
             target_service: target_service.0.clone(),
             algorithm,
         };
 
-        self.entries
-            .read()
-            .ok()?
-            .get(&key)
-            .map(|value| (value.version, value.bytes.0.clone()))
+        let guard = self.entries.read().ok()?;
+        let value = guard.get(&key)?;
+        let version = value.version;
+        let result = f(version, value.bytes.as_bytes());
+        Some(result)
     }
 
     pub fn insert(
@@ -87,7 +86,7 @@ impl KeyCache {
                 key,
                 CachedKeyValue {
                     version,
-                    bytes: SecureKeyBytes(value),
+                    bytes: crate::domain::crypto::SecretBytes::new(value),
                 },
             );
         }
@@ -140,7 +139,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(settings: Arc<Settings>) -> AppResult<Self> {
+    pub async fn new(
+        settings: Arc<Settings>,
+        shutdown_token: CancellationToken,
+    ) -> AppResult<Self> {
         let pg_pool = init_postgres(&settings.database).await?;
 
         let redis_manager = if settings.redis.enabled {
@@ -157,13 +159,17 @@ impl AppState {
         let key_repo = Arc::new(PgKeyRepository::new(pg_pool.clone()));
         let audit_repo = Arc::new(PgAuditRepository::new(pg_pool.clone()));
         let key_cache = Arc::new(KeyCache::new());
+        let compiled_acl = Arc::new(settings.acl.compile());
 
         let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
-        let _ =
-            crate::workers::expiration::run_expiration_worker(key_repo.clone(), audit_repo.clone())
-                .await;
+        let _ = crate::workers::expiration::run_expiration_worker(
+            key_repo.clone(),
+            audit_repo.clone(),
+            shutdown_token,
+        )
+        .await;
 
         let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(crypto_service.clone()));
         let decrypt_data_use_case = Arc::new(DecryptDataUseCase::new(crypto_service.clone()));
@@ -171,7 +177,7 @@ impl AppState {
         let generate_key_pair_use_case = Arc::new(GenerateKeyPairUseCase::new(
             key_repo.clone(),
             crypto_service.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
         let get_public_key_use_case = Arc::new(GetPublicKeyUseCase::new(key_repo.clone()));
 
@@ -180,7 +186,7 @@ impl AppState {
             audit_repo.clone(),
             crypto_service.clone(),
             key_cache.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         let get_symmetric_key_use_case = Arc::new(GetSymmetricKeyUseCase::new(
@@ -188,7 +194,7 @@ impl AppState {
             audit_repo.clone(),
             crypto_service.clone(),
             key_cache.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         let rotate_key_use_case = Arc::new(RotateKeyUseCase::new(
@@ -197,7 +203,7 @@ impl AppState {
             audit_repo.clone(),
             key_cache.clone(),
             settings.crypto.grace_period_minutes,
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         let sign_data_use_case = Arc::new(SignDataUseCase::new(
@@ -205,7 +211,7 @@ impl AppState {
             audit_repo.clone(),
             crypto_service.clone(),
             key_cache.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         Ok(Self {
@@ -231,5 +237,17 @@ impl AppState {
 
     pub fn clear_key_cache(&self) {
         self.key_cache.clear();
+    }
+
+    pub async fn shutdown(&self) {
+        self.key_cache.clear();
+
+        if let Some(redis_manager) = &self.redis_manager
+            && let Err(err) = redis_manager.close().await
+        {
+            tracing::warn!(error = ?err, "Redis shutdown failed");
+        }
+
+        self.db.close().await;
     }
 }

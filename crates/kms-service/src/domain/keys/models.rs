@@ -4,7 +4,7 @@ use std::fmt;
 use uuid::Uuid;
 use zeroize::ZeroizeOnDrop;
 
-pub use crate::domain::crypto::{EncryptedPrivateKey, KeyAlgorithm, KeyPurpose};
+pub use crate::domain::crypto::{EncryptedPrivateKey, KeyAlgorithm, KeyPurpose, SecretBytes};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ServiceId(pub String);
@@ -30,7 +30,7 @@ impl From<String> for ServiceId {
 #[derive(ZeroizeOnDrop)]
 pub struct RawKeyPair {
     pub public_key_pem: String,
-    pub private_key_bytes: Vec<u8>,
+    pub private_key_bytes: SecretBytes,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]

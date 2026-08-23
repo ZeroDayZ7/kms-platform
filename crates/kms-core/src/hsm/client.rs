@@ -1,30 +1,29 @@
-// crates/kms-core/src/hsm/client.rs
 use crate::hsm::protocol::{HsmRequest, HsmResponse};
-use std::fmt;
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum HsmClientError {
-    IoError(String),
-    SerializationError(String),
-    CryptoError(String),
+    #[error("connection to HSM failed")]
+    Io {
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("HSM request timed out")]
+    Timeout,
+    #[error("HSM frame is invalid")]
+    InvalidFrame,
+    #[error("HSM response was invalid")]
+    InvalidResponse,
+    #[error("serializing HSM request failed")]
+    Serialization {
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("HSM returned an error: {0}")]
+    Remote(String),
+    #[error("Unix domain sockets are not available on this platform")]
     PlatformNotSupported,
 }
-
-impl fmt::Display for HsmClientError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            HsmClientError::IoError(e) => write!(f, "HSM I/O error: {e}"),
-            HsmClientError::SerializationError(e) => write!(f, "HSM serialization error: {e}"),
-            HsmClientError::CryptoError(e) => write!(f, "HSM crypto error: {e}"),
-            HsmClientError::PlatformNotSupported => write!(
-                f,
-                "Unix domain sockets are not available on this platform; HSM provider requires Unix sockets."
-            ),
-        }
-    }
-}
-
-impl std::error::Error for HsmClientError {}
 
 pub type HsmResult<T> = Result<T, HsmClientError>;
 
@@ -37,8 +36,18 @@ use tokio::{
 pub const HSM_SOCKET_DEFAULT_PATH: &str = "/run/vhsm/vhsm.sock";
 
 #[cfg(any(unix, test))]
+const MAX_HSM_FRAME_SIZE: usize = 1024 * 1024; // 1 MiB, fail-closed
+
+#[cfg(any(unix, test))]
 pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
-    let len = payload.len() as u32;
+    if payload.len() > MAX_HSM_FRAME_SIZE {
+        return Err(HsmClientError::InvalidFrame);
+    }
+
+    let len: u32 = payload
+        .len()
+        .try_into()
+        .map_err(|_| HsmClientError::InvalidFrame)?;
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(payload);
@@ -48,15 +57,27 @@ pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
 #[cfg(unix)]
 async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await.map_err(|err| {
-        HsmClientError::IoError(format!("Failed to read HSM frame length: {err}"))
-    })?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_exact(&mut len_buf),
+    )
+    .await
+    .map_err(|_| HsmClientError::Timeout)?
+    .map_err(|err| HsmClientError::Io { source: err })?;
 
     let len = u32::from_be_bytes(len_buf) as usize;
+    if len > MAX_HSM_FRAME_SIZE {
+        return Err(HsmClientError::InvalidFrame);
+    }
+
     let mut payload = vec![0u8; len];
-    stream.read_exact(&mut payload).await.map_err(|err| {
-        HsmClientError::IoError(format!("Failed to read HSM response payload: {err}"))
-    })?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_exact(&mut payload),
+    )
+    .await
+    .map_err(|_| HsmClientError::Timeout)?
+    .map_err(|err| HsmClientError::Io { source: err })?;
 
     Ok(payload)
 }
@@ -70,24 +91,27 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
         socket
     };
 
-    let mut stream = UnixStream::connect(path).await.map_err(|err| {
-        HsmClientError::IoError(format!("Failed to connect to HSM socket {path}: {err}"))
-    })?;
+    let mut stream =
+        tokio::time::timeout(std::time::Duration::from_secs(5), UnixStream::connect(path))
+            .await
+            .map_err(|_| HsmClientError::Timeout)?
+            .map_err(|err| HsmClientError::Io { source: err })?;
 
-    let payload =
-        serde_json::to_vec(req).map_err(|e| HsmClientError::SerializationError(e.to_string()))?;
+    let payload = serde_json::to_vec(req)
+        .map_err(|err| HsmClientError::Serialization { source: err })?;
     let frame = framed_message(&payload)?;
 
-    stream.write_all(&frame).await.map_err(|err| {
-        HsmClientError::IoError(format!("Failed to write HSM request to {path}: {err}"))
-    })?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&frame))
+        .await
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
 
     let response_bytes = read_frame(&mut stream).await?;
     let response: HsmResponse = serde_json::from_slice(&response_bytes)
-        .map_err(|e| HsmClientError::SerializationError(e.to_string()))?;
+        .map_err(|err| HsmClientError::Serialization { source: err })?;
 
     match response {
-        HsmResponse::Error { code, message } => Err(HsmClientError::CryptoError(format!(
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "HSM returned error {code}: {message}"
         ))),
         _ => Ok(response),
@@ -113,12 +137,10 @@ pub async fn encrypt_via_hsm(
 
     match send_hsm_request(socket_path, &req).await? {
         HsmResponse::Encrypted { ciphertext } => Ok(ciphertext),
-        HsmResponse::Error { code, message } => Err(HsmClientError::CryptoError(format!(
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "HSM encryption failed ({code}): {message}"
         ))),
-        other => Err(HsmClientError::CryptoError(format!(
-            "Unexpected HSM response for encrypt: {other:?}"
-        ))),
+        _other => Err(HsmClientError::InvalidResponse),
     }
 }
 
@@ -136,12 +158,10 @@ pub async fn decrypt_via_hsm(
 
     match send_hsm_request(socket_path, &req).await? {
         HsmResponse::Decrypted { plaintext } => Ok(plaintext),
-        HsmResponse::Error { code, message } => Err(HsmClientError::CryptoError(format!(
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "HSM decryption failed ({code}): {message}"
         ))),
-        other => Err(HsmClientError::CryptoError(format!(
-            "Unexpected HSM response for decrypt: {other:?}"
-        ))),
+        _other => Err(HsmClientError::InvalidResponse),
     }
 }
 
@@ -155,5 +175,12 @@ mod tests {
         assert_eq!(msg.len(), 7);
         assert_eq!(&msg[..4], &[0, 0, 0, 3]);
         assert_eq!(&msg[4..], b"abc");
+    }
+
+    #[test]
+    fn framed_message_rejects_payloads_above_limit() {
+        let oversized = vec![0u8; MAX_HSM_FRAME_SIZE + 1];
+        let err = framed_message(&oversized).unwrap_err();
+        assert!(matches!(err, HsmClientError::InvalidFrame));
     }
 }

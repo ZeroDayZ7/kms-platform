@@ -14,8 +14,18 @@ CREATE TABLE IF NOT EXISTS keys (
     UNIQUE (service_id, algorithm, version)
 );
 
+-- Optimizes lookup by active key for a specific service + algorithm.
 CREATE INDEX IF NOT EXISTS idx_keys_service_algorithm_active
     ON keys (service_id, algorithm, is_active);
+
+-- Optimizes versioned key lookup used when retrieving an exact key revision.
+CREATE INDEX IF NOT EXISTS idx_keys_service_algorithm_version
+    ON keys (service_id, algorithm, version);
+
+-- Enforces the single-active-key invariant and supports active-key fetches by service/algorithm.
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_key_per_service_algorithm
+    ON keys (service_id, algorithm)
+    WHERE is_active = TRUE;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY,

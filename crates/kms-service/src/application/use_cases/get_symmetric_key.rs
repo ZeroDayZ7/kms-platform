@@ -3,7 +3,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
-    config::acl::{AclSettings, KeyAccessLevel},
+    config::acl::{CompiledAcl, KeyAccessLevel, authorize_key_access},
     domain::{
         audit::{
             models::{AuditAction, AuditLog, AuditStatus},
@@ -43,7 +43,7 @@ where
     audit_repo: Arc<A>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     key_cache: Arc<KeyCache>,
-    acl: Arc<AclSettings>,
+    acl_policy: Arc<CompiledAcl>,
 }
 
 impl<K, A> GetSymmetricKeyUseCase<K, A>
@@ -56,23 +56,24 @@ where
         audit_repo: Arc<A>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         key_cache: Arc<KeyCache>,
-        acl: Arc<AclSettings>,
+        acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
             audit_repo,
             crypto_service,
             key_cache,
-            acl,
+            acl_policy,
         }
     }
 
     pub async fn execute(&self, input: GetSymmetricKeyInput) -> AppResult<GetSymmetricKeyOutput> {
-        let is_allowed = self.acl.is_allowed(
+        let is_allowed = authorize_key_access(
+            &self.acl_policy,
             &input.caller_service,
             &input.target_service,
             input.algorithm,
-            &KeyAccessLevel::SymmetricKey,
+            KeyAccessLevel::SymmetricKey,
         );
 
         if !is_allowed {
@@ -92,9 +93,11 @@ where
             return Err(AppError::Unauthorized);
         }
 
-        if let Some((cached_version, cached_bytes)) =
-            self.key_cache.get(&input.target_service, input.algorithm)
-        {
+        if let Some(cached) = self.key_cache.with_key(
+            &input.target_service,
+            input.algorithm,
+            |cached_version, cached_bytes| (cached_version, cached_bytes.to_vec()),
+        ) {
             self.audit_repo
                 .record(AuditLog {
                     id: Uuid::now_v7(),
@@ -108,6 +111,7 @@ where
                 })
                 .await?;
 
+            let (cached_version, cached_bytes) = cached;
             return Ok(GetSymmetricKeyOutput {
                 service_id: input.target_service.clone(),
                 algorithm: input.algorithm,
@@ -148,14 +152,9 @@ where
             .decrypt_private_key(&key_entity.encrypted_private_key)
             .await?;
 
-        let preload_enabled = self.acl.services.values().any(|service_cfg| {
-            service_cfg.allowed_access.iter().any(|rule| {
-                rule.target_service == input.target_service
-                    && rule.algorithm == input.algorithm
-                    && rule.access_level == KeyAccessLevel::SymmetricKey
-                    && rule.preload
-            })
-        });
+        let preload_enabled = self
+            .acl_policy
+            .should_preload_for(&input.target_service, input.algorithm);
         if preload_enabled {
             self.key_cache.insert(
                 &input.target_service,

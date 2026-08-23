@@ -6,7 +6,9 @@ use std::sync::Arc;
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
-    domain::crypto::{EncryptedPrivateKey, KmsCryptoService as KmsCryptoServiceTrait, RawKeyPair},
+    domain::crypto::{
+        EncryptedPrivateKey, KmsCryptoService as KmsCryptoServiceTrait, RawKeyPair, SecretBytes,
+    },
     errors::{AppError, AppResult},
     infrastructure::crypto::vhsm_client::VhsmClient,
 };
@@ -36,7 +38,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
 
         Ok(RawKeyPair {
             public_key_pem,
-            private_key_bytes: signing_key.to_bytes().to_vec(),
+            private_key_bytes: SecretBytes::new(signing_key.to_bytes().to_vec()),
         })
     }
 
@@ -52,7 +54,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
 
         Ok(RawKeyPair {
             public_key_pem,
-            private_key_bytes: secret.to_bytes().to_vec(),
+            private_key_bytes: SecretBytes::new(secret.to_bytes().to_vec()),
         })
     }
 
@@ -65,7 +67,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
 
         Ok(RawKeyPair {
             public_key_pem: String::new(),
-            private_key_bytes: key_bytes.to_vec(),
+            private_key_bytes: SecretBytes::new(key_bytes.to_vec()),
         })
     }
 

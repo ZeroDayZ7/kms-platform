@@ -153,6 +153,62 @@ impl KeyRepository for PgKeyRepository {
         Ok(result.rows_affected() == 1)
     }
 
+    async fn rotate_active_key(
+        &self,
+        service_id: &ServiceId,
+        algorithm: KeyAlgorithm,
+        new_key: &crate::domain::keys::models::KeyPairEntity,
+        deprecated_until: Option<DateTime<Utc>>,
+    ) -> AppResult<bool> {
+        let old_status = if deprecated_until.is_some() {
+            "Deprecated"
+        } else {
+            "Compromised"
+        };
+
+        let rows = sqlx::query(
+            r#"
+            WITH retired AS (
+                UPDATE keys
+                SET status = $3,
+                    is_active = FALSE,
+                    created_at = NOW()
+                WHERE service_id = $1
+                  AND algorithm = $2
+                  AND is_active = TRUE
+                RETURNING id
+            )
+            INSERT INTO keys (
+                id, service_id, algorithm, version, encrypted_key_data,
+                public_key_pem, purpose, status, is_active, created_at
+            )
+            VALUES (
+                $4, $1, $2, $5, $6, $7, $8, 'Active', TRUE, NOW()
+            )
+            ON CONFLICT (service_id, algorithm, version)
+            DO UPDATE SET
+                encrypted_key_data = EXCLUDED.encrypted_key_data,
+                public_key_pem = EXCLUDED.public_key_pem,
+                purpose = EXCLUDED.purpose,
+                status = EXCLUDED.status,
+                is_active = EXCLUDED.is_active,
+                created_at = NOW();
+            "#,
+        )
+        .bind(service_id.0.clone())
+        .bind(format!("{:?}", algorithm))
+        .bind(old_status)
+        .bind(new_key.id)
+        .bind(new_key.version as i32)
+        .bind(new_key.encrypted_private_key.ciphertext.clone())
+        .bind(new_key.public_key_pem.clone())
+        .bind(format!("{:?}", new_key.purpose))
+        .execute(&self.pool)
+        .await?;
+
+        Ok(rows.rows_affected() == 1)
+    }
+
     async fn get_deprecated_keys_expired(
         &self,
         now: DateTime<Utc>,

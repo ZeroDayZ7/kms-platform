@@ -46,6 +46,14 @@ pub trait KeyRepository: Send + Sync {
         deprecated_until: DateTime<Utc>,
     ) -> impl std::future::Future<Output = AppResult<bool>> + Send;
 
+    fn rotate_active_key(
+        &self,
+        service_id: &ServiceId,
+        algorithm: KeyAlgorithm,
+        new_key: &crate::domain::keys::models::KeyPairEntity,
+        deprecated_until: Option<DateTime<Utc>>,
+    ) -> impl std::future::Future<Output = AppResult<bool>> + Send;
+
     fn get_deprecated_keys_expired(
         &self,
         now: DateTime<Utc>,

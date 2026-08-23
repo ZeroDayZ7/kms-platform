@@ -3,7 +3,7 @@ use crate::config::crypto::GracePeriodMinutes;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
 
-use crate::config::acl::{AclSettings, ControlAction};
+use crate::config::acl::{CompiledAcl, ControlAction, authorize_control_action};
 use crate::domain::audit::models::{AuditAction, AuditLog, AuditStatus};
 use crate::domain::audit::repository::AuditRepository;
 use crate::domain::crypto::KmsCryptoService;
@@ -32,7 +32,7 @@ where
     audit_repo: Arc<A>,
     key_cache: Arc<KeyCache>,
     grace_period_minutes: GracePeriodMinutes,
-    acl_settings: Arc<AclSettings>,
+    acl_policy: Arc<CompiledAcl>,
 }
 
 impl<R, A> RotateKeyUseCase<R, A>
@@ -46,7 +46,7 @@ where
         audit_repo: Arc<A>,
         key_cache: Arc<KeyCache>,
         grace_period_minutes: GracePeriodMinutes,
-        acl_settings: Arc<AclSettings>,
+        acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
@@ -54,7 +54,7 @@ where
             audit_repo,
             key_cache,
             grace_period_minutes,
-            acl_settings,
+            acl_policy,
         }
     }
 
@@ -66,17 +66,8 @@ where
             ControlAction::RotateAllKeys
         };
 
-        let caller_cfg = self
-            .acl_settings
-            .services
-            .get(&input.caller_service.0)
-            .ok_or(AppError::Unauthorized)?;
-
-        let allowed = caller_cfg
-            .allowed_actions
-            .as_ref()
-            .map(|v| v.contains(&required_action))
-            .unwrap_or(false);
+        let allowed =
+            authorize_control_action(&self.acl_policy, &input.caller_service, &required_action);
 
         if !allowed {
             return Err(AppError::Unauthorized);
@@ -94,29 +85,7 @@ where
                 ))
             })?;
 
-        // 2. Update old key status according to reason
-        match input.reason {
-            RotationReason::Scheduled | RotationReason::Manual => {
-                let valid_until = Utc::now() + Duration::minutes(*self.grace_period_minutes);
-                let ok = self
-                    .key_repo
-                    .compare_and_set_active_to_deprecated(&active_key.id, valid_until)
-                    .await?;
-                if !ok {
-                    return Err(AppError::Conflict(
-                        "Failed to deprecate key: concurrent modification".into(),
-                    ));
-                }
-            }
-            RotationReason::Compromised => {
-                // For compromised we don't require CAS; just mark compromised
-                self.key_repo
-                    .update_key_status(&active_key.id, KeyStatus::Compromised, None)
-                    .await?;
-            }
-        }
-
-        // 3. Generate a new key with incremented version and status Active
+        // 2. Generate a new key with incremented version and status Active
         let generated_pair = match input.algorithm {
             KeyAlgorithm::Ed25519 => self.crypto_service.generate_ed25519_keypair()?,
             KeyAlgorithm::X25519 => self.crypto_service.generate_x25519_keypair()?,
@@ -127,7 +96,7 @@ where
 
         let encrypted_private_key = self
             .crypto_service
-            .encrypt_private_key(&generated_pair.private_key_bytes)
+            .encrypt_private_key(generated_pair.private_key_bytes.as_bytes())
             .await?;
 
         let new_entity = KeyPairEntity {
@@ -143,8 +112,29 @@ where
             expires_at: None,
         };
 
-        // 4. Persist new key
-        self.key_repo.save_key(&new_entity).await?;
+        let deprecated_until = match input.reason {
+            RotationReason::Scheduled | RotationReason::Manual => {
+                Some(Utc::now() + Duration::minutes(*self.grace_period_minutes))
+            }
+            RotationReason::Compromised => None,
+        };
+
+        let rotated = self
+            .key_repo
+            .rotate_active_key(
+                &input.service_id,
+                input.algorithm,
+                &new_entity,
+                deprecated_until,
+            )
+            .await?;
+
+        if !rotated {
+            return Err(AppError::Conflict(
+                "Failed to rotate key atomically: concurrent modification or active-key race"
+                    .into(),
+            ));
+        }
 
         self.key_cache.remove(&input.service_id, input.algorithm);
 

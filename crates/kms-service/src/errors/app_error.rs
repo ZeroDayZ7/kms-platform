@@ -76,26 +76,45 @@ struct ErrorResponse {
     code: &'static str,
     message: Cow<'static, str>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<String>,
+    request_id: Option<String>,
 }
 
 impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
-            Self::Unauthorized => "AUTH_FAILED",
+            Self::Unauthorized => "UNAUTHORIZED",
             Self::NotFound(_) => "RESOURCE_NOT_FOUND",
             Self::ValidationError(_) => "VALIDATION_ERROR",
             Self::Conflict(_) => "CONFLICT_ERROR",
             Self::CryptoError(_) => "CRYPTO_FAILURE",
-            Self::DatabaseError(_) => "DATABASE_ERROR",
-            Self::RedisError(_) => "CACHE_ERROR",
+            Self::DatabaseError(_) => "INTERNAL_SERVER_ERROR",
+            Self::RedisError(_) => "INTERNAL_SERVER_ERROR",
             Self::HsmError(_) => "HSM_COMMUNICATION_ERROR",
             Self::TimeoutError => "TIMEOUT_ERROR",
             Self::ConfigError(_) => "CONFIG_INVALID",
-            Self::SerializationError(_) => "SERIALIZATION_FAILED",
+            Self::SerializationError(_) => "VALIDATION_ERROR",
             Self::ExternalServiceError(_) => "EXTERNAL_SERVICE_UNAVAILABLE",
-            Self::RuntimeError(_) => "RUNTIME_ERROR",
+            Self::RuntimeError(_) => "INTERNAL_SERVER_ERROR",
             Self::Internal(_) => "INTERNAL_SERVER_ERROR",
+        }
+    }
+
+    fn public_message(&self) -> Cow<'static, str> {
+        match self {
+            Self::Unauthorized => "Authentication failed".into(),
+            Self::NotFound(_) => "Resource not found".into(),
+            Self::ValidationError(_) => "Invalid request".into(),
+            Self::Conflict(_) => "Resource conflict".into(),
+            Self::CryptoError(_) => "Cryptographic operation failed".into(),
+            Self::DatabaseError(_) => "Internal server error".into(),
+            Self::RedisError(_) => "Internal server error".into(),
+            Self::HsmError(_) => "HSM communication error".into(),
+            Self::TimeoutError => "Request timed out".into(),
+            Self::ConfigError(_) => "Configuration error".into(),
+            Self::SerializationError(_) => "Invalid request".into(),
+            Self::ExternalServiceError(_) => "External service unavailable".into(),
+            Self::RuntimeError(_) => "Internal server error".into(),
+            Self::Internal(_) => "Internal server error".into(),
         }
     }
 }
@@ -103,7 +122,7 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let code = self.error_code();
-        let message = self.to_string();
+        let public_message = self.public_message();
 
         let status = match &self {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
@@ -112,35 +131,35 @@ impl IntoResponse for AppError {
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::CryptoError(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::DatabaseError(err) => {
-                tracing::error!(target: "infra::db", %err, "Database Error");
+                tracing::error!(target: "infra::db", error = ?err, "Database Error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::RedisError(err) => {
-                tracing::error!(target: "infra::redis", %err, "Redis Error");
+                tracing::error!(target: "infra::redis", error = ?err, "Redis Error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::HsmError(err) => {
-                tracing::error!(target: "infra::hsm", %err, "HSM Error");
+                tracing::error!(target: "infra::hsm", error = ?err, "HSM Error");
                 StatusCode::BAD_GATEWAY
             }
             Self::SerializationError(err) => {
-                tracing::warn!(%err, "JSON Serialization failed");
+                tracing::warn!(error = ?err, "JSON Serialization failed");
                 StatusCode::BAD_REQUEST
             }
             Self::ConfigError(err) => {
-                tracing::error!(%err, "Critical configuration error!");
+                tracing::error!(error = ?err, "Critical configuration error!");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::ExternalServiceError(err) => {
-                tracing::error!(%err, "External service call failed");
+                tracing::error!(error = ?err, "External service call failed");
                 StatusCode::BAD_GATEWAY
             }
             Self::RuntimeError(err) => {
-                tracing::error!(%err, "Runtime execution error");
+                tracing::error!(error = ?err, "Runtime execution error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::Internal(err) => {
-                tracing::error!(%err, "Unexpected Internal Error");
+                tracing::error!(error = ?err, "Unexpected Internal Error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::TimeoutError => StatusCode::REQUEST_TIMEOUT,
@@ -148,18 +167,8 @@ impl IntoResponse for AppError {
 
         let body = Json(ErrorResponse {
             code,
-            message: message.into(),
-            details: match &self {
-                Self::ValidationError(d)
-                | Self::NotFound(d)
-                | Self::CryptoError(d)
-                | Self::ConfigError(d)
-                | Self::RuntimeError(d)
-                | Self::ExternalServiceError(d) => Some(d.clone()),
-                Self::HsmError(err) => Some(err.to_string()),
-                Self::Internal(d) => Some(d.clone()),
-                _ => None,
-            },
+            message: public_message,
+            request_id: None,
         });
 
         (status, body).into_response()

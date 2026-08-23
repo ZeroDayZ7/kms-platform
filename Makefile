@@ -22,7 +22,7 @@ docker-up:
 docker-down:
 	docker compose down -v
 
-restart:
+restartt:
 	docker compose down -v
 	docker compose up --build --force-recreate -d
 
@@ -34,3 +34,9 @@ unlock:
 
 run:
 	cargo run -p kms-service --bin kms-service -- serve
+
+db-reset:
+	docker compose stop postgres kms-service vhsm-daemon
+	docker compose rm -f postgres
+	-docker volume rm $$(docker volume ls -q -f name=postgres_data)
+	docker compose up -d
