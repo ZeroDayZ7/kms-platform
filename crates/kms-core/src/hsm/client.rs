@@ -37,8 +37,20 @@ use tokio::{
 pub const HSM_SOCKET_DEFAULT_PATH: &str = "/run/vhsm/vhsm.sock";
 
 #[cfg(any(unix, test))]
+const MAX_HSM_FRAME_SIZE: usize = 1024 * 1024; // 1 MiB, fail-closed
+
+#[cfg(any(unix, test))]
 pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
-    let len = payload.len() as u32;
+    if payload.len() > MAX_HSM_FRAME_SIZE {
+        return Err(HsmClientError::IoError(format!(
+            "HSM payload exceeds maximum allowed size of {MAX_HSM_FRAME_SIZE} bytes"
+        )));
+    }
+
+    let len: u32 = payload
+        .len()
+        .try_into()
+        .map_err(|_| HsmClientError::IoError("HSM payload length overflow".to_string()))?;
     let mut frame = Vec::with_capacity(4 + payload.len());
     frame.extend_from_slice(&len.to_be_bytes());
     frame.extend_from_slice(payload);
@@ -48,13 +60,31 @@ pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
 #[cfg(unix)]
 async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
-    stream.read_exact(&mut len_buf).await.map_err(|err| {
-        HsmClientError::IoError(format!("Failed to read HSM frame length: {err}"))
-    })?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_exact(&mut len_buf),
+    )
+    .await
+    .map_err(|_| HsmClientError::IoError("Timed out while reading HSM frame length".to_string()))??
+    .map_err(|err| HsmClientError::IoError(format!("Failed to read HSM frame length: {err}")))?;
 
     let len = u32::from_be_bytes(len_buf) as usize;
+    if len > MAX_HSM_FRAME_SIZE {
+        return Err(HsmClientError::IoError(format!(
+            "HSM frame exceeds maximum allowed size of {MAX_HSM_FRAME_SIZE} bytes"
+        )));
+    }
+
     let mut payload = vec![0u8; len];
-    stream.read_exact(&mut payload).await.map_err(|err| {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        stream.read_exact(&mut payload),
+    )
+    .await
+    .map_err(|_| {
+        HsmClientError::IoError("Timed out while reading HSM response payload".to_string())
+    })??
+    .map_err(|err| {
         HsmClientError::IoError(format!("Failed to read HSM response payload: {err}"))
     })?;
 
@@ -70,17 +100,28 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
         socket
     };
 
-    let mut stream = UnixStream::connect(path).await.map_err(|err| {
-        HsmClientError::IoError(format!("Failed to connect to HSM socket {path}: {err}"))
-    })?;
+    let mut stream =
+        tokio::time::timeout(std::time::Duration::from_secs(5), UnixStream::connect(path))
+            .await
+            .map_err(|_| {
+                HsmClientError::IoError(format!("Timed out while connecting to HSM socket {path}"))
+            })??
+            .map_err(|err| {
+                HsmClientError::IoError(format!("Failed to connect to HSM socket {path}: {err}"))
+            })?;
 
     let payload =
         serde_json::to_vec(req).map_err(|e| HsmClientError::SerializationError(e.to_string()))?;
     let frame = framed_message(&payload)?;
 
-    stream.write_all(&frame).await.map_err(|err| {
-        HsmClientError::IoError(format!("Failed to write HSM request to {path}: {err}"))
-    })?;
+    tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&frame))
+        .await
+        .map_err(|_| {
+            HsmClientError::IoError(format!("Timed out while writing HSM request to {path}"))
+        })??
+        .map_err(|err| {
+            HsmClientError::IoError(format!("Failed to write HSM request to {path}: {err}"))
+        })?;
 
     let response_bytes = read_frame(&mut stream).await?;
     let response: HsmResponse = serde_json::from_slice(&response_bytes)
@@ -155,5 +196,12 @@ mod tests {
         assert_eq!(msg.len(), 7);
         assert_eq!(&msg[..4], &[0, 0, 0, 3]);
         assert_eq!(&msg[4..], b"abc");
+    }
+
+    #[test]
+    fn framed_message_rejects_payloads_above_limit() {
+        let oversized = vec![0u8; MAX_HSM_FRAME_SIZE + 1];
+        let err = framed_message(&oversized).unwrap_err();
+        assert!(format!("{err}").contains("maximum allowed size"));
     }
 }

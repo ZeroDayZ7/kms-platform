@@ -7,11 +7,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     application::use_cases::{
-        GenerateKeyPairInput, GetPrivateKeyInput, GetPublicKeyInput, GetSymmetricKeyInput,
-        RotateKeyInput,
+        GenerateKeyPairInput, GetPublicKeyInput, GetSymmetricKeyInput, RotateKeyInput,
     },
     domain::keys::models::{KeyAlgorithm, KeyPurpose, KeyStatus, RotationReason, ServiceId},
-    errors::AppResult,
+    errors::{AppError, AppResult},
     server::{extractors::authenticated_service::AuthenticatedService, state::AppState},
 };
 
@@ -134,25 +133,31 @@ pub async fn rotate_key_handler(
     }))
 }
 
+pub fn private_key_export_disabled() -> AppError {
+    AppError::ValidationError(
+        "Private key export is disabled for HTTP clients. Use public key, encryption, or signing endpoints instead.".to_string(),
+    )
+}
+
 pub async fn get_private_key_handler(
-    State(state): State<AppState>,
-    AuthenticatedService(caller_service): AuthenticatedService,
-    Json(payload): Json<GetPrivateKeyRequest>,
+    State(_state): State<AppState>,
+    AuthenticatedService(_caller_service): AuthenticatedService,
+    Json(_payload): Json<GetPrivateKeyRequest>,
 ) -> AppResult<Json<PrivateKeyResponse>> {
-    let input = GetPrivateKeyInput {
-        caller_service,
-        target_service: ServiceId(payload.service_id),
-        algorithm: payload.algorithm,
-    };
+    Err(private_key_export_disabled())
+}
 
-    let output = state.use_cases.get_private_key.execute(input).await?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    Ok(Json(PrivateKeyResponse {
-        service_id: output.service_id.0,
-        algorithm: output.algorithm,
-        version: output.version,
-        private_key_b64: BASE64.encode(output.private_key_bytes),
-    }))
+    #[test]
+    fn private_key_export_is_disabled() {
+        let err = private_key_export_disabled();
+        assert!(
+            matches!(err, AppError::ValidationError(message) if message.contains("Private key export is disabled"))
+        );
+    }
 }
 
 // ============================================================================

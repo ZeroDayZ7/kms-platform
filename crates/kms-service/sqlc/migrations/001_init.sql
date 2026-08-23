@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS keys (
 CREATE INDEX IF NOT EXISTS idx_keys_service_algorithm_active
     ON keys (service_id, algorithm, is_active);
 
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_active_key_per_service_algorithm
+    ON keys (service_id, algorithm)
+    WHERE is_active = TRUE;
+
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY,
     caller_service TEXT NOT NULL,

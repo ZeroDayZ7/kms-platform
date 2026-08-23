@@ -67,6 +67,21 @@ impl RedisManager {
         Ok(())
     }
 
+    pub async fn set_if_not_exists(&self, key: &str, value: &str, ttl_sec: u64) -> AppResult<bool> {
+        let expiration = Expiration::EX(
+            ttl_sec
+                .try_into()
+                .map_err(|_| AppError::ValidationError("TTL jest zbyt duży".into()))?,
+        );
+
+        let result = self
+            .client
+            .set::<bool, _, _>(key, value, Some(expiration), None, true)
+            .await?;
+
+        Ok(result)
+    }
+
     pub async fn get(&self, key: &str) -> AppResult<Option<String>> {
         Ok(self.client.get::<Option<String>, _>(key).await?)
     }

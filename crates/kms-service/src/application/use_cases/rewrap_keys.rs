@@ -2,6 +2,7 @@ use crate::domain::crypto::KmsCryptoService;
 use crate::domain::keys::repository::KeyRepository;
 use crate::errors::{AppError, AppResult};
 use std::sync::Arc;
+use zeroize::Zeroize;
 
 pub struct RewrapKeysInput {
     pub target_master_version: i32,
@@ -38,13 +39,12 @@ where
         let mut updated_keys = Vec::with_capacity(pending_keys.len());
 
         for key in pending_keys {
-            // DODANO: .await
-            let decrypted = crypto_service
+            let mut decrypted = crypto_service
                 .decrypt_private_key(&key.encrypted_private_key)
                 .await?;
 
-            // DODANO: .await
             let reencrypted = crypto_service.encrypt_private_key(&decrypted).await?;
+            decrypted.zeroize();
 
             updated_keys.push((key.id, reencrypted, current_version));
         }
