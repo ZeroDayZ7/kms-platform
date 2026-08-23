@@ -94,6 +94,11 @@ impl RedisManager {
         Ok(self.client.ping::<()>(None).await?)
     }
 
+    pub async fn close(&self) -> AppResult<()> {
+        self.client.quit().await?;
+        Ok(())
+    }
+
     pub fn client(&self) -> &Client {
         &self.client
     }

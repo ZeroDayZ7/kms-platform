@@ -14,6 +14,7 @@ use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService>;
@@ -138,7 +139,10 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn new(settings: Arc<Settings>) -> AppResult<Self> {
+    pub async fn new(
+        settings: Arc<Settings>,
+        shutdown_token: CancellationToken,
+    ) -> AppResult<Self> {
         let pg_pool = init_postgres(&settings.database).await?;
 
         let redis_manager = if settings.redis.enabled {
@@ -160,9 +164,12 @@ impl AppState {
         let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
-        let _ =
-            crate::workers::expiration::run_expiration_worker(key_repo.clone(), audit_repo.clone())
-                .await;
+        let _ = crate::workers::expiration::run_expiration_worker(
+            key_repo.clone(),
+            audit_repo.clone(),
+            shutdown_token,
+        )
+        .await;
 
         let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(crypto_service.clone()));
         let decrypt_data_use_case = Arc::new(DecryptDataUseCase::new(crypto_service.clone()));
@@ -230,5 +237,17 @@ impl AppState {
 
     pub fn clear_key_cache(&self) {
         self.key_cache.clear();
+    }
+
+    pub async fn shutdown(&self) {
+        self.key_cache.clear();
+
+        if let Some(redis_manager) = &self.redis_manager
+            && let Err(err) = redis_manager.close().await
+        {
+            tracing::warn!(error = ?err, "Redis shutdown failed");
+        }
+
+        self.db.close().await;
     }
 }

@@ -165,14 +165,10 @@ impl IntoResponse for AppError {
             Self::TimeoutError => StatusCode::REQUEST_TIMEOUT,
         };
 
-        let request_id = std::env::var("REQUEST_ID")
-            .ok()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-
         let body = Json(ErrorResponse {
             code,
             message: public_message,
-            request_id: Some(request_id),
+            request_id: None,
         });
 
         (status, body).into_response()

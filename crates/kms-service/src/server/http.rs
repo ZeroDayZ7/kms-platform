@@ -2,9 +2,15 @@ use anyhow::Context;
 use axum::Router;
 use std::net::SocketAddr;
 use tokio::{signal, time::Duration};
+use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-pub async fn serve(router: Router, addr: SocketAddr, shutdown_timeout: u64) -> anyhow::Result<()> {
+pub async fn serve(
+    router: Router,
+    addr: SocketAddr,
+    shutdown_timeout: u64,
+    shutdown_token: CancellationToken,
+) -> anyhow::Result<()> {
     info!("🚀 Listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -17,14 +23,14 @@ pub async fn serve(router: Router, addr: SocketAddr, shutdown_timeout: u64) -> a
     );
 
     server
-        .with_graceful_shutdown(shutdown_signal(shutdown_timeout))
+        .with_graceful_shutdown(shutdown_signal(shutdown_timeout, shutdown_token.clone()))
         .await
         .context("Axum server error")?;
 
     Ok(())
 }
 
-async fn shutdown_signal(timeout: u64) {
+async fn shutdown_signal(timeout: u64, shutdown_token: CancellationToken) {
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -47,6 +53,7 @@ async fn shutdown_signal(timeout: u64) {
         _ = terminate => info!("🛑 SIGTERM received"),
     }
 
+    shutdown_token.cancel();
     info!("⏳ Graceful shutdown started ({}s)", timeout);
 
     tokio::time::sleep(Duration::from_secs(timeout)).await;

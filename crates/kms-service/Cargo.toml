@@ -7,6 +7,7 @@ edition = "2024"
 # Web Framework
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "signal", "time", "net", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 # Cryptography & Security
 hmac = "0.12"

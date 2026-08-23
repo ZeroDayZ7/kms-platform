@@ -6,6 +6,7 @@ use kms_service::config;
 use kms_service::server::{self, state::AppState};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 
 #[derive(Debug, Parser)]
@@ -47,8 +48,10 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
             // 1. Sprawdzamy gotowość HSM przed podłączeniem do bazy danych i bootstrapem
             wait_for_vhsm_unsealed(&settings.crypto.hsm_socket_path).await?;
 
+            let shutdown_token = CancellationToken::new();
+
             // 2. Inicjalizacja połączenia z bazy DB / Redis
-            let state = AppState::new(settings.clone())
+            let state = AppState::new(settings.clone(), shutdown_token.clone())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;
 
@@ -70,11 +73,16 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
 
             let app = server::router(state.clone());
             info!("🚀 Server starting on {}", addr);
-            server::http::serve(app, addr, settings.server.shutdown_timeout)
-                .await
-                .context("HTTP server crashed")?;
+            server::http::serve(
+                app,
+                addr,
+                settings.server.shutdown_timeout,
+                shutdown_token.clone(),
+            )
+            .await
+            .context("HTTP server crashed")?;
 
-            state.clear_key_cache();
+            state.shutdown().await;
             info!("✅ Server shutdown complete");
         }
         Command::Rewrap {
@@ -83,7 +91,7 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
         } => {
             wait_for_vhsm_unsealed(&settings.crypto.hsm_socket_path).await?;
 
-            let state = AppState::new(settings.clone())
+            let state = AppState::new(settings.clone(), CancellationToken::new())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;
 

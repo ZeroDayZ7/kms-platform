@@ -66,7 +66,8 @@ where
             ControlAction::RotateAllKeys
         };
 
-        let allowed = authorize_control_action(&self.acl_policy, &input.caller_service, &required_action);
+        let allowed =
+            authorize_control_action(&self.acl_policy, &input.caller_service, &required_action);
 
         if !allowed {
             return Err(AppError::Unauthorized);

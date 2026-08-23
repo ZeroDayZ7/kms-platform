@@ -167,7 +167,11 @@ impl AclSettings {
             }
         }
 
-        CompiledAcl { access, preload, actions }
+        CompiledAcl {
+            access,
+            preload,
+            actions,
+        }
     }
 
     pub fn is_allowed(

@@ -1,24 +1,34 @@
 use chrono::Utc;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
+use tokio_util::sync::CancellationToken;
 
 use crate::domain::audit::models::{AuditAction, AuditLog, AuditStatus};
 use crate::domain::audit::repository::AuditRepository;
 use crate::domain::keys::repository::KeyRepository;
 
-pub async fn run_expiration_worker<K, A>(key_repo: Arc<K>, audit_repo: Arc<A>)
-where
+pub async fn run_expiration_worker<K, A>(
+    key_repo: Arc<K>,
+    audit_repo: Arc<A>,
+    shutdown_token: CancellationToken,
+) where
     K: KeyRepository + Send + Sync + 'static,
     A: AuditRepository + Send + Sync + 'static,
 {
     tokio::spawn(async move {
         loop {
-            if let Err(e) =
-                process_expirations(Arc::clone(&key_repo), Arc::clone(&audit_repo)).await
-            {
-                tracing::error!("Expiration worker error: {:?}", e);
+            tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    tracing::info!("Expiration worker shutdown requested");
+                    break;
+                }
+                _ = async {
+                    if let Err(e) = process_expirations(Arc::clone(&key_repo), Arc::clone(&audit_repo)).await {
+                        tracing::error!("Expiration worker error: {:?}", e);
+                    }
+                    sleep(Duration::from_secs(300)).await;
+                } => {}
             }
-            sleep(Duration::from_secs(300)).await; // 5 minutes
         }
     });
 }
