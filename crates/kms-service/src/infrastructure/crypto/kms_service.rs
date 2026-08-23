@@ -74,7 +74,6 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
 
         Ok(EncryptedPrivateKey {
             ciphertext,
-            nonce: Vec::new(),
             master_key_version: 1,
         })
     }

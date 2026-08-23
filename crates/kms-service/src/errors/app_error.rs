@@ -22,8 +22,8 @@ pub enum AppError {
     #[error("Błąd kryptograficzny: {0}")]
     CryptoError(String),
 
-    #[error("Błąd bazy danych")]
-    DatabaseError(#[from] mongodb::error::Error),
+    #[error("Błąd bazy danych: {0}")]
+    DatabaseError(String),
 
     #[error("Błąd usługi Redis")]
     RedisError(#[from] fred::error::Error),
@@ -56,6 +56,18 @@ pub enum AppError {
 impl From<serde_json::Error> for AppError {
     fn from(err: serde_json::Error) -> Self {
         Self::SerializationError(err.to_string())
+    }
+}
+
+impl From<anyhow::Error> for AppError {
+    fn from(err: anyhow::Error) -> Self {
+        Self::RuntimeError(err.to_string())
+    }
+}
+
+impl From<sqlx::Error> for AppError {
+    fn from(err: sqlx::Error) -> Self {
+        Self::DatabaseError(err.to_string())
     }
 }
 
@@ -100,7 +112,7 @@ impl IntoResponse for AppError {
             Self::Conflict(_) => StatusCode::CONFLICT,
             Self::CryptoError(_) => StatusCode::UNPROCESSABLE_ENTITY,
             Self::DatabaseError(err) => {
-                tracing::error!(target: "infra::db", %err, "MongoDB Error");
+                tracing::error!(target: "infra::db", %err, "Database Error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::RedisError(err) => {

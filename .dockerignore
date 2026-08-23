@@ -1,20 +1,38 @@
-# Rust compilation artifacts
-/target
-/out
+# Rust compilation artifacts & cache
+/target/
 **/*.rs.bk
+**/*.swp
+**/*.swo
 
-# Git & Version Control
-.git
+# IDE & Editor settings
+.vscode/
+.idea/
+*.iml
+
+# Version Control
+.git/
 .gitignore
 
-# Environment & Configs (jeśli nie chcesz ich w image)
+# Environment files & Secrets
 .env
 .env.*
+!.env.example
 
-# Docker files
+# Docker & CI / Orchestration files
 Dockerfile
 docker-compose.yml
+.dockerignore
+.github/
 
-# Dokumentacja i inne
+# Documentation & Local notes
 README.md
+SECURITY.md
 docs/
+**/combined.txt
+
+# OS-specific metadata
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store

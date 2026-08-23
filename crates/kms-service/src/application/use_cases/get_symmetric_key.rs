@@ -16,6 +16,7 @@ use crate::{
         },
     },
     errors::{AppError, AppResult},
+    server::state::KeyCache,
 };
 
 #[derive(Debug, Clone)]
@@ -41,6 +42,7 @@ where
     key_repo: Arc<K>,
     audit_repo: Arc<A>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
+    key_cache: Arc<KeyCache>,
     acl: Arc<AclSettings>,
 }
 
@@ -53,12 +55,14 @@ where
         key_repo: Arc<K>,
         audit_repo: Arc<A>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
+        key_cache: Arc<KeyCache>,
         acl: Arc<AclSettings>,
     ) -> Self {
         Self {
             key_repo,
             audit_repo,
             crypto_service,
+            key_cache,
             acl,
         }
     }
@@ -88,6 +92,30 @@ where
             return Err(AppError::Unauthorized);
         }
 
+        if let Some((cached_version, cached_bytes)) =
+            self.key_cache.get(&input.target_service, input.algorithm)
+        {
+            self.audit_repo
+                .record(AuditLog {
+                    id: Uuid::now_v7(),
+                    caller_service: input.caller_service.clone(),
+                    target_service: input.target_service.clone(),
+                    action: AuditAction::GetSymmetricKey,
+                    algorithm: input.algorithm,
+                    status: AuditStatus::Success,
+                    reason: Some("cache_hit".to_string()),
+                    timestamp: Utc::now(),
+                })
+                .await?;
+
+            return Ok(GetSymmetricKeyOutput {
+                service_id: input.target_service.clone(),
+                algorithm: input.algorithm,
+                version: cached_version,
+                key_bytes: cached_bytes,
+            });
+        }
+
         let key_entity = match self
             .key_repo
             .get_active_key(&input.target_service, input.algorithm)
@@ -115,11 +143,27 @@ where
             }
         };
 
-        // DODANO: .await
         let decrypted = self
             .crypto_service
             .decrypt_private_key(&key_entity.encrypted_private_key)
             .await?;
+
+        let preload_enabled = self.acl.services.values().any(|service_cfg| {
+            service_cfg.allowed_access.iter().any(|rule| {
+                rule.target_service == input.target_service
+                    && rule.algorithm == input.algorithm
+                    && rule.access_level == KeyAccessLevel::SymmetricKey
+                    && rule.preload
+            })
+        });
+        if preload_enabled {
+            self.key_cache.insert(
+                &input.target_service,
+                input.algorithm,
+                key_entity.version,
+                decrypted.clone(),
+            );
+        }
 
         self.audit_repo
             .record(AuditLog {

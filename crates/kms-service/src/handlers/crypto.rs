@@ -6,34 +6,40 @@ use axum::{Json, extract::State};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 
+fn decode_base64_payload(value: &str, field_name: &str) -> Result<Vec<u8>, AppError> {
+    BASE64.decode(value).map_err(|e| {
+        AppError::ValidationError(format!("INVALID_BASE64_PAYLOAD: {field_name}: {e}"))
+    })
+}
+
+fn encode_base64_payload(value: &[u8]) -> String {
+    BASE64.encode(value)
+}
+
 #[derive(Deserialize)]
 pub struct EncryptRequest {
-    #[serde(with = "serde_bytes")]
-    pub plaintext: Vec<u8>,
+    #[serde(rename = "plaintext")]
+    pub plaintext_b64: String,
 }
 
 #[derive(Serialize)]
 pub struct EncryptResponse {
-    #[serde(with = "serde_bytes")]
-    pub ciphertext: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub nonce: Vec<u8>,
+    #[serde(rename = "ciphertext")]
+    pub ciphertext_b64: String,
     pub master_key_version: i32,
 }
 
 #[derive(Deserialize)]
 pub struct DecryptRequest {
-    #[serde(with = "serde_bytes")]
-    pub ciphertext: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    pub nonce: Vec<u8>,
+    #[serde(rename = "ciphertext")]
+    pub ciphertext_b64: String,
     pub master_key_version: i32,
 }
 
 #[derive(Serialize)]
 pub struct DecryptResponse {
-    #[serde(with = "serde_bytes")]
-    pub plaintext: Vec<u8>,
+    #[serde(rename = "plaintext")]
+    pub plaintext_b64: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -55,15 +61,11 @@ pub async fn encrypt_handler(
     State(state): State<AppState>,
     Json(payload): Json<EncryptRequest>,
 ) -> AppResult<Json<EncryptResponse>> {
-    let encrypted = state
-        .use_cases
-        .encrypt_data
-        .execute(&payload.plaintext)
-        .await?;
+    let plaintext = decode_base64_payload(&payload.plaintext_b64, "plaintext")?;
+    let encrypted = state.use_cases.encrypt_data.execute(&plaintext).await?;
 
     Ok(Json(EncryptResponse {
-        ciphertext: encrypted.ciphertext,
-        nonce: encrypted.nonce,
+        ciphertext_b64: encode_base64_payload(&encrypted.ciphertext),
         master_key_version: encrypted.master_key_version,
     }))
 }
@@ -72,9 +74,9 @@ pub async fn decrypt_handler(
     State(state): State<AppState>,
     Json(payload): Json<DecryptRequest>,
 ) -> AppResult<Json<DecryptResponse>> {
+    let ciphertext = decode_base64_payload(&payload.ciphertext_b64, "ciphertext")?;
     let payload_struct = EncryptedPrivateKey {
-        ciphertext: payload.ciphertext,
-        nonce: payload.nonce,
+        ciphertext,
         master_key_version: payload.master_key_version,
     };
 
@@ -85,7 +87,7 @@ pub async fn decrypt_handler(
         .await?;
 
     Ok(Json(DecryptResponse {
-        plaintext: decrypted,
+        plaintext_b64: encode_base64_payload(&decrypted),
     }))
 }
 
@@ -113,4 +115,23 @@ pub async fn sign_data_handler(
         key_version: output.key_version,
         algorithm: output.algorithm,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decode_base64_payload_accepts_valid_string() {
+        let decoded = decode_base64_payload("aGVsbG8=", "plaintext").unwrap();
+        assert_eq!(decoded, b"hello");
+    }
+
+    #[test]
+    fn decode_base64_payload_rejects_invalid_string() {
+        let err = decode_base64_payload("%%%invalid%%%", "plaintext").unwrap_err();
+        assert!(
+            matches!(err, AppError::ValidationError(message) if message.starts_with("INVALID_BASE64_PAYLOAD"))
+        );
+    }
 }

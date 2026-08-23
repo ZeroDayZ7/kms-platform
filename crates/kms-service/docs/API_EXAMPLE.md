@@ -191,7 +191,7 @@ curl -X POST http://127.0.0.1:7000/api/v1/keys/private \
   "service_id": "shared-jwt",
   "algorithm": "Ed25519",
   "version": 1,
-  "private_key_bytes": [48, 46, 2, 1, 0, 48, 5, 6, 3, 43, 101, 112]
+  "private_key_b64": "MIIB..."
 }
 ```
 
@@ -222,7 +222,7 @@ curl -X POST http://127.0.0.1:7000/api/v1/keys/symmetric \
   "service_id": "docs-id-cards",
   "algorithm": "AES256GCM",
   "version": 1,
-  "key_bytes": [130, 214, 88, 12, 90, 44, 210, 11, 40, 99, 150, 220]
+  "key_b64": "s+g4w2B+N6O9m7YQ..."
 }
 ```
 
@@ -286,7 +286,7 @@ curl -X POST http://127.0.0.1:7000/api/v1/encrypt \
   -H "X-Timestamp: 1770000000" \
   -H "X-HMAC-Signature: <wyliczony_podpis_hmac>" \
   -d '{
-    "plaintext": [84, 101, 115, 116, 111, 119, 121, 32, 116, 101, 107, 115, 116]
+    "plaintext": "VGVzdG93eSB0ZXh0"
   }'
 ```
 
@@ -294,8 +294,7 @@ curl -X POST http://127.0.0.1:7000/api/v1/encrypt \
 
 ```json
 {
-  "ciphertext": [14, 211, 89, 44, 101, 90, 222, 11, 45, 88, 99],
-  "nonce": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+  "ciphertext": "7Fh7q2q6ZV6w9Q==",
   "master_key_version": 1
 }
 ```
@@ -317,8 +316,7 @@ curl -X POST http://127.0.0.1:7000/api/v1/decrypt \
   -H "X-Timestamp: 1770000000" \
   -H "X-HMAC-Signature: <wyliczony_podpis_hmac>" \
   -d '{
-    "ciphertext": [14, 211, 89, 44, 101, 90, 222, 11, 45, 88, 99],
-    "nonce": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+    "ciphertext": "7Fh7q2q6ZV6w9Q==",
     "master_key_version": 1
   }'
 ```
@@ -327,7 +325,7 @@ curl -X POST http://127.0.0.1:7000/api/v1/decrypt \
 
 ```json
 {
-  "plaintext": [84, 101, 115, 116, 111, 119, 121, 32, 116, 101, 107, 115, 116]
+  "plaintext": "VGVzdG93eSB0ZXh0"
 }
 ```
 

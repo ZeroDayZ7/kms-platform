@@ -3,27 +3,36 @@
   "files.exclude": {
     "**/target": true,
     "**/Cargo.lock": true,
+
     "**/.git": true,
+    "**/.gitattributes": true,
+    "**/.gitignore": true,
     "**/.github": true,
-    "**/docker-entrypoint-initdb.d": true,
-    // "**/.vscode": true,
+    "**/.dockerignore": true,
+
     "**/tests": true,
-    "**/LICENSE": true
-    // "**/.env.example": true
-    // "**/.env": true
-    // "**/README.md": true
+    "**/LICENSE": true,
+    // "**/.env.example": true,
+    // "**/.env": true,
+    "**/README.md": true,
+    "**/SECURITY.md": true
   },
   "search.exclude": {
     "**/target": true,
     "**/Cargo.lock": true,
+
     "**/.git": true,
+    "**/.gitattributes": true,
+    "**/.gitignore": true,
+    "**/.github": true,
+    "**/.dockerignore": true,
     "**/.vscode": true,
+
     "**/tests": true,
     "**/LICENSE": true,
     "**/docs": true,
-    "**/docker-entrypoint-initdb.d": true,
-    "**/.env.example": true,
     "**/README.md": true,
+    "**/SECURITY.md": true,
     "**/combined.txt": true
   },
 

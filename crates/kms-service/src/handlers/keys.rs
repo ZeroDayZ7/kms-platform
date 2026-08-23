@@ -2,6 +2,7 @@ use axum::{
     Json,
     extract::{Path, State},
 };
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -52,8 +53,8 @@ pub struct PrivateKeyResponse {
     pub service_id: String,
     pub algorithm: KeyAlgorithm,
     pub version: u32,
-    #[serde(with = "serde_bytes")] // Base64 dla Go []byte
-    pub private_key_bytes: Vec<u8>,
+    #[serde(rename = "private_key_b64")]
+    pub private_key_b64: String,
 }
 
 pub async fn generate_key_handler(
@@ -150,7 +151,7 @@ pub async fn get_private_key_handler(
         service_id: output.service_id.0,
         algorithm: output.algorithm,
         version: output.version,
-        private_key_bytes: output.private_key_bytes,
+        private_key_b64: BASE64.encode(output.private_key_bytes),
     }))
 }
 
@@ -169,8 +170,8 @@ pub struct SymmetricKeyResponse {
     pub service_id: String,
     pub algorithm: KeyAlgorithm,
     pub version: u32,
-    #[serde(with = "serde_bytes")] // Base64 dla Go []byte
-    pub key_bytes: Vec<u8>,
+    #[serde(rename = "key_b64")]
+    pub key_b64: String,
 }
 
 pub async fn get_symmetric_key_handler(
@@ -190,6 +191,6 @@ pub async fn get_symmetric_key_handler(
         service_id: output.service_id.0,
         algorithm: output.algorithm,
         version: output.version,
-        key_bytes: output.key_bytes,
+        key_b64: BASE64.encode(output.key_bytes),
     }))
 }

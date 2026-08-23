@@ -1,3 +1,4 @@
+use crate::crypto::aes::EncryptedContainer;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -18,13 +19,20 @@ pub struct ShareFileRecord {
     pub index: u8,
     pub threshold: u8,
     pub total_shares: u8,
-    pub share_hex: String,
+    pub container: EncryptedContainer,
     pub share_sha256: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 pub fn compute_share_sha256(share_hex: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(share_hex.as_bytes());
+
+    if !share_hex.len().is_multiple_of(2) {
+        let normalized = format!("0{share_hex}");
+        hasher.update(normalized.as_bytes());
+    } else {
+        hasher.update(share_hex.as_bytes());
+    }
+
     format!("{:x}", hasher.finalize())
 }

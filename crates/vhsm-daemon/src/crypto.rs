@@ -1,4 +1,7 @@
 #[cfg(unix)]
+use std::collections::HashSet;
+
+#[cfg(unix)]
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
     aead::{Aead, OsRng, rand_core::RngCore},
@@ -25,6 +28,14 @@ pub fn generate_and_split_master_key(
 pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Vec<u8>, String> {
     if shares.is_empty() {
         return Err("At least one share is required".to_string());
+    }
+
+    // Sprawdzenie unikalności indeksów (dedykowana walidacja)
+    let mut seen_indices = HashSet::with_capacity(shares.len());
+    for (index, _) in shares {
+        if !seen_indices.insert(index) {
+            return Err(format!("Duplicate share index detected: {index}"));
+        }
     }
 
     let secret_shares = shares

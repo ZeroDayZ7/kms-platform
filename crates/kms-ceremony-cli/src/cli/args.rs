@@ -21,7 +21,7 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
@@ -57,7 +57,7 @@ pub enum Commands {
             short,
             long,
             help = "Ścieżka do gniazda Unix vHSM",
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
@@ -78,41 +78,12 @@ pub enum Commands {
         shares_dir: Option<PathBuf>,
     },
 
-    /// Inicjalizuje HSM kluczem głównym z udziałów przekazanych jako argumenty CLI (format INDEX:HEX)
-    InitMasterKey {
-        #[arg(
-            short,
-            long,
-            help = "Ścieżka do gniazda Unix vHSM",
-            env = "VHSM__SOCKET_PATH",
-            default_value = "/run/vhsm/vhsm.sock"
-        )]
-        socket_path: String,
-
-        #[arg(
-            short,
-            long,
-            help = "Próg wymaganych udziałów (K)",
-            default_value_t = 3
-        )]
-        threshold: u8,
-
-        #[arg(
-            short,
-            long,
-            tag = "share",
-            help = "Udziały w formacie INDEX:HEX (np. 1:a3f5...)",
-            required = true
-        )]
-        shares: Vec<String>,
-    },
-
     /// Szyfruje podany tekst za pomocą klucza HSM
     Encrypt {
         #[arg(
             short,
             long,
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
@@ -126,7 +97,7 @@ pub enum Commands {
         #[arg(
             short,
             long,
-            env = "VHSM__SOCKET_PATH",
+            env = "CRYPTO__HSM_SOCKET_PATH",
             default_value = "/run/vhsm/vhsm.sock"
         )]
         socket_path: String,
