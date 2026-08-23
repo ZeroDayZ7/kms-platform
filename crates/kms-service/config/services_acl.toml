@@ -53,6 +53,7 @@ service_id = "identity-service"
 secret = "super-long-random-secret-for-identity-service-hmac-64-bytes"
 allowed_access = [
     { target_service = "identity-citizen-data", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+    { target_service = "identity-agreements-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
     { target_service = "identity-pesel-blind-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
 
     { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
