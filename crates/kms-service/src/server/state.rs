@@ -155,6 +155,7 @@ impl AppState {
         let key_repo = Arc::new(PgKeyRepository::new(pg_pool.clone()));
         let audit_repo = Arc::new(PgAuditRepository::new(pg_pool.clone()));
         let key_cache = Arc::new(KeyCache::new());
+        let compiled_acl = Arc::new(settings.acl.compile());
 
         let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
@@ -169,7 +170,7 @@ impl AppState {
         let generate_key_pair_use_case = Arc::new(GenerateKeyPairUseCase::new(
             key_repo.clone(),
             crypto_service.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
         let get_public_key_use_case = Arc::new(GetPublicKeyUseCase::new(key_repo.clone()));
 
@@ -178,7 +179,7 @@ impl AppState {
             audit_repo.clone(),
             crypto_service.clone(),
             key_cache.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         let get_symmetric_key_use_case = Arc::new(GetSymmetricKeyUseCase::new(
@@ -186,7 +187,7 @@ impl AppState {
             audit_repo.clone(),
             crypto_service.clone(),
             key_cache.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         let rotate_key_use_case = Arc::new(RotateKeyUseCase::new(
@@ -195,7 +196,7 @@ impl AppState {
             audit_repo.clone(),
             key_cache.clone(),
             settings.crypto.grace_period_minutes,
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         let sign_data_use_case = Arc::new(SignDataUseCase::new(
@@ -203,7 +204,7 @@ impl AppState {
             audit_repo.clone(),
             crypto_service.clone(),
             key_cache.clone(),
-            Arc::new(settings.acl.clone()),
+            compiled_acl.clone(),
         ));
 
         Ok(Self {

@@ -5,7 +5,7 @@ use uuid::Uuid;
 use zeroize::Zeroize;
 
 use crate::{
-    config::acl::{AclSettings, KeyAccessLevel},
+    config::acl::{CompiledAcl, KeyAccessLevel, authorize_key_access},
     domain::{
         audit::{
             models::{AuditAction, AuditLog, AuditStatus},
@@ -47,7 +47,7 @@ where
     audit_repo: Arc<A>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     key_cache: Arc<KeyCache>,
-    acl_settings: Arc<AclSettings>,
+    acl_policy: Arc<CompiledAcl>,
 }
 
 impl<R, A> SignDataUseCase<R, A>
@@ -60,14 +60,14 @@ where
         audit_repo: Arc<A>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         key_cache: Arc<KeyCache>,
-        acl_settings: Arc<AclSettings>,
+        acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
             audit_repo,
             crypto_service,
             key_cache,
-            acl_settings,
+            acl_policy,
         }
     }
 
@@ -91,11 +91,12 @@ where
             ));
         }
 
-        let is_allowed = self.acl_settings.is_allowed(
+        let is_allowed = authorize_key_access(
+            &self.acl_policy,
             &input.caller_service,
             &input.target_service,
             input.algorithm,
-            &KeyAccessLevel::PrivateKey,
+            KeyAccessLevel::PrivateKey,
         );
 
         if !is_allowed {
@@ -179,14 +180,9 @@ where
                 }
             };
 
-            let preload_enabled = self.acl_settings.services.values().any(|service_cfg| {
-                service_cfg.allowed_access.iter().any(|rule| {
-                    rule.target_service == input.target_service
-                        && rule.algorithm == input.algorithm
-                        && rule.access_level == KeyAccessLevel::PrivateKey
-                        && rule.preload
-                })
-            });
+            let preload_enabled = self
+                .acl_policy
+                .should_preload_for(&input.target_service, input.algorithm);
             if preload_enabled {
                 self.key_cache.insert(
                     &input.target_service,

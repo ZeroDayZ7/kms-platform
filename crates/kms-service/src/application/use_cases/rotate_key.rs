@@ -3,7 +3,7 @@ use crate::config::crypto::GracePeriodMinutes;
 use chrono::{Duration, Utc};
 use std::sync::Arc;
 
-use crate::config::acl::{AclSettings, ControlAction};
+use crate::config::acl::{CompiledAcl, ControlAction, authorize_control_action};
 use crate::domain::audit::models::{AuditAction, AuditLog, AuditStatus};
 use crate::domain::audit::repository::AuditRepository;
 use crate::domain::crypto::KmsCryptoService;
@@ -32,7 +32,7 @@ where
     audit_repo: Arc<A>,
     key_cache: Arc<KeyCache>,
     grace_period_minutes: GracePeriodMinutes,
-    acl_settings: Arc<AclSettings>,
+    acl_policy: Arc<CompiledAcl>,
 }
 
 impl<R, A> RotateKeyUseCase<R, A>
@@ -46,7 +46,7 @@ where
         audit_repo: Arc<A>,
         key_cache: Arc<KeyCache>,
         grace_period_minutes: GracePeriodMinutes,
-        acl_settings: Arc<AclSettings>,
+        acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
@@ -54,7 +54,7 @@ where
             audit_repo,
             key_cache,
             grace_period_minutes,
-            acl_settings,
+            acl_policy,
         }
     }
 
@@ -66,17 +66,7 @@ where
             ControlAction::RotateAllKeys
         };
 
-        let caller_cfg = self
-            .acl_settings
-            .services
-            .get(&input.caller_service.0)
-            .ok_or(AppError::Unauthorized)?;
-
-        let allowed = caller_cfg
-            .allowed_actions
-            .as_ref()
-            .map(|v| v.contains(&required_action))
-            .unwrap_or(false);
+        let allowed = authorize_control_action(&self.acl_policy, &input.caller_service, &required_action);
 
         if !allowed {
             return Err(AppError::Unauthorized);

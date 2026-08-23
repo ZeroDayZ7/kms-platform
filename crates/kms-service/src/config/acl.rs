@@ -2,7 +2,7 @@
 use crate::domain::crypto::SecretBytes;
 use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
 use serde::{Deserialize, Deserializer};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 // endregion
 
 fn deserialize_secret<'de, D>(deserializer: D) -> Result<SecretBytes, D::Error>
@@ -14,7 +14,7 @@ where
 }
 
 // region: Enums & Models
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyAccessLevel {
     PrivateKey,
     PublicKey,
@@ -51,7 +51,7 @@ impl Clone for ServiceConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone, PartialEq, Eq)]
+#[derive(Debug, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum ControlAction {
     GenerateKeys,
     RotateOwnKeys,
@@ -63,10 +63,113 @@ pub enum ControlAction {
 pub struct AclSettings {
     pub services: HashMap<String, ServiceConfig>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AccessRuleKey {
+    pub caller: ServiceId,
+    pub target: ServiceId,
+    pub algorithm: KeyAlgorithm,
+    pub access_level: KeyAccessLevel,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PreloadKey {
+    pub target: ServiceId,
+    pub algorithm: KeyAlgorithm,
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct CompiledAcl {
+    pub access: HashSet<AccessRuleKey>,
+    pub preload: HashSet<PreloadKey>,
+    pub actions: HashMap<String, HashSet<ControlAction>>,
+}
+
+impl CompiledAcl {
+    pub fn is_allowed(
+        &self,
+        caller: &ServiceId,
+        target: &ServiceId,
+        algorithm: KeyAlgorithm,
+        requested_access: KeyAccessLevel,
+    ) -> bool {
+        self.access.contains(&AccessRuleKey {
+            caller: caller.clone(),
+            target: target.clone(),
+            algorithm,
+            access_level: requested_access,
+        })
+    }
+
+    pub fn should_preload_for(&self, target: &ServiceId, algorithm: KeyAlgorithm) -> bool {
+        self.preload.contains(&PreloadKey {
+            target: target.clone(),
+            algorithm,
+        })
+    }
+
+    pub fn has_control_action(&self, caller: &ServiceId, action: &ControlAction) -> bool {
+        self.actions
+            .get(&caller.0)
+            .is_some_and(|actions| actions.contains(action))
+    }
+}
+
+pub fn authorize_key_access(
+    policy: &CompiledAcl,
+    caller: &ServiceId,
+    target: &ServiceId,
+    algorithm: KeyAlgorithm,
+    access: KeyAccessLevel,
+) -> bool {
+    policy.is_allowed(caller, target, algorithm, access)
+}
+
+pub fn authorize_control_action(
+    policy: &CompiledAcl,
+    caller: &ServiceId,
+    action: &ControlAction,
+) -> bool {
+    policy.has_control_action(caller, action)
+}
 // endregion
 
 // region: Implementation
 impl AclSettings {
+    pub fn compile(&self) -> CompiledAcl {
+        let mut access = HashSet::new();
+        let mut preload = HashSet::new();
+        let mut actions = HashMap::new();
+
+        for service_cfg in self.services.values() {
+            let service_actions = service_cfg
+                .allowed_actions
+                .iter()
+                .flatten()
+                .cloned()
+                .collect::<HashSet<_>>();
+            actions.insert(service_cfg.service_id.0.clone(), service_actions);
+
+            for rule in &service_cfg.allowed_access {
+                access.insert(AccessRuleKey {
+                    caller: service_cfg.service_id.clone(),
+                    target: rule.target_service.clone(),
+                    algorithm: rule.algorithm,
+                    access_level: rule.access_level,
+                });
+
+                if rule.preload {
+                    preload.insert(PreloadKey {
+                        target: rule.target_service.clone(),
+                        algorithm: rule.algorithm,
+                    });
+                }
+            }
+        }
+
+        CompiledAcl { access, preload, actions }
+    }
+
     pub fn is_allowed(
         &self,
         caller: &ServiceId,
