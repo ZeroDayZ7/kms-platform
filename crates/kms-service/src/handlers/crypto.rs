@@ -80,7 +80,11 @@ pub async fn decrypt_handler(
         master_key_version: payload.master_key_version,
     };
 
-    let decrypted = state.use_cases.decrypt_data.execute(&payload_struct).await?;
+    let decrypted = state
+        .use_cases
+        .decrypt_data
+        .execute(&payload_struct)
+        .await?;
 
     Ok(Json(DecryptResponse {
         plaintext_b64: encode_base64_payload(&decrypted),
@@ -126,6 +130,8 @@ mod tests {
     #[test]
     fn decode_base64_payload_rejects_invalid_string() {
         let err = decode_base64_payload("%%%invalid%%%", "plaintext").unwrap_err();
-        assert!(matches!(err, AppError::ValidationError(message) if message.starts_with("INVALID_BASE64_PAYLOAD")));
+        assert!(
+            matches!(err, AppError::ValidationError(message) if message.starts_with("INVALID_BASE64_PAYLOAD"))
+        );
     }
 }
