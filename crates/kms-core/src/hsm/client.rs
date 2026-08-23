@@ -1,4 +1,3 @@
-// crates/kms-core/src/hsm/client.rs
 use crate::hsm::protocol::{HsmRequest, HsmResponse};
 use thiserror::Error;
 
@@ -63,8 +62,8 @@ async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
         stream.read_exact(&mut len_buf),
     )
     .await
-    .map_err(|_| HsmClientError::Timeout)??
-    .map_err(HsmClientError::Io)?;
+    .map_err(|_| HsmClientError::Timeout)?
+    .map_err(|err| HsmClientError::Io { source: err })?;
 
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_HSM_FRAME_SIZE {
@@ -77,8 +76,8 @@ async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
         stream.read_exact(&mut payload),
     )
     .await
-    .map_err(|_| HsmClientError::Timeout)??
-    .map_err(HsmClientError::Io)?;
+    .map_err(|_| HsmClientError::Timeout)?
+    .map_err(|err| HsmClientError::Io { source: err })?;
 
     Ok(payload)
 }
@@ -95,20 +94,21 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
     let mut stream =
         tokio::time::timeout(std::time::Duration::from_secs(5), UnixStream::connect(path))
             .await
-            .map_err(|_| HsmClientError::Timeout)??
-            .map_err(HsmClientError::Io)?;
+            .map_err(|_| HsmClientError::Timeout)?
+            .map_err(|err| HsmClientError::Io { source: err })?;
 
-    let payload = serde_json::to_vec(req).map_err(HsmClientError::Serialization)?;
+    let payload = serde_json::to_vec(req)
+        .map_err(|err| HsmClientError::Serialization { source: err })?;
     let frame = framed_message(&payload)?;
 
     tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&frame))
         .await
-        .map_err(|_| HsmClientError::Timeout)??
-        .map_err(HsmClientError::Io)?;
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
 
     let response_bytes = read_frame(&mut stream).await?;
-    let response: HsmResponse =
-        serde_json::from_slice(&response_bytes).map_err(HsmClientError::Serialization)?;
+    let response: HsmResponse = serde_json::from_slice(&response_bytes)
+        .map_err(|err| HsmClientError::Serialization { source: err })?;
 
     match response {
         HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(

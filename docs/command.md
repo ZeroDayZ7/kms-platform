@@ -12,6 +12,8 @@ cargo run -- serve
 cargo build --release
 cargo build --release -p vhsm-daemon
 
+sqlc generate
+
 # ================================================================
 
 docker compose down -v
