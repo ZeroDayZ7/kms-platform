@@ -5,7 +5,7 @@ allowed_access = [
     { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
-[acl.services.gateway_service]
+[acl.services.gateway-service]
 service_id = "gateway-service"
 secret = "super-long-random-secret-for-gateway-service-hmac-64-bytes"
 allowed_access = [
@@ -22,7 +22,7 @@ allowed_access = [
     { target_service = "hmac-gateway-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
-[acl.services.officer_bff]
+[acl.services.officer-bff]
 service_id = "officer-bff"
 secret = "super-long-random-secret-for-officer-bff-hmac-64-bytes"
 allowed_access = [
@@ -33,7 +33,7 @@ allowed_access = [
     { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
-[acl.services.auth_service]
+[acl.services.auth-service]
 service_id = "auth-service"
 secret = "super-long-random-secret-for-auth-service-hmac-64-bytes"
 allowed_access = [
@@ -52,20 +52,20 @@ allowed_access = [
 service_id = "identity-service"
 secret = "super-long-random-secret-for-identity-service-hmac-64-bytes"
 allowed_access = [
+    # Szyfrowanie danymi symetrycznymi (AES256GCM)
     { target_service = "identity-citizen-data", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
     { target_service = "identity-agreements-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
-    { target_service = "identity-pesel-blind-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
 
+    # Integralność / Haszowanie / HMAC (HmacSha256)
+    { target_service = "hmac-identity-pesel-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-bff-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
-
     { target_service = "hmac-auth-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-identity-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
-
-    { target_service = "identity-audit-hmac", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
+    { target_service = "hmac-identity-audit", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
-[acl.services.citizen_docs_service]
+[acl.services.citizen-docs-service]
 service_id = "citizen-docs-service"
 secret = "super-long-random-secret-for-docs-service-hmac-64-bytes"
 allowed_access = [
@@ -77,7 +77,7 @@ allowed_access = [
     { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
-[acl.services.messaging_service]
+[acl.services.messaging-service]
 service_id = "messaging-service"
 secret = "super-long-random-secret-for-messaging-service-hmac-64-bytes"
 allowed_access = [
