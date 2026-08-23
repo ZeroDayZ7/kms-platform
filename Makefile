@@ -22,7 +22,7 @@ docker-up:
 docker-down:
 	docker compose down -v
 
-restart:
+restartt:
 	docker compose down -v
 	docker compose up --build --force-recreate -d
 

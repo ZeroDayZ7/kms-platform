@@ -48,7 +48,7 @@ allowed_access = [
     { target_service = "hmac-identity-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
-[acl.services.identity_service]
+[acl.services.identity-service]
 service_id = "identity-service"
 secret = "super-long-random-secret-for-identity-service-hmac-64-bytes"
 allowed_access = [
