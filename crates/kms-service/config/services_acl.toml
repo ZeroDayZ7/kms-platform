@@ -52,17 +52,25 @@ allowed_access = [
 service_id = "identity-service"
 secret = "super-long-random-secret-for-identity-service-hmac-64-bytes"
 allowed_access = [
-    # Szyfrowanie danymi symetrycznymi (AES256GCM)
-    { target_service = "identity-citizen-data", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+ # Szyfrowanie danymi symetrycznymi (AES256GCM)
+    { target_service = "identity-citizen-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
     { target_service = "identity-agreements-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+    { target_service = "identity-phone-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+    { target_service = "identity-email-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
 
     # Integralność / Haszowanie / HMAC (HmacSha256)
     { target_service = "hmac-identity-pesel-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-identity-phone-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-identity-email-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    { target_service = "hmac-identity-puk-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+    
     { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-bff-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-auth-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
     { target_service = "hmac-identity-rabbitmq", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
-    { target_service = "hmac-identity-audit", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
+    { target_service = "hmac-identity-audit", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    
 ]
 
 [acl.services.citizen-docs-service]
