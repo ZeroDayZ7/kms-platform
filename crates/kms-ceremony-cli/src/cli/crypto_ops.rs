@@ -12,7 +12,10 @@ pub async fn handle_encrypt(socket_path: String, plaintext: String) -> Result<()
     };
 
     match send_hsm_request(&socket_path, &request).await {
-        Ok(HsmResponse::Encrypted { ciphertext, key_version: _ }) => {
+        Ok(HsmResponse::Encrypted {
+            ciphertext,
+            key_version: _,
+        }) => {
             println!("Ciphertext (HEX): {}", hex::encode(ciphertext));
             Ok(())
         }
@@ -33,7 +36,10 @@ pub async fn handle_decrypt(socket_path: String, ciphertext_hex: String) -> Resu
     };
 
     match send_hsm_request(&socket_path, &request).await {
-        Ok(HsmResponse::Decrypted { plaintext, key_version: _ }) => {
+        Ok(HsmResponse::Decrypted {
+            plaintext,
+            key_version: _,
+        }) => {
             let decrypted_str = Zeroizing::new(
                 String::from_utf8(plaintext)
                     .context("Tekst odszyfrowany nie jest prawidłowym UTF-8")?,

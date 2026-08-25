@@ -98,8 +98,8 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
             .map_err(|_| HsmClientError::Timeout)?
             .map_err(|err| HsmClientError::Io { source: err })?;
 
-    let payload = serde_json::to_vec(req)
-        .map_err(|err| HsmClientError::Serialization { source: err })?;
+    let payload =
+        serde_json::to_vec(req).map_err(|err| HsmClientError::Serialization { source: err })?;
     let frame = framed_message(&payload)?;
 
     tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&frame))
@@ -137,7 +137,10 @@ pub async fn encrypt_via_hsm(
     };
 
     match send_hsm_request(socket_path, &req).await? {
-        HsmResponse::Encrypted { ciphertext, key_version } => {
+        HsmResponse::Encrypted {
+            ciphertext,
+            key_version,
+        } => {
             if key_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
             }
@@ -163,7 +166,10 @@ pub async fn decrypt_via_hsm(
     };
 
     match send_hsm_request(socket_path, &req).await? {
-        HsmResponse::Decrypted { plaintext, key_version } => {
+        HsmResponse::Decrypted {
+            plaintext,
+            key_version,
+        } => {
             if key_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
             }

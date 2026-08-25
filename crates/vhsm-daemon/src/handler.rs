@@ -114,7 +114,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 None => {
                     return HsmResponse::Error {
                         code: 403,
-                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                        message: "vHSM is locked. Master key must be initialized first."
+                            .to_string(),
                     };
                 }
             };
@@ -167,7 +168,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 None => {
                     return HsmResponse::Error {
                         code: 403,
-                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                        message: "vHSM is locked. Master key must be initialized first."
+                            .to_string(),
                     };
                 }
             };
@@ -279,10 +281,13 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 let guard = state.read().await;
                 match guard.master_key.as_ref() {
                     Some(key) => crypto::encrypt_bytes(key, plaintext.as_ref()),
-                    None => return HsmResponse::Error {
-                        code: 403,
-                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
-                    },
+                    None => {
+                        return HsmResponse::Error {
+                            code: 403,
+                            message: "vHSM is locked. Master key must be initialized first."
+                                .to_string(),
+                        };
+                    }
                 }
             };
 
@@ -348,10 +353,13 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 let guard = state.read().await;
                 match guard.master_key.as_ref() {
                     Some(key) => crypto::decrypt_bytes(key, ciphertext.as_ref()),
-                    None => return HsmResponse::Error {
-                        code: 403,
-                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
-                    },
+                    None => {
+                        return HsmResponse::Error {
+                            code: 403,
+                            message: "vHSM is locked. Master key must be initialized first."
+                                .to_string(),
+                        };
+                    }
                 }
             };
 

@@ -216,7 +216,6 @@ mod tests {
         assert_eq!(serialized["algorithm"], "AES256GCM");
         assert_eq!(serialized["key_version"], 1);
     }
-
 }
 
 // ============================================================================
