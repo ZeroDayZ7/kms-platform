@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
 };
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     application::use_cases::{
@@ -161,22 +161,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn generate_data_key_request_accepts_aes256gcm_only() {
-        let req = serde_json::from_str::<GenerateDataKeyRequest>(r#"{"algorithm":"AES256GCM"}"#)
-            .expect("valid request should deserialize");
-
-        assert_eq!(req.algorithm, KeyAlgorithm::AES256GCM);
-    }
-
-    #[test]
-    fn generate_data_key_rejects_non_aes256gcm_algorithm() {
-        let err = serde_json::from_str::<GenerateDataKeyRequest>(r#"{"algorithm":"Ed25519"}"#)
-            .expect_err("invalid algorithm should be rejected at deserialization time");
-
-        let message = err.to_string();
-        assert!(message.contains("Only AES256GCM is supported"));
-    }
 }
 
 // ============================================================================
@@ -187,66 +171,6 @@ mod tests {
 pub struct GetSymmetricKeyRequest {
     pub service_id: String,
     pub algorithm: KeyAlgorithm,
-}
-
-fn deserialize_generate_data_key_algorithm<'de, D>(
-    deserializer: D,
-) -> Result<KeyAlgorithm, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let algorithm = KeyAlgorithm::deserialize(deserializer)?;
-    if algorithm == KeyAlgorithm::AES256GCM {
-        Ok(algorithm)
-    } else {
-        Err(serde::de::Error::custom(
-            "Only AES256GCM is supported for /api/v1/keys/generate-data-key",
-        ))
-    }
-}
-
-#[derive(Debug, Deserialize)]
-pub struct GenerateDataKeyRequest {
-    #[serde(deserialize_with = "deserialize_generate_data_key_algorithm")]
-    pub algorithm: KeyAlgorithm,
-}
-
-#[derive(Debug, Serialize)]
-pub struct GenerateDataKeyResponse {
-    pub algorithm: KeyAlgorithm,
-    #[serde(rename = "plaintext_dek_b64")]
-    pub plaintext_dek_b64: String,
-    #[serde(rename = "wrapped_dek_b64")]
-    pub wrapped_dek_b64: String,
-    pub master_key_version: i32,
-}
-
-pub async fn generate_data_key_handler(
-    State(state): State<AppState>,
-    AuthenticatedService(caller_service): AuthenticatedService,
-    Json(payload): Json<GenerateDataKeyRequest>,
-) -> AppResult<Json<GenerateDataKeyResponse>> {
-    if payload.algorithm != KeyAlgorithm::AES256GCM {
-        return Err(AppError::ValidationError(
-            "Only AES256GCM is supported for /api/v1/keys/generate-data-key".to_string(),
-        ));
-    }
-
-    let output = state
-        .use_cases
-        .generate_data_key
-        .execute(crate::application::use_cases::GenerateDataKeyInput {
-            caller_service,
-            algorithm: payload.algorithm,
-        })
-        .await?;
-
-    Ok(Json(GenerateDataKeyResponse {
-        algorithm: output.algorithm,
-        plaintext_dek_b64: BASE64.encode(output.plaintext_dek.as_bytes()),
-        wrapped_dek_b64: BASE64.encode(output.wrapped_dek),
-        master_key_version: output.master_key_version,
-    }))
 }
 
 #[derive(Debug, Serialize)]

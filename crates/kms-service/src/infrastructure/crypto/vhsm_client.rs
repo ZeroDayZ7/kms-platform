@@ -94,7 +94,7 @@ impl VhsmClient {
         };
 
         match self.send_request(&req).await? {
-            HsmResponse::Encrypted { ciphertext } => Ok(ciphertext),
+            HsmResponse::Encrypted { ciphertext, key_version: _ } => Ok(ciphertext),
             HsmResponse::Error { message, .. } => {
                 Err(AppError::CryptoError(format!("vHSM błąd: {message}")))
             }
@@ -110,7 +110,7 @@ impl VhsmClient {
         };
 
         match self.send_request(&req).await? {
-            HsmResponse::Decrypted { plaintext } => Ok(plaintext),
+            HsmResponse::Decrypted { plaintext, key_version: _ } => Ok(plaintext),
             HsmResponse::Error { message, .. } => {
                 Err(AppError::CryptoError(format!("vHSM błąd: {message}")))
             }

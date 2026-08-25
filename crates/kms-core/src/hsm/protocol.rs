@@ -40,9 +40,11 @@ pub enum HsmResponse {
     MasterKeyInitialized,
     Encrypted {
         ciphertext: Vec<u8>,
+        key_version: u32,
     },
     Decrypted {
         plaintext: Vec<u8>,
+        key_version: u32,
     },
     Error {
         code: u16,

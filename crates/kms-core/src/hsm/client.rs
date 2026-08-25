@@ -137,7 +137,12 @@ pub async fn encrypt_via_hsm(
     };
 
     match send_hsm_request(socket_path, &req).await? {
-        HsmResponse::Encrypted { ciphertext } => Ok(ciphertext),
+        HsmResponse::Encrypted { ciphertext, key_version } => {
+            if key_version == 0 {
+                return Err(HsmClientError::InvalidResponse);
+            }
+            Ok(ciphertext)
+        }
         HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "HSM encryption failed ({code}): {message}"
         ))),
@@ -158,7 +163,12 @@ pub async fn decrypt_via_hsm(
     };
 
     match send_hsm_request(socket_path, &req).await? {
-        HsmResponse::Decrypted { plaintext } => Ok(plaintext),
+        HsmResponse::Decrypted { plaintext, key_version } => {
+            if key_version == 0 {
+                return Err(HsmClientError::InvalidResponse);
+            }
+            Ok(plaintext)
+        }
         HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "HSM decryption failed ({code}): {message}"
         ))),
