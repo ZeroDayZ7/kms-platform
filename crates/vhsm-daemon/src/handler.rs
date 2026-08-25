@@ -27,7 +27,6 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
-        // src/handler.rs
         HsmRequest::GenerateCeremony {
             threshold,
             total_shares,
@@ -93,7 +92,6 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     guard.initialized = true;
                     guard.active_key_version = 1;
                     guard.cancel_unseal_timer();
-                    guard.cancel_unseal_timer();
 
                     tracing::info!("vHSM został pomyślnie odblokowany kluczem głównym.");
 
@@ -129,13 +127,11 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            drop(guard);
-
             let mut kek = [0u8; 32];
             use rand::RngCore;
             rand::rngs::OsRng.fill_bytes(&mut kek);
 
-            let mut wrapped_kek = match crypto::encrypt_bytes(root_key, &kek) {
+            let wrapped_kek = match crypto::encrypt_bytes(root_key, &kek) {
                 Ok(value) => value,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -144,6 +140,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     };
                 }
             };
+
+            drop(guard);
 
             let kek_version = 1u32;
             let response = HsmResponse::KekGenerated {
@@ -194,8 +192,6 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            drop(guard);
-
             let kek = match crypto::decrypt_bytes(root_key, &wrapped_kek) {
                 Ok(value) => value,
                 Err(msg) => {
@@ -205,6 +201,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     };
                 }
             };
+
+            drop(guard);
 
             let mut dek = [0u8; 32];
             use rand::RngCore;
@@ -243,55 +241,35 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            let version = {
-                let guard = state.read().await;
-                if guard.master_key.is_none() {
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(k) => k,
+                None => {
                     return HsmResponse::Error {
                         code: 403,
                         message: "vHSM is locked. Master key must be initialized first."
                             .to_string(),
                     };
                 }
+            };
 
-                if let Some(requested_version) = key_version {
-                    if requested_version != guard.active_key_version {
-                        return HsmResponse::Error {
-                            code: 409,
-                            message: format!(
-                                "Requested key version {requested_version} does not match active key version {}",
-                                guard.active_key_version
-                            ),
-                        };
-                    }
+            if let Some(req_ver) = key_version {
+                if req_ver != guard.active_key_version {
+                    return HsmResponse::Error {
+                        code: 409,
+                        message: format!(
+                            "Requested key version {req_ver} does not match active key version {}",
+                            guard.active_key_version
+                        ),
+                    };
                 }
-
-                guard.active_key_version
-            };
-
-            let should_cancel_unseal = {
-                let guard = state.read().await;
-                guard.master_key.is_some()
-            };
-            if should_cancel_unseal {
-                let mut guard = state.write().await;
-                guard.cancel_unseal_timer();
             }
 
-            let result = {
-                let guard = state.read().await;
-                match guard.master_key.as_ref() {
-                    Some(key) => crypto::encrypt_bytes(key, plaintext.as_ref()),
-                    None => {
-                        return HsmResponse::Error {
-                            code: 403,
-                            message: "vHSM is locked. Master key must be initialized first."
-                                .to_string(),
-                        };
-                    }
-                }
-            };
+            let version = guard.active_key_version;
+            let res = crypto::encrypt_bytes(root_key, plaintext.as_ref());
+            drop(guard);
 
-            match result {
+            match res {
                 Ok(ciphertext) => HsmResponse::Encrypted {
                     ciphertext,
                     key_version: version,
@@ -315,55 +293,35 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            let version = {
-                let guard = state.read().await;
-                if guard.master_key.is_none() {
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(k) => k,
+                None => {
                     return HsmResponse::Error {
                         code: 403,
                         message: "vHSM is locked. Master key must be initialized first."
                             .to_string(),
                     };
                 }
+            };
 
-                if let Some(requested_version) = key_version {
-                    if requested_version != guard.active_key_version {
-                        return HsmResponse::Error {
-                            code: 409,
-                            message: format!(
-                                "Requested key version {requested_version} does not match active key version {}",
-                                guard.active_key_version
-                            ),
-                        };
-                    }
+            if let Some(req_ver) = key_version {
+                if req_ver != guard.active_key_version {
+                    return HsmResponse::Error {
+                        code: 409,
+                        message: format!(
+                            "Requested key version {req_ver} does not match active key version {}",
+                            guard.active_key_version
+                        ),
+                    };
                 }
-
-                guard.active_key_version
-            };
-
-            let should_cancel_unseal = {
-                let guard = state.read().await;
-                guard.master_key.is_some()
-            };
-            if should_cancel_unseal {
-                let mut guard = state.write().await;
-                guard.cancel_unseal_timer();
             }
 
-            let result = {
-                let guard = state.read().await;
-                match guard.master_key.as_ref() {
-                    Some(key) => crypto::decrypt_bytes(key, ciphertext.as_ref()),
-                    None => {
-                        return HsmResponse::Error {
-                            code: 403,
-                            message: "vHSM is locked. Master key must be initialized first."
-                                .to_string(),
-                        };
-                    }
-                }
-            };
+            let version = guard.active_key_version;
+            let res = crypto::decrypt_bytes(root_key, ciphertext.as_ref());
+            drop(guard);
 
-            match result {
+            match res {
                 Ok(plaintext) => HsmResponse::Decrypted {
                     plaintext,
                     key_version: version,
