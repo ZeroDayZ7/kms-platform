@@ -1,6 +1,7 @@
 // src/application/use_cases/mod.rs
 pub mod decrypt_data;
 pub mod encrypt_data;
+pub mod generate_data_key;
 pub mod generate_key_pair;
 pub mod get_private_key;
 pub mod get_public_key;
@@ -11,6 +12,7 @@ pub mod sign_data;
 
 pub use decrypt_data::*;
 pub use encrypt_data::*;
+pub use generate_data_key::*;
 pub use generate_key_pair::*;
 pub use get_private_key::*;
 pub use get_public_key::*;
