@@ -84,7 +84,10 @@ allowed_access = [
     { target_service = "docs-passport", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
 
     { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
-    { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
+    { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = true },
+
+    # DODANY KLUCZ PESEL INDEX:
+    { target_service = "hmac-docs-pesel-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
 [acl.services.messaging-service]
