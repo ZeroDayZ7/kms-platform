@@ -3,6 +3,7 @@ use serde::Deserialize;
 
 //# region redis_config_defaults_enabled_to_true
 #[test]
+//#region redis_config_defaults_enabled_to_true
 fn redis_config_defaults_enabled_to_true() {
     #[derive(Debug, Deserialize)]
     struct TestConfig {

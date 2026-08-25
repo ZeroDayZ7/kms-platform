@@ -8,6 +8,7 @@ pub struct VhsmClient {
 }
 
 impl VhsmClient {
+    //#region new
     pub fn new(socket_path: impl Into<String>) -> Self {
         Self {
             socket_path: socket_path.into(),

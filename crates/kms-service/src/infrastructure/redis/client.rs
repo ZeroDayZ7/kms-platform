@@ -99,6 +99,7 @@ impl RedisManager {
         Ok(())
     }
 
+    //#region client
     pub fn client(&self) -> &Client {
         &self.client
     }

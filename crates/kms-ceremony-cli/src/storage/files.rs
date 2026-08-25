@@ -18,12 +18,14 @@ pub struct ShareFileRecord {
     pub created_at: DateTime<Utc>,
 }
 
+//#region compute_sha256_hex
 pub fn compute_sha256_hex(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
+//#region write_share_file
 pub fn write_share_file(
     dir: &Path,
     index: u8,
@@ -55,6 +57,7 @@ pub fn write_share_file(
 }
 
 #[allow(dead_code)]
+//#region load_share_directory
 pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
     let mut records = Vec::new();
     let entries = fs::read_dir(dir)?;

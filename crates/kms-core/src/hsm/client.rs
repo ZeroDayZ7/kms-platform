@@ -39,6 +39,7 @@ pub const HSM_SOCKET_DEFAULT_PATH: &str = "/run/vhsm/vhsm.sock";
 const MAX_HSM_FRAME_SIZE: usize = 1024 * 1024; // 1 MiB, fail-closed
 
 #[cfg(any(unix, test))]
+//#region framed_message
 pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
     if payload.len() > MAX_HSM_FRAME_SIZE {
         return Err(HsmClientError::InvalidFrame);
@@ -170,6 +171,7 @@ mod tests {
     use super::*;
 
     #[test]
+    //#region framed_message_has_length_prefix
     fn framed_message_has_length_prefix() {
         let msg = framed_message(b"abc").unwrap();
         assert_eq!(msg.len(), 7);
@@ -178,6 +180,7 @@ mod tests {
     }
 
     #[test]
+    //#region framed_message_rejects_payloads_above_limit
     fn framed_message_rejects_payloads_above_limit() {
         let oversized = vec![0u8; MAX_HSM_FRAME_SIZE + 1];
         let err = framed_message(&oversized).unwrap_err();

@@ -20,6 +20,7 @@ pub enum AllowedOrigins {
 }
 
 impl AllowedOrigins {
+    //#region is_allowed
     pub fn is_allowed(&self, origin: &str) -> bool {
         match self {
             Self::Any => true,
@@ -28,6 +29,7 @@ impl AllowedOrigins {
         }
     }
 
+    //#region to_vec
     pub fn to_vec(&self) -> Vec<String> {
         match self {
             Self::Any => vec!["*".to_string()],
@@ -49,6 +51,7 @@ mod tests {
     use super::*;
 
     #[test]
+    //#region test_http_method_deserialize
     fn test_http_method_deserialize() {
         let json = r#""GET""#;
         let method: HttpMethod = serde_json::from_str(json).unwrap();
@@ -56,6 +59,7 @@ mod tests {
     }
 
     #[test]
+    //#region test_cors_config_single_origin
     fn test_cors_config_single_origin() {
         let json = r#"
         {
@@ -79,6 +83,7 @@ mod tests {
     }
 
     #[test]
+    //#region test_cors_config_list_origin
     fn test_cors_config_list_origin() {
         let json = r#"
         {
@@ -98,6 +103,7 @@ mod tests {
     }
 
     #[test]
+    //#region test_cors_config_any_origin
     fn test_cors_config_any_origin() {
         let json = r#"
         {

@@ -10,18 +10,21 @@ pub use crate::domain::crypto::{EncryptedPrivateKey, KeyAlgorithm, KeyPurpose, S
 pub struct ServiceId(pub String);
 
 impl fmt::Display for ServiceId {
+    //#region fmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
     }
 }
 
 impl From<&str> for ServiceId {
+    //#region from
     fn from(s: &str) -> Self {
         Self(s.to_string())
     }
 }
 
 impl From<String> for ServiceId {
+    //#region from
     fn from(s: String) -> Self {
         Self(s)
     }

@@ -11,6 +11,7 @@ use aes_gcm::{
 use kms_core::crypto::sss::{combine_shares, split_shares};
 
 #[cfg(unix)]
+//#region generate_and_split_master_key
 pub fn generate_and_split_master_key(
     total: u8,
     threshold: u8,
@@ -25,6 +26,7 @@ pub fn generate_and_split_master_key(
 }
 
 #[cfg(unix)]
+//#region reconstruct_master_key
 pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Vec<u8>, String> {
     if shares.is_empty() {
         return Err("At least one share is required".to_string());
@@ -57,6 +59,7 @@ pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Vec<u8>, String
 }
 
 #[cfg(unix)]
+//#region encrypt_bytes
 pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|err| format!("Failed to initialize AES-GCM: {err}"))?;
@@ -77,6 +80,7 @@ pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(unix)]
+//#region decrypt_bytes
 pub fn decrypt_bytes(key: &[u8], payload: &[u8]) -> Result<Vec<u8>, String> {
     if payload.len() < 12 {
         return Err("Ciphertext payload too short".to_string());

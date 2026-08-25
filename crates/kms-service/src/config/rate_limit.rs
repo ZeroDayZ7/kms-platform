@@ -19,6 +19,7 @@ pub enum RateLimitTier {
 
 impl RateLimitTier {
     /// Mapuje ścieżkę na kategorię limitu
+    //#region from_path
     pub fn from_path(path: &str) -> Self {
         if path.starts_with("/auth") {
             Self::Auth
@@ -30,6 +31,7 @@ impl RateLimitTier {
     }
 
     /// Wyciąga konkretne wartości z Twojej struktury configu
+    //#region get_limits
     pub fn get_limits(&self, config: &RateLimitConfig) -> (u64, u64) {
         match self {
             Self::Global => (config.global_burst as u64, config.global_per_second),

@@ -6,12 +6,14 @@ use axum::{Json, extract::State};
 use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use serde::{Deserialize, Serialize};
 
+//#region decode_base64_payload
 fn decode_base64_payload(value: &str, field_name: &str) -> Result<Vec<u8>, AppError> {
     BASE64.decode(value).map_err(|e| {
         AppError::ValidationError(format!("INVALID_BASE64_PAYLOAD: {field_name}: {e}"))
     })
 }
 
+//#region encode_base64_payload
 fn encode_base64_payload(value: &[u8]) -> String {
     BASE64.encode(value)
 }
@@ -122,12 +124,14 @@ mod tests {
     use super::*;
 
     #[test]
+    //#region decode_base64_payload_accepts_valid_string
     fn decode_base64_payload_accepts_valid_string() {
         let decoded = decode_base64_payload("aGVsbG8=", "plaintext").unwrap();
         assert_eq!(decoded, b"hello");
     }
 
     #[test]
+    //#region decode_base64_payload_rejects_invalid_string
     fn decode_base64_payload_rejects_invalid_string() {
         let err = decode_base64_payload("%%%invalid%%%", "plaintext").unwrap_err();
         assert!(

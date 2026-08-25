@@ -24,6 +24,7 @@ pub struct ShareFileRecord {
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
+//#region compute_share_sha256
 pub fn compute_share_sha256(share_hex: &str) -> String {
     let mut hasher = Sha256::new();
 

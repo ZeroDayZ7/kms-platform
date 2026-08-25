@@ -25,6 +25,7 @@ impl<R> GetPublicKeyUseCase<R>
 where
     R: KeyRepository + Send + Sync,
 {
+    //#region new
     pub fn new(key_repo: Arc<R>) -> Self {
         Self { key_repo }
     }

@@ -17,6 +17,7 @@ pub struct EncryptedContainer {
 }
 
 /// Generuje losową sól i derywuje klucz symetryczny AES-256 z podanego hasła (Argon2id)
+//#region derive_key_from_password
 pub fn derive_key_from_password(password: &str) -> Result<(SecretKey, String)> {
     let mut rng_bytes = [0u8; 16];
     getrandom(&mut rng_bytes).map_err(|e| anyhow!("Nie udało się wygenerować soli: {e}"))?;
@@ -37,6 +38,7 @@ pub fn derive_key_from_password(password: &str) -> Result<(SecretKey, String)> {
 }
 
 /// Odtwarza klucz symetryczny z hasła na podstawie istniejącej soli z kontenera
+//#region derive_key_with_salt
 pub fn derive_key_with_salt(password: &str, salt_str: &str) -> Result<SecretKey> {
     let mut key_bytes = [0u8; KEY_SIZE];
     Argon2::default()
@@ -47,6 +49,7 @@ pub fn derive_key_with_salt(password: &str, salt_str: &str) -> Result<SecretKey>
 }
 
 /// Szyfruje dowolne bajty za pomocą klucza derywowanego z hasła (Argon2id -> AES-GCM)
+//#region encrypt_bytes_with_password
 pub fn encrypt_bytes_with_password(password: &str, data: &[u8]) -> Result<EncryptedContainer> {
     let (key, salt) = derive_key_from_password(password)?;
     let cipher = Aes256Gcm::new_from_slice(key.as_bytes())?;
@@ -67,6 +70,7 @@ pub fn encrypt_bytes_with_password(password: &str, data: &[u8]) -> Result<Encryp
 }
 
 /// Odszyfrowuje dowolne bajty za pomocą klucza derywowanego z hasła i soli z kontenera
+//#region decrypt_bytes_with_password
 pub fn decrypt_bytes_with_password(
     password: &str,
     container: &EncryptedContainer,
@@ -86,6 +90,7 @@ pub fn decrypt_bytes_with_password(
     Ok(decrypted_bytes)
 }
 
+//#region encrypt_storage_key
 pub fn encrypt_storage_key(
     master_key: &SecretKey,
     storage_key: &SecretKey,
@@ -109,6 +114,7 @@ pub fn encrypt_storage_key(
     })
 }
 
+//#region decrypt_storage_key
 pub fn decrypt_storage_key(
     master_key: &SecretKey,
     container: &EncryptedContainer,

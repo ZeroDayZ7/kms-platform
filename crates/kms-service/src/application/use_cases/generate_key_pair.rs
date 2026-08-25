@@ -30,6 +30,7 @@ impl<R> GenerateKeyPairUseCase<R>
 where
     R: KeyRepository,
 {
+    //#region new
     pub fn new(
         key_repo: Arc<R>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,

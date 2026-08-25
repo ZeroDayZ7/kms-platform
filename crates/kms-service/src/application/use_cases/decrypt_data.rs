@@ -13,6 +13,7 @@ impl<C> DecryptDataUseCase<C>
 where
     C: KmsCryptoService,
 {
+    //#region new
     pub fn new(crypto: Arc<C>) -> Self {
         Self { crypto }
     }

@@ -54,18 +54,21 @@ pub enum AppError {
 }
 
 impl From<serde_json::Error> for AppError {
+    //#region from
     fn from(err: serde_json::Error) -> Self {
         Self::SerializationError(err.to_string())
     }
 }
 
 impl From<anyhow::Error> for AppError {
+    //#region from
     fn from(err: anyhow::Error) -> Self {
         Self::RuntimeError(err.to_string())
     }
 }
 
 impl From<sqlx::Error> for AppError {
+    //#region from
     fn from(err: sqlx::Error) -> Self {
         Self::DatabaseError(err.to_string())
     }
@@ -80,6 +83,7 @@ struct ErrorResponse {
 }
 
 impl AppError {
+    //#region error_code
     fn error_code(&self) -> &'static str {
         match self {
             Self::Unauthorized => "UNAUTHORIZED",
@@ -99,6 +103,7 @@ impl AppError {
         }
     }
 
+    //#region public_message
     fn public_message(&self) -> Cow<'static, str> {
         match self {
             Self::Unauthorized => "Authentication failed".into(),
@@ -120,6 +125,7 @@ impl AppError {
 }
 
 impl IntoResponse for AppError {
+    //#region into_response
     fn into_response(self) -> Response {
         let code = self.error_code();
         let public_message = self.public_message();
@@ -176,6 +182,7 @@ impl IntoResponse for AppError {
 }
 
 impl From<tokio::time::error::Elapsed> for AppError {
+    //#region from
     fn from(_: tokio::time::error::Elapsed) -> Self {
         Self::TimeoutError
     }

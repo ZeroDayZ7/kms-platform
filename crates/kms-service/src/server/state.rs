@@ -45,6 +45,7 @@ pub struct KeyCache {
 }
 
 impl KeyCache {
+    //#region new
     pub fn new() -> Self {
         Self {
             entries: Arc::new(RwLock::new(HashMap::new())),
@@ -69,6 +70,7 @@ impl KeyCache {
         Some(result)
     }
 
+    //#region insert
     pub fn insert(
         &self,
         target_service: &ServiceId,
@@ -92,6 +94,7 @@ impl KeyCache {
         }
     }
 
+    //#region remove
     pub fn remove(&self, target_service: &ServiceId, algorithm: KeyAlgorithm) {
         let key = KeyCacheKey {
             target_service: target_service.0.clone(),
@@ -105,6 +108,7 @@ impl KeyCache {
         }
     }
 
+    //#region clear
     pub fn clear(&self) {
         if let Ok(mut guard) = self.entries.write() {
             for value in guard.values_mut() {
@@ -235,6 +239,7 @@ impl AppState {
         })
     }
 
+    //#region clear_key_cache
     pub fn clear_key_cache(&self) {
         self.key_cache.clear();
     }

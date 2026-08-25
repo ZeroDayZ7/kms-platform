@@ -18,6 +18,7 @@ pub struct PgKeyRepository {
 }
 
 impl PgKeyRepository {
+    //#region new
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
@@ -307,6 +308,7 @@ impl KeyRepository for PgKeyRepository {
     }
 }
 
+//#region map_active_key_row
 fn map_active_key_row(
     row: crate::infrastructure::sqlc::queries::GetActiveKeyRow,
 ) -> AppResult<KeyPairEntity> {
@@ -323,6 +325,7 @@ fn map_active_key_row(
     )
 }
 
+//#region map_key_by_version_row
 fn map_key_by_version_row(
     row: crate::infrastructure::sqlc::queries::GetKeyByVersionRow,
 ) -> AppResult<KeyPairEntity> {
@@ -339,6 +342,7 @@ fn map_key_by_version_row(
     )
 }
 
+//#region map_all_active_key_row
 fn map_all_active_key_row(
     row: crate::infrastructure::sqlc::queries::GetAllActiveKeysRow,
 ) -> AppResult<KeyPairEntity> {
@@ -355,6 +359,7 @@ fn map_all_active_key_row(
     )
 }
 
+//#region map_all_key_row
 fn map_all_key_row(
     row: crate::infrastructure::sqlc::queries::GetAllKeysRow,
 ) -> AppResult<KeyPairEntity> {
@@ -372,6 +377,7 @@ fn map_all_key_row(
 }
 
 #[allow(clippy::too_many_arguments)]
+//#region map_key_row
 fn map_key_row(
     id: Uuid,
     service_id: String,

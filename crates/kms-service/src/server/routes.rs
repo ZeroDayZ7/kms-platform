@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
+//#region router
 pub fn router(state: AppState) -> Router {
     let cors = middleware::create_cors_layer(&state.settings);
     let security = middleware::create_security_headers_layer().into_inner();

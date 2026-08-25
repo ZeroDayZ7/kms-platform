@@ -10,6 +10,7 @@ pub struct VhsmState {
 }
 
 impl VhsmState {
+    //#region new
     pub fn new() -> Self {
         Self {
             initialized: false,
@@ -21,6 +22,7 @@ impl VhsmState {
 
     /// Rozpoczyna stoper 15 minut dla procedury Unseal (jeśli jeszcze nie ruszył)
     #[allow(dead_code)]
+    //#region start_unseal_timer
     pub fn start_unseal_timer(&mut self) {
         if self.unseal_started_at.is_none() {
             self.unseal_started_at = Some(Instant::now());
@@ -29,11 +31,13 @@ impl VhsmState {
 
     /// Anuluje stoper Unsealu po pomyślnym odblokowaniu vHSM
     #[allow(dead_code)]
+    //#region cancel_unseal_timer
     pub fn cancel_unseal_timer(&mut self) {
         self.unseal_started_at = None;
     }
 
     /// Bezpieczne czyszczenie klucza w pamięci RAM
+    //#region zeroize_key
     pub fn zeroize_key(&mut self) {
         if let Some(ref mut key) = self.master_key {
             key.zeroize();
@@ -46,12 +50,14 @@ impl VhsmState {
 }
 
 impl Default for VhsmState {
+    //#region default
     fn default() -> Self {
         Self::new()
     }
 }
 
 impl Drop for VhsmState {
+    //#region drop
     fn drop(&mut self) {
         self.zeroize_key();
     }

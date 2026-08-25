@@ -16,6 +16,7 @@ type SecurityHeadersLayer = ServiceBuilder<
     >,
 >;
 
+//#region create_security_headers_layer
 pub fn create_security_headers_layer() -> SecurityHeadersLayer {
     ServiceBuilder::new()
         .layer(SetResponseHeaderLayer::overriding(

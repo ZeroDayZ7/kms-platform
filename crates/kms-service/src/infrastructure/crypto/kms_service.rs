@@ -18,6 +18,7 @@ pub struct VhsmCryptoService {
 }
 
 impl VhsmCryptoService {
+    //#region new
     pub fn new(client: Arc<VhsmClient>) -> Self {
         Self { client }
     }
@@ -25,6 +26,7 @@ impl VhsmCryptoService {
 
 #[async_trait::async_trait]
 impl KmsCryptoServiceTrait for VhsmCryptoService {
+    //#region generate_ed25519_keypair
     fn generate_ed25519_keypair(&self) -> AppResult<RawKeyPair> {
         let mut rng = OsRng;
         let signing_key = SigningKey::generate(&mut rng);
@@ -42,6 +44,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         })
     }
 
+    //#region generate_x25519_keypair
     fn generate_x25519_keypair(&self) -> AppResult<RawKeyPair> {
         let rng = OsRng;
         let secret = StaticSecret::random_from_rng(rng);
@@ -58,6 +61,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         })
     }
 
+    //#region generate_symmetric_key
     fn generate_symmetric_key(&self) -> AppResult<RawKeyPair> {
         let mut key_bytes = [0u8; 32];
         let mut rng = OsRng;
@@ -85,6 +89,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         Ok(plaintext)
     }
 
+    //#region current_master_key_version
     fn current_master_key_version(&self) -> i32 {
         1
     }

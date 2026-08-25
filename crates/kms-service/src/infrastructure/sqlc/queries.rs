@@ -7,34 +7,41 @@
 )]
 
 pub trait AsExecutor {
+    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres>;
 }
 impl AsExecutor for sqlx::PgPool {
+    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &*self
     }
 }
 impl AsExecutor for &sqlx::PgPool {
+    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         *self
     }
 }
 impl AsExecutor for sqlx::PgConnection {
+    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &mut *self
     }
 }
 impl AsExecutor for sqlx::Transaction<'_, sqlx::Postgres> {
+    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &mut **self
     }
 }
 impl AsExecutor for sqlx::pool::PoolConnection<sqlx::Postgres> {
+    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &mut **self
     }
 }
 impl<T: AsExecutor + ?Sized> AsExecutor for &mut T {
+    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         (**self).as_executor()
     }

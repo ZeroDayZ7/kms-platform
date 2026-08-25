@@ -133,6 +133,7 @@ pub async fn rotate_key_handler(
     }))
 }
 
+//#region private_key_export_disabled
 pub fn private_key_export_disabled() -> AppError {
     AppError::ValidationError(
         "Private key export is disabled for HTTP clients. Use public key, encryption, or signing endpoints instead.".to_string(),
@@ -152,6 +153,7 @@ mod tests {
     use super::*;
 
     #[test]
+    //#region private_key_export_is_disabled
     fn private_key_export_is_disabled() {
         let err = private_key_export_disabled();
         assert!(

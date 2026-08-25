@@ -11,6 +11,7 @@ pub struct RedisConfig {
 }
 
 //# region default_enabled
+//#region default_enabled
 fn default_enabled() -> bool {
     true
 }
@@ -18,6 +19,7 @@ fn default_enabled() -> bool {
 
 impl Default for RedisConfig {
     //# region default
+    //#region default
     fn default() -> Self {
         Self {
             host: "127.0.0.1".to_string(),
