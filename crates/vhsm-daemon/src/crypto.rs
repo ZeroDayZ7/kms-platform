@@ -57,7 +57,7 @@ pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Zeroizing<Vec<u
     // Zerowanie udziałów w pamięci po scaleniu
     secret_shares.iter_mut().for_each(|s| s.value.zeroize());
 
-    let mut recovered = Zeroizing::new(recovered_raw?);
+    let recovered = Zeroizing::new(recovered_raw?);
 
     if recovered.len() != 32 {
         return Err("Recovered master key must be 32 bytes".to_string());

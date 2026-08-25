@@ -1,10 +1,10 @@
 use std::time::Instant;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub struct VhsmState {
     pub initialized: bool,
     pub active_key_version: u32,
-    pub master_key: Option<Vec<u8>>,
+    pub master_key: Option<Zeroizing<Vec<u8>>>,
     /// Znacznik czasu rozpoczęcia procedury Unseal (pierwszego wgranego udziału)
     pub unseal_started_at: Option<Instant>,
 }
@@ -39,10 +39,9 @@ impl VhsmState {
     /// Bezpieczne czyszczenie klucza w pamięci RAM
     //#region zeroize_key
     pub fn zeroize_key(&mut self) {
-        if let Some(ref mut key) = self.master_key {
+        if let Some(mut key) = self.master_key.take() {
             key.zeroize();
         }
-        self.master_key = None;
         self.initialized = false;
         self.active_key_version = 0;
         self.unseal_started_at = None;

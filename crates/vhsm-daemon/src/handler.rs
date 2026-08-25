@@ -6,6 +6,8 @@ use tokio::sync::RwLock;
 
 #[cfg(unix)]
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
+#[cfg(unix)]
+use zeroize::Zeroizing;
 
 #[cfg(unix)]
 use crate::crypto;
@@ -127,11 +129,11 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            let mut kek = [0u8; 32];
+            let mut kek = Zeroizing::new([0u8; 32]);
             use rand::RngCore;
-            rand::rngs::OsRng.fill_bytes(&mut kek);
+            rand::rngs::OsRng.fill_bytes(kek.as_mut());
 
-            let wrapped_kek = match crypto::encrypt_bytes(root_key, &kek) {
+            let wrapped_kek = match crypto::encrypt_bytes(root_key.as_ref(), kek.as_ref()) {
                 Ok(value) => value,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -141,18 +143,13 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 }
             };
 
-            drop(guard);
-
             let kek_version = 1u32;
-            let response = HsmResponse::KekGenerated {
+            HsmResponse::KekGenerated {
                 wrapped_kek,
                 kek_version,
                 root_key_version,
                 algorithm: algorithm_name.to_string(),
-            };
-
-            let _ = &kek;
-            response
+            }
         }
 
         HsmRequest::GenerateDataKey {
@@ -192,7 +189,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            let kek = match crypto::decrypt_bytes(root_key, &wrapped_kek) {
+            let kek = match crypto::decrypt_bytes(root_key.as_ref(), &wrapped_kek) {
                 Ok(value) => value,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -202,13 +199,11 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 }
             };
 
-            drop(guard);
-
-            let mut dek = [0u8; 32];
+            let mut dek = Zeroizing::new([0u8; 32]);
             use rand::RngCore;
-            rand::rngs::OsRng.fill_bytes(&mut dek);
+            rand::rngs::OsRng.fill_bytes(dek.as_mut());
 
-            let wrapped_dek = match crypto::encrypt_bytes(&kek, &dek) {
+            let wrapped_dek = match crypto::encrypt_bytes(kek.as_ref(), dek.as_ref()) {
                 Ok(value) => value,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -218,15 +213,14 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 }
             };
 
-            let response = HsmResponse::DataKeyGenerated {
-                plaintext_dek: dek.to_vec(),
+            // Boundary conversion: the serialized HSM protocol returns Vec<u8> for response payloads;
+            // the secret material itself remains protected by Zeroizing until this point.
+            HsmResponse::DataKeyGenerated {
+                plaintext_dek: dek.as_ref().to_vec(),
                 wrapped_dek,
                 kek_version: expected_kek_version,
                 root_key_version,
-            };
-
-            let _ = &kek;
-            response
+            }
         }
 
         HsmRequest::Encrypt {
@@ -266,8 +260,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
 
             let version = guard.active_key_version;
-            let res = crypto::encrypt_bytes(root_key, plaintext.as_ref());
-            drop(guard);
+            let res = crypto::encrypt_bytes(root_key.as_ref(), plaintext.as_ref());
 
             match res {
                 Ok(ciphertext) => HsmResponse::Encrypted {
@@ -318,14 +311,17 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
 
             let version = guard.active_key_version;
-            let res = crypto::decrypt_bytes(root_key, ciphertext.as_ref());
-            drop(guard);
+            let res = crypto::decrypt_bytes(root_key.as_ref(), ciphertext.as_ref());
 
             match res {
-                Ok(plaintext) => HsmResponse::Decrypted {
-                    plaintext,
-                    key_version: version,
-                },
+                Ok(plaintext) => {
+                    // Boundary conversion: protocol response needs Vec<u8> for JSON serialization,
+                    // while secret material remains protected by Zeroizing inside vHSM until here.
+                    HsmResponse::Decrypted {
+                        plaintext: plaintext.to_vec(),
+                        key_version: version,
+                    }
+                }
                 Err(msg) => HsmResponse::Error {
                     code: 500,
                     message: msg,
@@ -342,6 +338,7 @@ mod tests {
     use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
     use std::sync::Arc;
     use tokio::sync::RwLock;
+    use zeroize::Zeroizing;
 
     #[tokio::test]
     async fn encrypt_returns_active_key_version() {
@@ -350,7 +347,7 @@ mod tests {
             let mut guard = state.write().await;
             guard.initialized = true;
             guard.active_key_version = 7;
-            guard.master_key = Some(vec![0u8; 32]);
+            guard.master_key = Some(Zeroizing::new(vec![0u8; 32]));
         }
 
         let result = handle_request(
@@ -376,7 +373,7 @@ mod tests {
             let mut guard = state.write().await;
             guard.initialized = true;
             guard.active_key_version = 9;
-            guard.master_key = Some(vec![0u8; 32]);
+            guard.master_key = Some(Zeroizing::new(vec![0u8; 32]));
         }
 
         let result = handle_request(
@@ -402,7 +399,7 @@ mod tests {
             let mut guard = state.write().await;
             guard.initialized = true;
             guard.active_key_version = 3;
-            guard.master_key = Some(vec![0u8; 32]);
+            guard.master_key = Some(Zeroizing::new(vec![0u8; 32]));
         }
 
         let response = handle_request(
@@ -436,7 +433,7 @@ mod tests {
             let mut guard = state.write().await;
             guard.initialized = true;
             guard.active_key_version = 5;
-            guard.master_key = Some(vec![42u8; 32]);
+            guard.master_key = Some(Zeroizing::new(vec![42u8; 32]));
         }
 
         let kek_response = handle_request(
