@@ -10,7 +10,7 @@
     "**/.github": true,
     "**/.dockerignore": true,
 
-    "**/tests": true,
+    // "**/tests": true,
     "**/LICENSE": true,
     // "**/.env.example": true,
     // "**/.env": true,
