@@ -20,6 +20,7 @@ pub enum KeyAccessLevel {
     PublicKey,
     #[serde(alias = "SecretKey")]
     SymmetricKey,
+    GenerateDataKey,
 }
 
 #[derive(Debug, Deserialize, Clone)]

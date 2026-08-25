@@ -53,6 +53,7 @@ service_id = "identity-service"
 secret = "super-long-random-secret-for-identity-service-hmac-64-bytes"
 allowed_access = [
  # Szyfrowanie danymi symetrycznymi (AES256GCM)
+    { target_service = "identity-service", algorithm = "AES256GCM", access_level = "GenerateDataKey", preload = false },
     { target_service = "identity-citizen-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
     { target_service = "identity-agreements-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
     { target_service = "identity-phone-key", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },

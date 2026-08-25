@@ -7,7 +7,8 @@ use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
     domain::crypto::{
-        EncryptedPrivateKey, KmsCryptoService as KmsCryptoServiceTrait, RawKeyPair, SecretBytes,
+        EncryptedPrivateKey, GeneratedDataKey, KeyAlgorithm,
+        KmsCryptoService as KmsCryptoServiceTrait, RawKeyPair, SecretBytes,
     },
     errors::{AppError, AppResult},
     infrastructure::crypto::vhsm_client::VhsmClient,
@@ -75,12 +76,36 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         })
     }
 
+    async fn generate_data_key(&self, algorithm: KeyAlgorithm) -> AppResult<GeneratedDataKey> {
+        if algorithm != KeyAlgorithm::AES256GCM {
+            return Err(AppError::ValidationError(
+                "Only AES256GCM is supported for GenerateDataKey".to_string(),
+            ));
+        }
+
+        let mut key_bytes = [0u8; 32];
+        let mut rng = OsRng;
+        rng.try_fill_bytes(&mut key_bytes)
+            .map_err(|e| AppError::CryptoError(format!("RNG error: {e}")))?;
+
+        let plaintext = SecretBytes::new(key_bytes.to_vec());
+        let wrapped = self.client.encrypt(plaintext.as_bytes()).await?;
+        let version = self.current_master_key_version().await?;
+
+        Ok(GeneratedDataKey {
+            algorithm,
+            plaintext,
+            wrapped,
+            master_key_version: version,
+        })
+    }
+
     async fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey> {
         let ciphertext = self.client.encrypt(private_key).await?;
 
         Ok(EncryptedPrivateKey {
             ciphertext,
-            master_key_version: 1,
+            master_key_version: self.current_master_key_version().await?,
         })
     }
 
@@ -90,7 +115,8 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
     }
 
     //#region current_master_key_version
-    fn current_master_key_version(&self) -> i32 {
-        1
+    async fn current_master_key_version(&self) -> AppResult<i32> {
+        let version = self.client.status().await?;
+        Ok(version as i32)
     }
 }

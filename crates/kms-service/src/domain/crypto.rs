@@ -11,6 +11,14 @@ pub enum KeyAlgorithm {
     HmacSha256,
 }
 
+#[derive(Debug, Clone)]
+pub struct GeneratedDataKey {
+    pub algorithm: KeyAlgorithm,
+    pub plaintext: SecretBytes,
+    pub wrapped: Vec<u8>,
+    pub master_key_version: i32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum KeyPurpose {
     Signing,
@@ -24,7 +32,7 @@ pub struct EncryptedPrivateKey {
     pub master_key_version: i32,
 }
 
-#[derive(ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct SecretBytes(Vec<u8>);
 
 impl SecretBytes {
@@ -91,8 +99,9 @@ pub trait KmsCryptoService: Send + Sync {
     fn generate_x25519_keypair(&self) -> AppResult<RawKeyPair>;
     //#region generate_symmetric_key
     fn generate_symmetric_key(&self) -> AppResult<RawKeyPair>;
+    async fn generate_data_key(&self, algorithm: KeyAlgorithm) -> AppResult<GeneratedDataKey>;
     async fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey>;
     async fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>>;
     //#region current_master_key_version
-    fn current_master_key_version(&self) -> i32;
+    async fn current_master_key_version(&self) -> AppResult<i32>;
 }

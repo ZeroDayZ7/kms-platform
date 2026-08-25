@@ -9,6 +9,7 @@ pub enum AuditAction {
     GetPublicKey,
     GetSymmetricKey,
     GenerateKey,
+    GenerateDataKey,
     RotateKey,
     RewrapKeys,
     SignData,

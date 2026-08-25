@@ -45,6 +45,10 @@ pub fn router(state: AppState) -> Router {
             post(keys::get_symmetric_key_handler).layer(rate_limits.auth.clone()),
         )
         .route(
+            "/api/v1/keys/generate-data-key",
+            post(keys::generate_data_key_handler).layer(rate_limits.auth.clone()),
+        )
+        .route(
             "/api/v1/keys/sign",
             post(crypto::sign_data_handler).layer(rate_limits.auth.clone()),
         )

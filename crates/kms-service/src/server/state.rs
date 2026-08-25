@@ -1,6 +1,7 @@
 use crate::application::use_cases::{
-    DecryptDataUseCase, EncryptDataUseCase, GenerateKeyPairUseCase, GetPrivateKeyUseCase,
-    GetPublicKeyUseCase, GetSymmetricKeyUseCase, RotateKeyUseCase, SignDataUseCase,
+    DecryptDataUseCase, EncryptDataUseCase, GenerateDataKeyUseCase, GenerateKeyPairUseCase,
+    GetPrivateKeyUseCase, GetPublicKeyUseCase, GetSymmetricKeyUseCase, RotateKeyUseCase,
+    SignDataUseCase,
 };
 use crate::config::Settings;
 use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
@@ -19,6 +20,7 @@ use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService>;
 pub type ConcreteDecryptDataUseCase = DecryptDataUseCase<VhsmCryptoService>;
+pub type ConcreteGenerateDataKeyUseCase = GenerateDataKeyUseCase<PgAuditRepository>;
 pub type ConcreteGenerateKeyPairUseCase = GenerateKeyPairUseCase<PgKeyRepository>;
 pub type ConcreteGetPublicKeyUseCase = GetPublicKeyUseCase<PgKeyRepository>;
 pub type ConcreteGetPrivateKeyUseCase = GetPrivateKeyUseCase<PgKeyRepository, PgAuditRepository>;
@@ -122,6 +124,7 @@ impl KeyCache {
 pub struct UseCases {
     pub encrypt_data: Arc<ConcreteEncryptDataUseCase>,
     pub decrypt_data: Arc<ConcreteDecryptDataUseCase>,
+    pub generate_data_key: Arc<ConcreteGenerateDataKeyUseCase>,
     pub generate_key_pair: Arc<ConcreteGenerateKeyPairUseCase>,
     pub get_public_key: Arc<ConcreteGetPublicKeyUseCase>,
     pub get_private_key: Arc<ConcreteGetPrivateKeyUseCase>,
@@ -177,6 +180,11 @@ impl AppState {
 
         let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(crypto_service.clone()));
         let decrypt_data_use_case = Arc::new(DecryptDataUseCase::new(crypto_service.clone()));
+        let generate_data_key_use_case = Arc::new(GenerateDataKeyUseCase::new(
+            audit_repo.clone(),
+            crypto_service.clone(),
+            compiled_acl.clone(),
+        ));
 
         let generate_key_pair_use_case = Arc::new(GenerateKeyPairUseCase::new(
             key_repo.clone(),
@@ -223,6 +231,7 @@ impl AppState {
             use_cases: Arc::new(UseCases {
                 encrypt_data: encrypt_data_use_case,
                 decrypt_data: decrypt_data_use_case,
+                generate_data_key: generate_data_key_use_case,
                 generate_key_pair: generate_key_pair_use_case,
                 get_public_key: get_public_key_use_case,
                 get_private_key: get_private_key_use_case,
