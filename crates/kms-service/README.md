@@ -43,4 +43,3 @@ Detailed technical specifications and operational guides can be found in the [`d
 - [**Bootstrap & Ceremony Guide**](./docs/BOOTSTRAP_GUIDE.md) – Step-by-step instructions for initial environment setup and key ceremony execution.
 - [**CLI Tool Usage**](./docs/CLI.md) – Manual for command-line management and operator commands.
 - [**API Specification**](./docs/API.md) – Full HTTP API endpoint documentation and schema definitions.
-- [**API Payload Examples**](./docs/API_EXAMPLE.md) – Request/response JSON samples for encryption, decryption, and key management.
