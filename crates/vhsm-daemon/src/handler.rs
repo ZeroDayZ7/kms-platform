@@ -107,6 +107,128 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
+        HsmRequest::GenerateKek { algorithm } => {
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(key) => key,
+                None => {
+                    return HsmResponse::Error {
+                        code: 403,
+                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                    };
+                }
+            };
+
+            let root_key_version = guard.active_key_version;
+            let algorithm_name = algorithm.trim();
+            if !matches!(algorithm_name, "AES256GCM") {
+                return HsmResponse::Error {
+                    code: 400,
+                    message: "Unsupported KEK algorithm. Only AES256GCM is supported.".to_string(),
+                };
+            }
+
+            drop(guard);
+
+            let mut kek = [0u8; 32];
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut kek);
+
+            let mut wrapped_kek = match crypto::encrypt_bytes(root_key, &kek) {
+                Ok(value) => value,
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: msg,
+                    };
+                }
+            };
+
+            let kek_version = 1u32;
+            let response = HsmResponse::KekGenerated {
+                wrapped_kek,
+                kek_version,
+                root_key_version,
+                algorithm: algorithm_name.to_string(),
+            };
+
+            let _ = &kek;
+            response
+        }
+
+        HsmRequest::GenerateDataKey {
+            wrapped_kek,
+            kek_version,
+            algorithm,
+        } => {
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(key) => key,
+                None => {
+                    return HsmResponse::Error {
+                        code: 403,
+                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                    };
+                }
+            };
+
+            let root_key_version = guard.active_key_version;
+            let expected_kek_version = 1u32;
+            if let Some(requested_version) = kek_version {
+                if requested_version != expected_kek_version {
+                    return HsmResponse::Error {
+                        code: 409,
+                        message: format!(
+                            "Requested KEK version {requested_version} does not match active KEK version {expected_kek_version}"
+                        ),
+                    };
+                }
+            }
+
+            if !matches!(algorithm.trim(), "AES256GCM") {
+                return HsmResponse::Error {
+                    code: 400,
+                    message: "Unsupported DEK algorithm. Only AES256GCM is supported.".to_string(),
+                };
+            }
+
+            drop(guard);
+
+            let kek = match crypto::decrypt_bytes(root_key, &wrapped_kek) {
+                Ok(value) => value,
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: format!("Failed to unwrap KEK: {msg}"),
+                    };
+                }
+            };
+
+            let mut dek = [0u8; 32];
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut dek);
+
+            let wrapped_dek = match crypto::encrypt_bytes(&kek, &dek) {
+                Ok(value) => value,
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: msg,
+                    };
+                }
+            };
+
+            let response = HsmResponse::DataKeyGenerated {
+                plaintext_dek: dek.to_vec(),
+                wrapped_dek,
+                kek_version: expected_kek_version,
+                root_key_version,
+            };
+
+            let _ = &kek;
+            response
+        }
+
         HsmRequest::Encrypt {
             key_id,
             key_version,
@@ -304,6 +426,88 @@ mod tests {
         match result {
             HsmResponse::Error { code, .. } => assert_eq!(code, 409),
             other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_kek_returns_wrapped_material_only() {
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 3;
+            guard.master_key = Some(vec![0u8; 32]);
+        }
+
+        let response = handle_request(
+            HsmRequest::GenerateKek {
+                algorithm: "AES256GCM".to_string(),
+            },
+            state,
+        )
+        .await;
+
+        match response {
+            HsmResponse::KekGenerated {
+                wrapped_kek,
+                kek_version,
+                root_key_version,
+                algorithm,
+            } => {
+                assert!(!wrapped_kek.is_empty());
+                assert_eq!(kek_version, 1);
+                assert_eq!(root_key_version, 3);
+                assert_eq!(algorithm, "AES256GCM");
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_data_key_returns_dek_without_exposing_kek() {
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 5;
+            guard.master_key = Some(vec![42u8; 32]);
+        }
+
+        let kek_response = handle_request(
+            HsmRequest::GenerateKek {
+                algorithm: "AES256GCM".to_string(),
+            },
+            state.clone(),
+        )
+        .await;
+        let kek_wrap = match kek_response {
+            HsmResponse::KekGenerated { wrapped_kek, .. } => wrapped_kek,
+            other => panic!("unexpected KEK response: {other:?}"),
+        };
+
+        let result = handle_request(
+            HsmRequest::GenerateDataKey {
+                wrapped_kek: kek_wrap,
+                kek_version: Some(1),
+                algorithm: "AES256GCM".to_string(),
+            },
+            state,
+        )
+        .await;
+
+        match result {
+            HsmResponse::DataKeyGenerated {
+                plaintext_dek,
+                wrapped_dek,
+                kek_version,
+                root_key_version,
+            } => {
+                assert_eq!(plaintext_dek.len(), 32);
+                assert!(!wrapped_dek.is_empty());
+                assert_eq!(kek_version, 1);
+                assert_eq!(root_key_version, 5);
+            }
+            other => panic!("unexpected data key response: {other:?}"),
         }
     }
 }
