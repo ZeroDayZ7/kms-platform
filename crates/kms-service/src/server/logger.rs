@@ -12,6 +12,7 @@ pub fn init_logging(config: &LogConfig) {
     let console_layer = match config.format {
         LogFormat::Json => tracing_subscriber::fmt::layer()
             .json()
+            .with_span_list(false)
             .with_writer(std::io::stdout)
             .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
             .with_target(false)
