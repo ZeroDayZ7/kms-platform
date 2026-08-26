@@ -4,6 +4,7 @@ use axum::http::{HeaderValue, Method};
 use std::time::Duration;
 use tower_http::cors::{Any, CorsLayer};
 
+//#region create_cors_layer
 pub fn create_cors_layer(settings: &Settings) -> CorsLayer {
     let mut layer = CorsLayer::new();
 

@@ -20,6 +20,7 @@ pub use log::LogLevel;
 pub use redis::RedisConfig;
 pub use settings::Settings;
 
+//#region load
 pub fn load() -> Result<Settings, ConfigError> {
     let base_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("config")

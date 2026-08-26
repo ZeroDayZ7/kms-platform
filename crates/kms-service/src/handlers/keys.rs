@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     application::use_cases::{
-        GenerateKeyPairInput, GetPublicKeyInput, GetSymmetricKeyInput, RotateKeyInput,
+        GenerateDataKeyInput, GenerateKeyPairInput, GetPublicKeyInput, GetSymmetricKeyInput,
+        RotateKeyInput,
     },
     domain::keys::models::{KeyAlgorithm, KeyPurpose, KeyStatus, RotationReason, ServiceId},
     errors::{AppError, AppResult},
@@ -19,6 +20,21 @@ pub struct GenerateKeyRequest {
     pub service_id: String,
     pub algorithm: KeyAlgorithm,
     pub purpose: KeyPurpose,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateDataKeyRequest {
+    pub algorithm: KeyAlgorithm,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GenerateDataKeyResponse {
+    pub algorithm: KeyAlgorithm,
+    pub key_version: u32,
+    #[serde(rename = "wrapped_dek_b64")]
+    pub wrapped_dek_b64: String,
+    #[serde(rename = "dek_b64")]
+    pub dek_b64: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -82,6 +98,28 @@ pub async fn generate_key_handler(
     }))
 }
 
+pub async fn generate_data_key_handler(
+    State(state): State<AppState>,
+    AuthenticatedService(caller_service): AuthenticatedService,
+    Json(payload): Json<GenerateDataKeyRequest>,
+) -> AppResult<Json<GenerateDataKeyResponse>> {
+    let output = state
+        .use_cases
+        .generate_data_key
+        .execute(GenerateDataKeyInput {
+            caller_service: caller_service.clone(),
+            algorithm: payload.algorithm,
+        })
+        .await?;
+
+    Ok(Json(GenerateDataKeyResponse {
+        algorithm: output.algorithm,
+        key_version: output.master_key_version as u32,
+        wrapped_dek_b64: BASE64.encode(output.wrapped_dek),
+        dek_b64: BASE64.encode(output.plaintext_dek.as_bytes()),
+    }))
+}
+
 pub async fn get_public_key_handler(
     State(state): State<AppState>,
     AuthenticatedService(_caller): AuthenticatedService,
@@ -133,6 +171,7 @@ pub async fn rotate_key_handler(
     }))
 }
 
+//#region private_key_export_disabled
 pub fn private_key_export_disabled() -> AppError {
     AppError::ValidationError(
         "Private key export is disabled for HTTP clients. Use public key, encryption, or signing endpoints instead.".to_string(),
@@ -152,11 +191,30 @@ mod tests {
     use super::*;
 
     #[test]
+    //#region private_key_export_is_disabled
     fn private_key_export_is_disabled() {
         let err = private_key_export_disabled();
         assert!(
             matches!(err, AppError::ValidationError(message) if message.contains("Private key export is disabled"))
         );
+    }
+
+    #[test]
+    fn generate_data_key_contract_serializes_expected_fields() {
+        let json = r#"{ "algorithm": "AES256GCM" }"#;
+        let req: GenerateDataKeyRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(req.algorithm, KeyAlgorithm::AES256GCM);
+
+        let response = GenerateDataKeyResponse {
+            algorithm: KeyAlgorithm::AES256GCM,
+            key_version: 1,
+            wrapped_dek_b64: "AQID".to_string(),
+            dek_b64: "BAUG".to_string(),
+        };
+
+        let serialized = serde_json::to_value(response).unwrap();
+        assert_eq!(serialized["algorithm"], "AES256GCM");
+        assert_eq!(serialized["key_version"], 1);
     }
 }
 

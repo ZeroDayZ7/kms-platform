@@ -22,6 +22,7 @@ pub struct InMemoryRateLimiter {
 
 impl InMemoryRateLimiter {
     //# region new
+    //#region new
     pub fn new() -> Self {
         Self::default()
     }

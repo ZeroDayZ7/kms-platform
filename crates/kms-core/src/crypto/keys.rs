@@ -7,6 +7,7 @@ pub const KEY_SIZE: usize = 32;
 pub struct SecretKey([u8; KEY_SIZE]);
 
 impl SecretKey {
+    //#region generate
     pub fn generate() -> Self {
         let mut key = [0u8; KEY_SIZE];
         // getrandom returns std::io style error; unwrap here is acceptable for key generation
@@ -14,15 +15,18 @@ impl SecretKey {
         Self(key)
     }
 
+    //#region from_bytes
     pub fn from_bytes(bytes: [u8; KEY_SIZE]) -> Self {
         Self(bytes)
     }
 
+    //#region as_bytes
     pub fn as_bytes(&self) -> &[u8; KEY_SIZE] {
         &self.0
     }
 }
 
+//#region generate_master_key
 pub fn generate_master_key() -> SecretKey {
     SecretKey::generate()
 }

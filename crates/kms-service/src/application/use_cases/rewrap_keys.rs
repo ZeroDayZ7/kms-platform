@@ -17,7 +17,7 @@ pub async fn rewrap_keys<R>(
 where
     R: KeyRepository + Send + Sync,
 {
-    let current_version = crypto_service.current_master_key_version();
+    let current_version = crypto_service.current_master_key_version().await?;
     if current_version != input.target_master_version {
         return Err(AppError::ValidationError(format!(
             "Target master key version {} does not match KMS active version {}",

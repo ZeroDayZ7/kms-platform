@@ -12,6 +12,7 @@ type HmacSha256 = Hmac<Sha256>;
 const MAX_CLOCK_SKEW_SECONDS: i64 = 60;
 const MAX_NONCE_TTL_SECONDS: u64 = 300;
 
+//#region parse_timestamp
 fn parse_timestamp(value: &str) -> Result<DateTime<Utc>, AppError> {
     DateTime::parse_from_rfc3339(value)
         .map(|dt| dt.with_timezone(&Utc))

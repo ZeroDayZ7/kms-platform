@@ -19,6 +19,7 @@ pub struct RateLimitLayers {
 
 impl RateLimitLayers {
     //# region new
+    //#region new
     pub fn new(settings: &Settings, limiter: Arc<dyn RateLimiter>) -> Self {
         let global_conf = GovernorConfigBuilder::default()
             .key_extractor(SmartIpKeyExtractor)

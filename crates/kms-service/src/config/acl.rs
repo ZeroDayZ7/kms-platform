@@ -20,6 +20,7 @@ pub enum KeyAccessLevel {
     PublicKey,
     #[serde(alias = "SecretKey")]
     SymmetricKey,
+    GenerateDataKey,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -41,6 +42,7 @@ pub struct ServiceConfig {
 }
 
 impl Clone for ServiceConfig {
+    //#region clone
     fn clone(&self) -> Self {
         Self {
             service_id: self.service_id.clone(),
@@ -86,6 +88,7 @@ pub struct CompiledAcl {
 }
 
 impl CompiledAcl {
+    //#region is_allowed
     pub fn is_allowed(
         &self,
         caller: &ServiceId,
@@ -101,6 +104,7 @@ impl CompiledAcl {
         })
     }
 
+    //#region should_preload_for
     pub fn should_preload_for(&self, target: &ServiceId, algorithm: KeyAlgorithm) -> bool {
         self.preload.contains(&PreloadKey {
             target: target.clone(),
@@ -108,6 +112,7 @@ impl CompiledAcl {
         })
     }
 
+    //#region has_control_action
     pub fn has_control_action(&self, caller: &ServiceId, action: &ControlAction) -> bool {
         self.actions
             .get(&caller.0)
@@ -115,6 +120,7 @@ impl CompiledAcl {
     }
 }
 
+//#region authorize_key_access
 pub fn authorize_key_access(
     policy: &CompiledAcl,
     caller: &ServiceId,
@@ -125,6 +131,7 @@ pub fn authorize_key_access(
     policy.is_allowed(caller, target, algorithm, access)
 }
 
+//#region authorize_control_action
 pub fn authorize_control_action(
     policy: &CompiledAcl,
     caller: &ServiceId,
@@ -136,6 +143,7 @@ pub fn authorize_control_action(
 
 // region: Implementation
 impl AclSettings {
+    //#region compile
     pub fn compile(&self) -> CompiledAcl {
         let mut access = HashSet::new();
         let mut preload = HashSet::new();
@@ -174,6 +182,7 @@ impl AclSettings {
         }
     }
 
+    //#region is_allowed
     pub fn is_allowed(
         &self,
         caller: &ServiceId,
@@ -192,6 +201,7 @@ impl AclSettings {
         })
     }
 
+    //#region should_preload_for
     pub fn should_preload_for(&self, target: &ServiceId, algorithm: KeyAlgorithm) -> bool {
         self.services.values().any(|service_cfg| {
             service_cfg.allowed_access.iter().any(|rule| {
@@ -200,6 +210,7 @@ impl AclSettings {
         })
     }
 
+    //#region has_control_action
     pub fn has_control_action(&self, caller: &ServiceId, action: &ControlAction) -> bool {
         let Some(service_cfg) = self.services.get(&caller.0) else {
             return false;

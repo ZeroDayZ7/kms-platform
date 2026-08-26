@@ -2,6 +2,7 @@ use axum::{body::to_bytes, response::IntoResponse};
 use kms_service::{domain::crypto::SecretBytes, errors::AppError, server::state::KeyCache};
 
 #[test]
+//#region secret_bytes_is_redacted_and_non_owning
 fn secret_bytes_is_redacted_and_non_owning() {
     let secret = SecretBytes::new(vec![1, 2, 3, 4]);
 
@@ -11,6 +12,7 @@ fn secret_bytes_is_redacted_and_non_owning() {
 }
 
 #[test]
+//#region key_cache_uses_borrowed_view_and_invalidates_on_remove
 fn key_cache_uses_borrowed_view_and_invalidates_on_remove() {
     let cache = KeyCache::new();
     cache.insert(

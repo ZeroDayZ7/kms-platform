@@ -10,11 +10,11 @@
     "**/.github": true,
     "**/.dockerignore": true,
 
-    "**/tests": true,
+    // "**/tests": true,
     "**/LICENSE": true,
     // "**/.env.example": true,
     // "**/.env": true,
-    "**/README.md": true,
+    // "**/README.md": true,
     "**/SECURITY.md": true
   },
   "search.exclude": {

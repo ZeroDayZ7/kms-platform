@@ -12,6 +12,7 @@ pub struct PgAuditRepository {
 }
 
 impl PgAuditRepository {
+    //#region new
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }

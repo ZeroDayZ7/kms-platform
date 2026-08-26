@@ -6,6 +6,7 @@ use std::time::Duration;
 use tower_http::trace::TraceLayer;
 use tracing::Span;
 
+//#region request_id_for_request
 fn request_id_for_request(request: &Request<Body>) -> String {
     request
         .headers()
@@ -17,6 +18,7 @@ fn request_id_for_request(request: &Request<Body>) -> String {
 }
 
 #[allow(clippy::type_complexity)]
+//#region http_trace_layer
 pub fn http_trace_layer() -> TraceLayer<
     tower_http::classify::SharedClassifier<tower_http::classify::ServerErrorsAsFailures>,
     impl Fn(&Request<Body>) -> Span + Clone,
@@ -59,6 +61,7 @@ mod tests {
     use axum::http::Request;
 
     #[test]
+    //#region request_id_uses_header_when_present
     fn request_id_uses_header_when_present() {
         let request = Request::builder()
             .uri("/ping")
@@ -70,6 +73,7 @@ mod tests {
     }
 
     #[test]
+    //#region request_id_is_generated_when_header_missing
     fn request_id_is_generated_when_header_missing() {
         let request = Request::builder().uri("/ping").body(Body::empty()).unwrap();
 

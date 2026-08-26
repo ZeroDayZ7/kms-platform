@@ -11,6 +11,14 @@ pub enum KeyAlgorithm {
     HmacSha256,
 }
 
+#[derive(Debug, Clone)]
+pub struct GeneratedDataKey {
+    pub algorithm: KeyAlgorithm,
+    pub plaintext: SecretBytes,
+    pub wrapped: Vec<u8>,
+    pub master_key_version: i32,
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum KeyPurpose {
     Signing,
@@ -24,38 +32,45 @@ pub struct EncryptedPrivateKey {
     pub master_key_version: i32,
 }
 
-#[derive(ZeroizeOnDrop)]
+#[derive(Clone, ZeroizeOnDrop)]
 pub struct SecretBytes(Vec<u8>);
 
 impl SecretBytes {
+    //#region new
     pub fn new(bytes: Vec<u8>) -> Self {
         Self(bytes)
     }
 
+    //#region as_bytes
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
 
+    //#region as_mut_bytes
     pub fn as_mut_bytes(&mut self) -> &mut [u8] {
         &mut self.0
     }
 
+    //#region into_vec
     pub fn into_vec(&self) -> Vec<u8> {
         self.0.clone()
     }
 
+    //#region clone_secret
     pub fn clone_secret(&self) -> Self {
         Self::new(self.0.clone())
     }
 }
 
 impl fmt::Display for SecretBytes {
+    //#region fmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("[REDACTED]")
     }
 }
 
 impl fmt::Debug for SecretBytes {
+    //#region fmt
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("SecretBytes(\"")?;
         f.write_str("[REDACTED]")?;
@@ -64,6 +79,7 @@ impl fmt::Debug for SecretBytes {
 }
 
 impl Zeroize for SecretBytes {
+    //#region zeroize
     fn zeroize(&mut self) {
         self.0.zeroize();
     }
@@ -77,10 +93,15 @@ pub struct RawKeyPair {
 
 #[async_trait::async_trait]
 pub trait KmsCryptoService: Send + Sync {
+    //#region generate_ed25519_keypair
     fn generate_ed25519_keypair(&self) -> AppResult<RawKeyPair>;
+    //#region generate_x25519_keypair
     fn generate_x25519_keypair(&self) -> AppResult<RawKeyPair>;
+    //#region generate_symmetric_key
     fn generate_symmetric_key(&self) -> AppResult<RawKeyPair>;
+    async fn generate_data_key(&self, algorithm: KeyAlgorithm) -> AppResult<GeneratedDataKey>;
     async fn encrypt_private_key(&self, private_key: &[u8]) -> AppResult<EncryptedPrivateKey>;
     async fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>>;
-    fn current_master_key_version(&self) -> i32;
+    //#region current_master_key_version
+    async fn current_master_key_version(&self) -> AppResult<i32>;
 }

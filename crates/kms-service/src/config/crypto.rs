@@ -8,6 +8,7 @@ pub struct KeyTtlDays(pub u64);
 
 impl Deref for KeyTtlDays {
     type Target = u64;
+    //#region deref
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -33,6 +34,7 @@ pub struct GracePeriodMinutes(pub i64);
 
 impl Deref for GracePeriodMinutes {
     type Target = i64;
+    //#region deref
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -66,6 +68,7 @@ pub struct CryptoSettings {
     pub enable_http_rewrap: bool,
 }
 
+//#region default_hsm_socket_path
 fn default_hsm_socket_path() -> String {
     "/run/vhsm/vhsm.sock".to_string()
 }
@@ -75,6 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
+    //#region test_crypto_settings_deserialization
     fn test_crypto_settings_deserialization() {
         let toml_data = r#"
             hsm_socket_path = "/run/vhsm/vhsm.sock"

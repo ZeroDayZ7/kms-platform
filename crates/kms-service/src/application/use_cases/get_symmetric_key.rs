@@ -51,6 +51,7 @@ where
     K: KeyRepository,
     A: AuditRepository,
 {
+    //#region new
     pub fn new(
         key_repo: Arc<K>,
         audit_repo: Arc<A>,

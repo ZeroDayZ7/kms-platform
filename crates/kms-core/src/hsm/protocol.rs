@@ -14,6 +14,14 @@ pub enum HsmRequest {
         threshold: u8,
         shares: Vec<(u8, String)>,
     },
+    GenerateKek {
+        algorithm: String,
+    },
+    GenerateDataKey {
+        wrapped_kek: Vec<u8>,
+        kek_version: Option<u32>,
+        algorithm: String,
+    },
     Encrypt {
         key_id: String,
         key_version: Option<u32>,
@@ -38,11 +46,25 @@ pub enum HsmResponse {
         shares: Vec<(u8, String)>,
     },
     MasterKeyInitialized,
+    KekGenerated {
+        wrapped_kek: Vec<u8>,
+        kek_version: u32,
+        root_key_version: u32,
+        algorithm: String,
+    },
+    DataKeyGenerated {
+        plaintext_dek: Vec<u8>,
+        wrapped_dek: Vec<u8>,
+        kek_version: u32,
+        root_key_version: u32,
+    },
     Encrypted {
         ciphertext: Vec<u8>,
+        key_version: u32,
     },
     Decrypted {
         plaintext: Vec<u8>,
+        key_version: u32,
     },
     Error {
         code: u16,

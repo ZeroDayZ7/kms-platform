@@ -12,6 +12,7 @@ pub enum LogLevel {
 }
 
 impl AsRef<str> for LogLevel {
+    //#region as_ref
     fn as_ref(&self) -> &str {
         match self {
             Self::Debug => "debug",

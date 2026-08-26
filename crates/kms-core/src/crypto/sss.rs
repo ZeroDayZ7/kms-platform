@@ -18,6 +18,7 @@ pub struct SecretShare {
 // transport. The `unlock` function from the library consumes these strings
 // directly when reconstructing the secret, so we preserve them unchanged.
 
+//#region split_secret
 pub fn split_secret(
     secret: &[u8],
     threshold: u8,
@@ -58,6 +59,7 @@ pub fn split_secret(
     Ok(shares)
 }
 
+//#region combine_shares
 pub fn combine_shares(shares: &[SecretShare]) -> Result<Vec<u8>, KmsError> {
     if shares.is_empty() {
         bail!("At least one share is required to reconstruct the key");
@@ -81,6 +83,7 @@ pub fn combine_shares(shares: &[SecretShare]) -> Result<Vec<u8>, KmsError> {
     Ok(recovered_bytes)
 }
 
+//#region split_shares
 pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec<(u8, String)>> {
     let secret_bytes = secret.as_bytes().to_vec();
     let shared = split_secret(&secret_bytes, threshold, shares)?;
@@ -94,6 +97,7 @@ pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec
         .collect())
 }
 
+//#region combine_shares_legacy
 pub fn combine_shares_legacy(shares: &[(u8, String)]) -> Result<SecretKey> {
     let secret_shares: Vec<SecretShare> = shares
         .iter()
@@ -118,6 +122,7 @@ mod tests {
     use super::*;
 
     #[test]
+    //#region roundtrip_split_and_combine
     fn roundtrip_split_and_combine() {
         let master = SecretKey::generate();
         let total = 5u8;

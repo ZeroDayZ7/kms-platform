@@ -4,6 +4,7 @@ use tracing_subscriber::{EnvFilter, Layer};
 
 use crate::config::{LogConfig, LogFormat};
 
+//#region init_logging
 pub fn init_logging(config: &LogConfig) {
     let env_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(config.level.as_ref()));

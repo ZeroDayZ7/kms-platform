@@ -13,6 +13,7 @@ use std::net::SocketAddr;
 use tracing::error;
 
 //# region build_rate_limit_headers
+//#region build_rate_limit_headers
 fn build_rate_limit_headers(limit: u64, current: u64) -> HeaderMap {
     let mut headers = HeaderMap::new();
     let remaining = limit.saturating_sub(current);

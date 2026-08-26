@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
 };
 
+//#region router
 pub fn router(state: AppState) -> Router {
     let cors = middleware::create_cors_layer(&state.settings);
     let security = middleware::create_security_headers_layer().into_inner();
@@ -30,6 +31,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/keys/generate",
             post(keys::generate_key_handler).layer(rate_limits.auth.clone()),
+        )
+        .route(
+            "/api/v1/keys/generate-data-key",
+            post(keys::generate_data_key_handler).layer(rate_limits.auth.clone()),
         )
         .route(
             "/api/v1/keys/public/{service_id}/{algorithm}",
