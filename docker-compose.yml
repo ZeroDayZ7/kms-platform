@@ -11,7 +11,7 @@ services:
     image: postgres:18.3-alpine
     container_name: db_kms
     networks:
-      - kms_internal_net
+      - kms-internal-net
     ports:
       - "127.0.0.1:5440:5432"
     environment:
@@ -64,7 +64,7 @@ services:
     container_name: vhsm_daemon
     entrypoint: ["/app/vhsm-daemon"]
     networks:
-      - kms_internal_net
+      - kms-internal-net
     environment:
       - APP_ENVIRONMENT=${APP_ENVIRONMENT:-development}
       - RUST_LOG=${RUST_LOG:-info,vhsm_daemon=debug}
@@ -86,8 +86,8 @@ services:
     container_name: kms_service
     command: ["serve"]
     networks:
-      - kms_internal_net
-      - citizen_app_net
+      - kms-internal-net
+      - citizen-app-net
     ports:
       - "8081:8080"
     environment:
@@ -122,7 +122,7 @@ services:
       - tools
     entrypoint: ["/app/kms-ceremony-cli"]
     networks:
-      - kms_internal_net
+      - kms-internal-net
     environment:
       - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock
       - CRYPTO__HSM_SOCKET_PATH=/run/vhsm/vhsm.sock
@@ -149,7 +149,7 @@ volumes:
 
 # region NETWORKS
 networks:
-  kms_internal_net:
+  kms-internal-net:
     driver: bridge
     internal: true
 
