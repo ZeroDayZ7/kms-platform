@@ -11,7 +11,7 @@ pub async fn handle_encrypt(socket_path: String, plaintext: String) -> Result<()
         plaintext: plaintext.into_bytes(),
     };
 
-    match send_hsm_request(&socket_path, &request).await {
+    match send_hsm_request(&socket_path, &request, None).await {
         Ok(HsmResponse::Encrypted {
             ciphertext,
             key_version: _,
@@ -35,7 +35,7 @@ pub async fn handle_decrypt(socket_path: String, ciphertext_hex: String) -> Resu
         ciphertext,
     };
 
-    match send_hsm_request(&socket_path, &request).await {
+    match send_hsm_request(&socket_path, &request, None).await {
         Ok(HsmResponse::Decrypted {
             plaintext,
             key_version: _,

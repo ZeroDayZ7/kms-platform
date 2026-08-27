@@ -84,12 +84,7 @@ async fn read_frame_with_timeout(stream: &mut UnixStream, timeout: Duration) -> 
 }
 
 #[cfg(unix)]
-pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<HsmResponse> {
-    send_hsm_request_with_timeout(socket_path, req, None).await
-}
-
-#[cfg(unix)]
-pub async fn send_hsm_request_with_timeout(
+pub async fn send_hsm_request(
     socket_path: &str,
     req: &HsmRequest,
     timeout: Option<Duration>,
@@ -130,7 +125,11 @@ pub async fn send_hsm_request_with_timeout(
 }
 
 #[cfg(not(unix))]
-pub async fn send_hsm_request(_socket_path: &str, _req: &HsmRequest) -> HsmResult<HsmResponse> {
+pub async fn send_hsm_request(
+    _socket_path: &str,
+    _req: &HsmRequest,
+    _timeout: Option<Duration>,
+) -> HsmResult<HsmResponse> {
     Err(HsmClientError::PlatformNotSupported)
 }
 
@@ -148,38 +147,6 @@ pub async fn encrypt_via_hsm(
     key_id: &str,
     key_version: Option<u32>,
     plaintext: &[u8],
-) -> HsmResult<Vec<u8>> {
-    let requested = key_version;
-    let req = HsmRequest::Encrypt {
-        key_id: key_id.to_string(),
-        key_version,
-        plaintext: plaintext.to_vec(),
-    };
-
-    match send_hsm_request(socket_path, &req).await? {
-        HsmResponse::Encrypted {
-            ciphertext,
-            key_version: resp_version,
-        } => {
-            // Validate returned key version against requested version to prevent downgrade
-            validate_key_version(requested, resp_version)?;
-            if resp_version == 0 {
-                return Err(HsmClientError::InvalidResponse);
-            }
-            Ok(ciphertext)
-        }
-        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
-            "HSM encryption failed ({code}): {message}"
-        ))),
-        _other => Err(HsmClientError::InvalidResponse),
-    }
-}
-
-pub async fn encrypt_via_hsm_with_timeout(
-    socket_path: &str,
-    key_id: &str,
-    key_version: Option<u32>,
-    plaintext: &[u8],
     timeout: Option<Duration>,
 ) -> HsmResult<Vec<u8>> {
     let requested = key_version;
@@ -189,11 +156,12 @@ pub async fn encrypt_via_hsm_with_timeout(
         plaintext: plaintext.to_vec(),
     };
 
-    match send_hsm_request_with_timeout(socket_path, &req, timeout).await? {
+    match send_hsm_request(socket_path, &req, timeout).await? {
         HsmResponse::Encrypted {
             ciphertext,
             key_version: resp_version,
         } => {
+            // Validate returned key version against requested version to prevent downgrade
             validate_key_version(requested, resp_version)?;
             if resp_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
@@ -212,38 +180,6 @@ pub async fn decrypt_via_hsm(
     key_id: &str,
     key_version: Option<u32>,
     ciphertext: &[u8],
-) -> HsmResult<Vec<u8>> {
-    let requested = key_version;
-    let req = HsmRequest::Decrypt {
-        key_id: key_id.to_string(),
-        key_version,
-        ciphertext: ciphertext.to_vec(),
-    };
-
-    match send_hsm_request(socket_path, &req).await? {
-        HsmResponse::Decrypted {
-            plaintext,
-            key_version: resp_version,
-        } => {
-            // Validate returned key version against requested version to prevent downgrade
-            validate_key_version(requested, resp_version)?;
-            if resp_version == 0 {
-                return Err(HsmClientError::InvalidResponse);
-            }
-            Ok(plaintext)
-        }
-        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
-            "HSM decryption failed ({code}): {message}"
-        ))),
-        _other => Err(HsmClientError::InvalidResponse),
-    }
-}
-
-pub async fn decrypt_via_hsm_with_timeout(
-    socket_path: &str,
-    key_id: &str,
-    key_version: Option<u32>,
-    ciphertext: &[u8],
     timeout: Option<Duration>,
 ) -> HsmResult<Vec<u8>> {
     let requested = key_version;
@@ -253,11 +189,12 @@ pub async fn decrypt_via_hsm_with_timeout(
         ciphertext: ciphertext.to_vec(),
     };
 
-    match send_hsm_request_with_timeout(socket_path, &req, timeout).await? {
+    match send_hsm_request(socket_path, &req, timeout).await? {
         HsmResponse::Decrypted {
             plaintext,
             key_version: resp_version,
         } => {
+            // Validate returned key version against requested version to prevent downgrade
             validate_key_version(requested, resp_version)?;
             if resp_version == 0 {
                 return Err(HsmClientError::InvalidResponse);

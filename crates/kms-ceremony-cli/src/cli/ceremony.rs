@@ -29,7 +29,7 @@ pub async fn handle_interactive_ceremony(
         total_shares: shares_count,
     };
 
-    let response = send_hsm_request(&socket_path, &request)
+    let response = send_hsm_request(&socket_path, &request, None)
         .await
         .context("Nie udało się połączyć z daemonem vHSM")?;
 

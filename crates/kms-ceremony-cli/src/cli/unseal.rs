@@ -142,7 +142,7 @@ async fn send_init_master_key_request(
 
     let request = HsmRequest::InitMasterKey { threshold, shares };
 
-    match send_hsm_request(&socket_path, &request).await {
+    match send_hsm_request(&socket_path, &request, None).await {
         Ok(HsmResponse::MasterKeyInitialized) => {
             println!("✅ Master Key został pomyślnie odtworzony w vHSM! Daemon jest gotowy.");
             Ok(())

@@ -4,9 +4,16 @@ use kms_core::hsm::client::{
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
 use crate::errors::AppResult;
+use std::time::Duration;
 
-pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> AppResult<HsmResponse> {
-    core_send(socket_path, req).await.map_err(Into::into)
+pub async fn send_hsm_request(
+    socket_path: &str,
+    req: &HsmRequest,
+    timeout: Option<Duration>,
+) -> AppResult<HsmResponse> {
+    core_send(socket_path, req, timeout)
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn encrypt_via_hsm(
@@ -14,8 +21,9 @@ pub async fn encrypt_via_hsm(
     key_id: &str,
     key_version: Option<u32>,
     plaintext: &[u8],
+    timeout: Option<Duration>,
 ) -> AppResult<Vec<u8>> {
-    core_encrypt(socket_path, key_id, key_version, plaintext)
+    core_encrypt(socket_path, key_id, key_version, plaintext, timeout)
         .await
         .map_err(Into::into)
 }
@@ -25,8 +33,9 @@ pub async fn decrypt_via_hsm(
     key_id: &str,
     key_version: Option<u32>,
     ciphertext: &[u8],
+    timeout: Option<Duration>,
 ) -> AppResult<Vec<u8>> {
-    core_decrypt(socket_path, key_id, key_version, ciphertext)
+    core_decrypt(socket_path, key_id, key_version, ciphertext, timeout)
         .await
         .map_err(Into::into)
 }

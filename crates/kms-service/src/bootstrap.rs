@@ -31,7 +31,7 @@ pub async fn wait_for_vhsm_unsealed(socket_path: &str) -> anyhow::Result<()> {
             plaintext: b"healthcheck".to_vec(),
         };
 
-        match send_hsm_request(socket_path, &test_req).await {
+        match send_hsm_request(socket_path, &test_req, None).await {
             Ok(HsmResponse::Encrypted { .. }) => {
                 info!("✅ vHSM jest podłączony i ODBLOKOWANY (Unsealed). Kontynuacja startu...");
                 return Ok(());
