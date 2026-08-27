@@ -47,4 +47,5 @@ hsm_socket_path = "/run/vhsm/vhsm.sock"
 current_master_key_version = 1
 default_key_ttl_days = 365
 grace_period_minutes = 30
+hsm_timeout_secs = 5
 enable_http_rewrap = false

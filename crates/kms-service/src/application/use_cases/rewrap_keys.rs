@@ -59,6 +59,7 @@ where
 }
 
 #[cfg(test)]
+#[allow(clippy::manual_async_fn)]
 mod tests {
     use super::*;
     use crate::domain::keys::models::{
@@ -248,7 +249,10 @@ mod tests {
             ) -> crate::errors::AppResult<crate::domain::crypto::RawKeyPair> {
                 Err(AppError::Internal("not implemented".into()))
             }
-            async fn generate_data_key(&self, _algorithm: crate::domain::crypto::KeyAlgorithm) -> crate::errors::AppResult<crate::domain::crypto::GeneratedDataKey> {
+            async fn generate_data_key(
+                &self,
+                _algorithm: crate::domain::crypto::KeyAlgorithm,
+            ) -> crate::errors::AppResult<crate::domain::crypto::GeneratedDataKey> {
                 Err(AppError::Internal("not implemented".into()))
             }
         }

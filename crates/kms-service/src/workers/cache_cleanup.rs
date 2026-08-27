@@ -1,6 +1,6 @@
 use crate::domain::keys::repository::KeyRepository;
 use crate::server::state::KeyCache;
-use chrono::{Duration as ChronoDuration, Utc};
+use chrono::Utc;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
@@ -8,7 +8,7 @@ use tokio_util::sync::CancellationToken;
 pub async fn run_cache_cleanup<K>(
     key_cache: Arc<KeyCache>,
     key_repo: Arc<K>,
-    grace_minutes: i64,
+    _grace_minutes: i64,
     shutdown: CancellationToken,
 ) where
     K: KeyRepository + Send + Sync + 'static,
@@ -27,11 +27,8 @@ pub async fn run_cache_cleanup<K>(
                         let service = crate::domain::keys::models::ServiceId(k.target_service.clone());
                         let algo = k.algorithm;
                         let now = Utc::now();
-                        if let Ok(opt) = key_repo.get_active_or_valid_deprecated_key(&service, algo, now).await {
-                            if opt.is_none() {
-                                // remove from cache
-                                key_cache.remove_all_for_service(&service);
-                            }
+                        if let Ok(None) = key_repo.get_active_or_valid_deprecated_key(&service, algo, now).await {
+                            key_cache.remove_all_for_service(&service);
                         }
                     }
                     sleep(Duration::from_secs(60)).await;

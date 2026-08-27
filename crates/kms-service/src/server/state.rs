@@ -193,7 +193,10 @@ impl AppState {
         let key_cache = Arc::new(KeyCache::new());
         let compiled_acl = Arc::new(settings.acl.compile());
 
-        let vhsm_client = Arc::new(VhsmClient::new(&settings.crypto.hsm_socket_path));
+        let vhsm_client = Arc::new(VhsmClient::new(
+            &settings.crypto.hsm_socket_path,
+            settings.crypto.hsm_timeout_secs,
+        ));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
         let _ = crate::workers::expiration::run_expiration_worker(
@@ -207,7 +210,7 @@ impl AppState {
         let _ = crate::workers::cache_cleanup::run_cache_cleanup(
             key_cache.clone(),
             key_repo.clone(),
-            settings.crypto.grace_period_minutes.0 as i64,
+            settings.crypto.grace_period_minutes.0,
             shutdown_token.clone(),
         )
         .await;

@@ -1,4 +1,5 @@
 use crate::hsm::protocol::{HsmRequest, HsmResponse};
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -57,14 +58,16 @@ pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
 
 #[cfg(unix)]
 async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
+    read_frame_with_timeout(stream, Duration::from_secs(5)).await
+}
+
+#[cfg(unix)]
+async fn read_frame_with_timeout(stream: &mut UnixStream, timeout: Duration) -> HsmResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        stream.read_exact(&mut len_buf),
-    )
-    .await
-    .map_err(|_| HsmClientError::Timeout)?
-    .map_err(|err| HsmClientError::Io { source: err })?;
+    tokio::time::timeout(timeout, stream.read_exact(&mut len_buf))
+        .await
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
 
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_HSM_FRAME_SIZE {
@@ -72,19 +75,27 @@ async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
     }
 
     let mut payload = vec![0u8; len];
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        stream.read_exact(&mut payload),
-    )
-    .await
-    .map_err(|_| HsmClientError::Timeout)?
-    .map_err(|err| HsmClientError::Io { source: err })?;
+    tokio::time::timeout(timeout, stream.read_exact(&mut payload))
+        .await
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
 
     Ok(payload)
 }
 
 #[cfg(unix)]
 pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<HsmResponse> {
+    send_hsm_request_with_timeout(socket_path, req, None).await
+}
+
+#[cfg(unix)]
+pub async fn send_hsm_request_with_timeout(
+    socket_path: &str,
+    req: &HsmRequest,
+    timeout: Option<Duration>,
+) -> HsmResult<HsmResponse> {
+    let timeout = timeout.unwrap_or_else(|| Duration::from_secs(5));
+
     let socket = socket_path.trim();
     let path = if socket.is_empty() {
         HSM_SOCKET_DEFAULT_PATH
@@ -92,22 +103,21 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
         socket
     };
 
-    let mut stream =
-        tokio::time::timeout(std::time::Duration::from_secs(5), UnixStream::connect(path))
-            .await
-            .map_err(|_| HsmClientError::Timeout)?
-            .map_err(|err| HsmClientError::Io { source: err })?;
+    let mut stream = tokio::time::timeout(timeout, UnixStream::connect(path))
+        .await
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
 
     let payload =
         serde_json::to_vec(req).map_err(|err| HsmClientError::Serialization { source: err })?;
     let frame = framed_message(&payload)?;
 
-    tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&frame))
+    tokio::time::timeout(timeout, stream.write_all(&frame))
         .await
         .map_err(|_| HsmClientError::Timeout)?
         .map_err(|err| HsmClientError::Io { source: err })?;
 
-    let response_bytes = read_frame(&mut stream).await?;
+    let response_bytes = read_frame_with_timeout(&mut stream, timeout).await?;
     let response: HsmResponse = serde_json::from_slice(&response_bytes)
         .map_err(|err| HsmClientError::Serialization { source: err })?;
 
@@ -121,6 +131,15 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
 
 #[cfg(not(unix))]
 pub async fn send_hsm_request(_socket_path: &str, _req: &HsmRequest) -> HsmResult<HsmResponse> {
+    Err(HsmClientError::PlatformNotSupported)
+}
+
+#[cfg(not(unix))]
+pub async fn send_hsm_request_with_timeout(
+    _socket_path: &str,
+    _req: &HsmRequest,
+    _timeout: Option<Duration>,
+) -> HsmResult<HsmResponse> {
     Err(HsmClientError::PlatformNotSupported)
 }
 
@@ -156,6 +175,38 @@ pub async fn encrypt_via_hsm(
     }
 }
 
+pub async fn encrypt_via_hsm_with_timeout(
+    socket_path: &str,
+    key_id: &str,
+    key_version: Option<u32>,
+    plaintext: &[u8],
+    timeout: Option<Duration>,
+) -> HsmResult<Vec<u8>> {
+    let requested = key_version;
+    let req = HsmRequest::Encrypt {
+        key_id: key_id.to_string(),
+        key_version,
+        plaintext: plaintext.to_vec(),
+    };
+
+    match send_hsm_request_with_timeout(socket_path, &req, timeout).await? {
+        HsmResponse::Encrypted {
+            ciphertext,
+            key_version: resp_version,
+        } => {
+            validate_key_version(requested, resp_version)?;
+            if resp_version == 0 {
+                return Err(HsmClientError::InvalidResponse);
+            }
+            Ok(ciphertext)
+        }
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
+            "HSM encryption failed ({code}): {message}"
+        ))),
+        _other => Err(HsmClientError::InvalidResponse),
+    }
+}
+
 pub async fn decrypt_via_hsm(
     socket_path: &str,
     key_id: &str,
@@ -175,6 +226,38 @@ pub async fn decrypt_via_hsm(
             key_version: resp_version,
         } => {
             // Validate returned key version against requested version to prevent downgrade
+            validate_key_version(requested, resp_version)?;
+            if resp_version == 0 {
+                return Err(HsmClientError::InvalidResponse);
+            }
+            Ok(plaintext)
+        }
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
+            "HSM decryption failed ({code}): {message}"
+        ))),
+        _other => Err(HsmClientError::InvalidResponse),
+    }
+}
+
+pub async fn decrypt_via_hsm_with_timeout(
+    socket_path: &str,
+    key_id: &str,
+    key_version: Option<u32>,
+    ciphertext: &[u8],
+    timeout: Option<Duration>,
+) -> HsmResult<Vec<u8>> {
+    let requested = key_version;
+    let req = HsmRequest::Decrypt {
+        key_id: key_id.to_string(),
+        key_version,
+        ciphertext: ciphertext.to_vec(),
+    };
+
+    match send_hsm_request_with_timeout(socket_path, &req, timeout).await? {
+        HsmResponse::Decrypted {
+            plaintext,
+            key_version: resp_version,
+        } => {
             validate_key_version(requested, resp_version)?;
             if resp_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
