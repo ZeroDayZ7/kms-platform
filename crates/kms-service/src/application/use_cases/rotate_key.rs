@@ -137,7 +137,11 @@ where
             ));
         }
 
-        self.key_cache.remove(&input.service_id, input.algorithm);
+        // If compromised or manual deactivation, ensure we atomically remove all cached versions
+        match input.reason {
+            RotationReason::Compromised => self.key_cache.remove_all_for_service(&input.service_id),
+            _ => self.key_cache.remove(&input.service_id, input.algorithm),
+        }
 
         // 5. Audit the rotation
         let audit = AuditLog {

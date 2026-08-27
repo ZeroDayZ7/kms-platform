@@ -40,6 +40,14 @@ pub struct CachedKeyValue {
     pub version: u32,
     pub bytes: crate::domain::crypto::SecretBytes,
 }
+impl CachedKeyValue {
+    pub fn new(version: u32, bytes: Vec<u8>) -> Self {
+        Self {
+            version,
+            bytes: crate::domain::crypto::SecretBytes::new(bytes),
+        }
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct KeyCache {
@@ -86,13 +94,7 @@ impl KeyCache {
         };
 
         if let Ok(mut guard) = self.entries.write() {
-            guard.insert(
-                key,
-                CachedKeyValue {
-                    version,
-                    bytes: crate::domain::crypto::SecretBytes::new(value),
-                },
-            );
+            guard.insert(key, CachedKeyValue::new(version, value));
         }
     }
 
@@ -110,6 +112,22 @@ impl KeyCache {
         }
     }
 
+    pub fn remove_all_for_service(&self, target_service: &ServiceId) {
+        if let Ok(mut guard) = self.entries.write() {
+            let keys: Vec<KeyCacheKey> = guard
+                .keys()
+                .filter(|k| k.target_service == target_service.0)
+                .cloned()
+                .collect();
+
+            for k in keys {
+                if let Some(mut v) = guard.remove(&k) {
+                    v.bytes.zeroize();
+                }
+            }
+        }
+    }
+
     //#region clear
     pub fn clear(&self) {
         if let Ok(mut guard) = self.entries.write() {
@@ -118,6 +136,13 @@ impl KeyCache {
             }
             guard.clear();
         }
+    }
+
+    pub fn keys_snapshot(&self) -> Vec<KeyCacheKey> {
+        if let Ok(guard) = self.entries.read() {
+            return guard.keys().cloned().collect();
+        }
+        Vec::new()
     }
 }
 
@@ -174,7 +199,16 @@ impl AppState {
         let _ = crate::workers::expiration::run_expiration_worker(
             key_repo.clone(),
             audit_repo.clone(),
-            shutdown_token,
+            shutdown_token.clone(),
+        )
+        .await;
+
+        // Spawn cache cleanup worker to remove stale/invalidated cache entries
+        let _ = crate::workers::cache_cleanup::run_cache_cleanup(
+            key_cache.clone(),
+            key_repo.clone(),
+            settings.crypto.grace_period_minutes.0 as i64,
+            shutdown_token.clone(),
         )
         .await;
 

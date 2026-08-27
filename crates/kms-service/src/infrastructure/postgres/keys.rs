@@ -298,12 +298,29 @@ impl KeyRepository for PgKeyRepository {
         &self,
         updates: Vec<(Uuid, EncryptedPrivateKey, i32)>,
     ) -> AppResult<usize> {
+        // Perform updates within a single transaction so partial failures rollback
+        let mut tx = self.pool.begin().await?;
         let mut updated = 0usize;
         for (key_id, encrypted, _current_version) in updates {
-            if self.update_encrypted_key(&key_id, encrypted).await.is_ok() {
-                updated += 1;
+            // Use the same update query as update_encrypted_key
+            let res = crate::infrastructure::sqlc::queries::update_encrypted_key(
+                &mut tx,
+                crate::infrastructure::sqlc::queries::UpdateEncryptedKeyParams {
+                    id: key_id,
+                    encrypted_key_data: encrypted.ciphertext,
+                },
+            )
+            .await;
+
+            if let Err(e) = res {
+                tx.rollback().await?;
+                return Err(AppError::from(e));
             }
+
+            updated += 1;
         }
+
+        tx.commit().await?;
         Ok(updated)
     }
 }
