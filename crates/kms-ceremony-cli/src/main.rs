@@ -1,5 +1,4 @@
 mod cli;
-mod crypto;
 mod storage;
 
 use anyhow::Result;

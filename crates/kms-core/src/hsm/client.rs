@@ -57,11 +57,6 @@ pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
 }
 
 #[cfg(unix)]
-async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
-    read_frame_with_timeout(stream, Duration::from_secs(5)).await
-}
-
-#[cfg(unix)]
 async fn read_frame_with_timeout(stream: &mut UnixStream, timeout: Duration) -> HsmResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
     tokio::time::timeout(timeout, stream.read_exact(&mut len_buf))
@@ -126,15 +121,6 @@ pub async fn send_hsm_request(
 
 #[cfg(not(unix))]
 pub async fn send_hsm_request(
-    _socket_path: &str,
-    _req: &HsmRequest,
-    _timeout: Option<Duration>,
-) -> HsmResult<HsmResponse> {
-    Err(HsmClientError::PlatformNotSupported)
-}
-
-#[cfg(not(unix))]
-pub async fn send_hsm_request_with_timeout(
     _socket_path: &str,
     _req: &HsmRequest,
     _timeout: Option<Duration>,

@@ -4,6 +4,8 @@ use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 use std::env;
 #[cfg(unix)]
 use std::time::Duration;
+#[cfg(unix)]
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[cfg(unix)]
 #[tokio::main]
@@ -35,7 +37,6 @@ async fn main() -> std::process::ExitCode {
             }
 
             // read response len
-            use tokio::io::AsyncReadExt;
             let mut len_buf = [0u8; 4];
             if tokio::time::timeout(Duration::from_secs(2), stream.read_exact(&mut len_buf))
                 .await
