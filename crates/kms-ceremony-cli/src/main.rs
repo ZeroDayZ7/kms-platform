@@ -27,8 +27,9 @@ async fn main() -> Result<()> {
             socket_path,
             threshold,
             shares_dir,
+            share_files,
         } => {
-            handle_unseal_hsm(socket_path, threshold, shares_dir).await?;
+            handle_unseal_hsm(socket_path, threshold, shares_dir, share_files).await?;
         }
 
         Commands::Encrypt {

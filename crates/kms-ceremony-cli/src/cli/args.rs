@@ -73,9 +73,14 @@ pub enum Commands {
         #[arg(
             short = 'd',
             long = "shares-dir",
-            help = "Katalog z plikami JSON udziałów (opcjonalnie)"
+            help = "Katalog z plikami JSON udziałów",
+            default_value = "./out/shares"
         )]
-        shares_dir: Option<PathBuf>,
+        shares_dir: PathBuf,
+
+        /// Bezpośrednie ścieżki do plików udziałów JSON (można podać wiele razy)
+        #[arg(short = 'f', long = "file")]
+        share_files: Vec<PathBuf>,
     },
 
     /// Szyfruje podany tekst za pomocą klucza HSM
