@@ -81,6 +81,9 @@ pub fn decrypt_bytes_with_password(
     let nonce_bytes = hex::decode(&container.nonce).map_err(|e| anyhow!(e.to_string()))?;
     let ciphertext_bytes =
         hex::decode(&container.ciphertext).map_err(|e| anyhow!(e.to_string()))?;
+    if nonce_bytes.len() != 12 {
+        return Err(anyhow!("Invalid nonce length: expected 12 bytes"));
+    }
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let decrypted_bytes = cipher
@@ -125,6 +128,9 @@ pub fn decrypt_storage_key(
     let nonce_bytes = hex::decode(&container.nonce).map_err(|e| anyhow!(e.to_string()))?;
     let ciphertext_bytes =
         hex::decode(&container.ciphertext).map_err(|e| anyhow!(e.to_string()))?;
+    if nonce_bytes.len() != 12 {
+        return Err(anyhow!("Invalid nonce length: expected 12 bytes"));
+    }
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     let mut decrypted_bytes = cipher
@@ -141,4 +147,24 @@ pub fn decrypt_storage_key(
     decrypted_bytes.zeroize();
 
     Ok(SecretKey::from_bytes(out))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decrypt_invalid_nonce_len_returns_err() {
+        let (_k, salt) = derive_key_from_password("test-password").expect("derive failed");
+
+        let container = EncryptedContainer {
+            salt,
+            // intentionally wrong nonce length (8 bytes instead of 12)
+            nonce: hex::encode(vec![0u8; 8]),
+            ciphertext: hex::encode(vec![]),
+        };
+
+        let res = decrypt_bytes_with_password("test-password", &container);
+        assert!(res.is_err(), "Expected error for invalid nonce length");
+    }
 }

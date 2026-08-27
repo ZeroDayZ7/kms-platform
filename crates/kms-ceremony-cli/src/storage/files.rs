@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use subtle::ConstantTimeEq;
 
 // Importujemy EncryptedContainer z kms-core
 use kms_core::crypto::aes::EncryptedContainer;
@@ -77,7 +78,13 @@ pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
         let container_json = serde_json::to_string(&record.container)?;
         let expected_sha256 = compute_sha256_hex(&container_json);
 
-        if record.share_sha256 != expected_sha256 {
+        if record
+            .share_sha256
+            .as_bytes()
+            .ct_eq(expected_sha256.as_bytes())
+            .unwrap_u8()
+            == 0
+        {
             anyhow::bail!(
                 "Błąd integralności! Plik {} został zmodyfikowany lub uszkodzony (niezgodny hash SHA-256).",
                 path.display()
@@ -87,4 +94,20 @@ pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
         records.push(record);
     }
     Ok(records)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use subtle::ConstantTimeEq;
+
+    #[test]
+    fn constant_time_compare_behaves() {
+        let a = "abcdef0123456789".to_string();
+        let b = "abcdef0123456789".to_string();
+        let c = "abcdef0123456780".to_string();
+
+        assert_eq!(a.as_bytes().ct_eq(b.as_bytes()).unwrap_u8(), 1u8);
+        assert_eq!(a.as_bytes().ct_eq(c.as_bytes()).unwrap_u8(), 0u8);
+    }
 }

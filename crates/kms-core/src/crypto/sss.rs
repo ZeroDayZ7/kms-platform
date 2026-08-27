@@ -2,6 +2,7 @@
 use crate::crypto::keys::{KEY_SIZE, SecretKey};
 use anyhow::{Context, Result, bail};
 use ssss::{SsssConfig, gen_shares, unlock};
+use zeroize::Zeroizing;
 
 pub type KmsError = anyhow::Error;
 
@@ -9,7 +10,7 @@ pub type KmsError = anyhow::Error;
 pub struct SecretShare {
     pub index: u8,
     /// Hex-encoded payload (lowercase, even-length) representing the share bytes
-    pub value: String,
+    pub value: Zeroizing<String>,
 }
 
 // NOTE: The SSS library returns share strings in its own textual format
@@ -52,7 +53,7 @@ pub fn split_secret(
         // Preserve the raw share string (trimmed) as-produced by the library.
         shares.push(SecretShare {
             index: (idx as u8) + 1,
-            value: raw_value.trim().to_string(),
+            value: Zeroizing::new(raw_value.trim().to_string()),
         });
     }
 
@@ -68,7 +69,7 @@ pub fn combine_shares(shares: &[SecretShare]) -> Result<Vec<u8>, KmsError> {
     // The underlying `unlock` expects the share payloads in the same textual
     // form as `gen_shares` returned. We standardized our `SecretShare.value` to
     // be a hex payload, so pass that directly to `unlock` (it accepts hex).
-    let share_strings: Vec<String> = shares.iter().map(|share| share.value.clone()).collect();
+    let share_strings: Vec<String> = shares.iter().map(|share| share.value.to_string()).collect();
     let recovered_bytes = unlock(&share_strings).with_context(|| {
         format!(
             "Failed to reconstruct secret from {} shares",
@@ -92,7 +93,7 @@ pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec
         .map(|share| {
             // Ensure hex payload is even-length and normalized (we already
             // produce even-length hex in `split_secret`). Return `(index, hex)`.
-            (share.index, share.value)
+            (share.index, share.value.to_string())
         })
         .collect())
 }
@@ -105,7 +106,7 @@ pub fn combine_shares_legacy(shares: &[(u8, String)]) -> Result<SecretKey> {
             // Treat incoming share strings as opaque and preserve them
             SecretShare {
                 index: *index,
-                value: value.trim().to_string(),
+                value: Zeroizing::new(value.trim().to_string()),
             }
         })
         .collect();
@@ -140,4 +141,21 @@ mod tests {
     // Note: detailed parsing/normalization tests removed because the SSS
     // library emits opaque textual share formats; we treat shares as
     // opaque strings and store/restore them verbatim.
+}
+
+#[test]
+fn secret_share_value_zeroizes() {
+    use zeroize::Zeroize;
+
+    let mut s = SecretShare {
+        index: 1,
+        value: Zeroizing::new("deadbeef".to_string()),
+    };
+
+    // ensure contents are present
+    assert_eq!(s.value.as_str(), "deadbeef");
+
+    // zeroize and ensure it has been cleared
+    s.value.zeroize();
+    assert!(s.value.as_str().is_empty());
 }
