@@ -2,6 +2,7 @@ use anyhow::{Context, Result, bail};
 use dialoguer::Password;
 use std::path::PathBuf;
 use tokio::fs;
+use zeroize::Zeroizing;
 
 use kms_core::crypto::aes::encrypt_bytes_with_password;
 use kms_core::hsm::client::send_hsm_request;
@@ -53,19 +54,22 @@ pub async fn handle_interactive_ceremony(
         println!("--------------------------------------------------");
         println!("Oficerzie nr {index}, podejmij swój udział.");
 
-        let password = Password::new()
-            .with_prompt(format!(
-                "Podaj hasło/PIN do zaszyfrowania Udziału nr {index}"
-            ))
-            .interact()?;
+        let password = Zeroizing::new(
+            Password::new()
+                .with_prompt(format!(
+                    "Podaj hasło/PIN do zaszyfrowania Udziału nr {index}"
+                ))
+                .interact()?,
+        );
 
-        let confirm = Password::new().with_prompt("Potwierdź hasło").interact()?;
+        let confirm = Zeroizing::new(Password::new().with_prompt("Potwierdź hasło").interact()?);
 
         if password != confirm {
             bail!("Hasła się nie zgadzają! Przerwano ceremonię.");
         }
 
         // Pobieramy surowe bajty z wartości SSS zwrócenie z vHSM (bez dekodowania z HEX)
+        let raw_share_str = Zeroizing::new(raw_share_str);
         let share_bytes = raw_share_str.as_bytes();
 
         // Szyfrowanie udziału SSS hasłem Oficera
