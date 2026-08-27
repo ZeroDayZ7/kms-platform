@@ -61,6 +61,17 @@ pub fn router(state: AppState) -> Router {
             post(crypto::decrypt_handler).layer(rate_limits.auth.clone()),
         );
 
+    // Audit endpoints
+    router = router
+        .route(
+            "/api/v1/audit/verify",
+            get(crate::handlers::audit::verify_audit_handler).layer(rate_limits.health.clone()),
+        )
+        .route(
+            "/api/v1/audit/logs",
+            get(crate::handlers::audit::audit_logs_handler).layer(rate_limits.health.clone()),
+        );
+
     if enable_rewrap {
         router = router.route(
             "/api/v1/admin/kms/rewrap",

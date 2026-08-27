@@ -110,4 +110,23 @@ pub enum Commands {
         #[arg(short, long, help = "Szyfrogram w formacie HEX (Nonce + Ciphertext)")]
         ciphertext_hex: String,
     },
+
+    /// Weryfikuje spójność łańcucha audytowego w bazie danych
+    VerifyAuditChain {
+        #[arg(
+            short,
+            long,
+            help = "Base URL of kms-service (e.g. http://localhost:8080)",
+            env = "KMS_SERVICE_URL"
+        )]
+        service_url: Option<String>,
+
+        /// Number of records to verify (default 1000). Use `full` to verify from genesis.
+        #[arg(short = 'n', long = "limit")]
+        limit: Option<usize>,
+
+        /// Verify from genesis (ignore limit)
+        #[arg(short = 'F', long = "full")]
+        full: bool,
+    },
 }

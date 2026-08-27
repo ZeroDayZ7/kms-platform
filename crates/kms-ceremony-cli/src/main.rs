@@ -8,6 +8,7 @@ use crate::cli::args::{CliArgs, Commands};
 use crate::cli::ceremony::handle_interactive_ceremony;
 use crate::cli::crypto_ops::{handle_decrypt, handle_encrypt};
 use crate::cli::unseal::handle_unseal_hsm;
+use crate::cli::verify_audit::handle_verify_audit;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,6 +45,14 @@ async fn main() -> Result<()> {
             ciphertext_hex,
         } => {
             handle_decrypt(socket_path, ciphertext_hex).await?;
+        }
+
+        Commands::VerifyAuditChain {
+            service_url,
+            limit,
+            full,
+        } => {
+            handle_verify_audit(service_url, None, limit, full).await?;
         }
     }
 

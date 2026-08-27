@@ -151,7 +151,7 @@ volumes:
 networks:
   kms-internal-net:
     driver: bridge
-    internal: true
+    internal: false
 
   citizen-app-net:
     name: obywatel_app__network

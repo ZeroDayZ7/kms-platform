@@ -46,7 +46,7 @@ impl<T: AsExecutor + ?Sized> AsExecutor for &mut T {
         (**self).as_executor()
     }
 }
-pub const GET_LAST_AUDIT_LOG: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, signature, created_at\nFROM audit_logs\nORDER BY created_at DESC, id DESC\nLIMIT 1";
+pub const GET_LAST_AUDIT_LOG: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at\nFROM audit_logs\nORDER BY created_at DESC, id DESC\nLIMIT 1";
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GetLastAuditLogRow {
     pub id: uuid::Uuid,
@@ -56,7 +56,8 @@ pub struct GetLastAuditLogRow {
     pub algorithm: String,
     pub status: String,
     pub reason: Option<String>,
-    pub prev_hash: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
     pub signature: Option<Vec<u8>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -65,6 +66,59 @@ pub async fn get_last_audit_log<E: AsExecutor>(
 ) -> Result<GetLastAuditLogRow, sqlx::Error> {
     sqlx::query_as::<_, GetLastAuditLogRow>(GET_LAST_AUDIT_LOG)
         .fetch_one(db.as_executor())
+        .await
+}
+
+pub const GET_AUDIT_LOGS_LAST_N: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at\nFROM audit_logs\nORDER BY created_at DESC, id DESC\nLIMIT $1";
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GetAuditLogsRow {
+    pub id: uuid::Uuid,
+    pub caller_service: String,
+    pub target_service: String,
+    pub action: String,
+    pub algorithm: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
+    pub signature: Option<Vec<u8>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub async fn get_audit_logs_last_n<E: AsExecutor>(
+    mut db: E,
+    limit: i64,
+) -> Result<Vec<GetAuditLogsRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetAuditLogsRow>(GET_AUDIT_LOGS_LAST_N)
+        .bind(limit)
+        .fetch_all(db.as_executor())
+        .await
+}
+
+pub const GET_AUDIT_LOGS_ALL: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at\nFROM audit_logs\nORDER BY created_at ASC, id ASC";
+
+pub async fn get_audit_logs_all<E: AsExecutor>(
+    mut db: E,
+) -> Result<Vec<GetAuditLogsRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetAuditLogsRow>(GET_AUDIT_LOGS_ALL)
+        .fetch_all(db.as_executor())
+        .await
+}
+
+pub const GET_ACTIVE_SIGNING_KEYS: &str =
+    "SELECT public_key_pem FROM keys WHERE purpose = 'Signing' AND is_active = TRUE";
+
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GetActiveSigningKeyRow {
+    pub public_key_pem: String,
+}
+
+pub async fn get_active_signing_public_keys<E: AsExecutor>(
+    mut db: E,
+) -> Result<Vec<GetActiveSigningKeyRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetActiveSigningKeyRow>(GET_ACTIVE_SIGNING_KEYS)
+        .fetch_all(db.as_executor())
         .await
 }
 #[derive(Debug, Clone)]
@@ -76,10 +130,11 @@ pub struct InsertAuditLogParams {
     pub algorithm: String,
     pub status: String,
     pub reason: Option<String>,
-    pub prev_hash: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
     pub signature: Option<Vec<u8>>,
 }
-pub const INSERT_AUDIT_LOG: &str = "INSERT INTO audit_logs (\n    id,\n    caller_service,\n    target_service,\n    action,\n    algorithm,\n    status,\n    reason,\n    prev_hash,\n    signature,\n    created_at\n) VALUES (\n    $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()\n)";
+pub const INSERT_AUDIT_LOG: &str = "INSERT INTO audit_logs (\n    id,\n    caller_service,\n    target_service,\n    action,\n    algorithm,\n    status,\n    reason,\n    prev_hash,\n    hash,\n    signature,\n    created_at\n) VALUES (\n    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()\n)";
 pub async fn insert_audit_log<E: AsExecutor>(
     mut db: E,
     arg: InsertAuditLogParams,
@@ -93,6 +148,7 @@ pub async fn insert_audit_log<E: AsExecutor>(
         .bind(arg.status)
         .bind(arg.reason)
         .bind(arg.prev_hash)
+        .bind(arg.hash)
         .bind(arg.signature)
         .execute(db.as_executor())
         .await?;
