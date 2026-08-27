@@ -14,7 +14,7 @@ pub struct ShareFileRecord {
     pub index: u8,
     pub threshold: u8,
     pub total_shares: u8,
-    pub container: EncryptedContainer, // <--- Zamiast share_hex: String
+    pub container: EncryptedContainer,
     pub share_sha256: String,
     pub created_at: DateTime<Utc>,
 }
@@ -32,12 +32,11 @@ pub async fn write_share_file(
     index: u8,
     threshold: u8,
     total_shares: u8,
-    container: EncryptedContainer, // <--- Przyjmuje gotowy kontener
+    container: EncryptedContainer,
 ) -> Result<PathBuf> {
     let file_path = dir.join(format!("share_{index}.json"));
     let created_at = Utc::now();
 
-    // Wyliczamy SHA-256 z zserializowanego kontenera
     let container_json = serde_json::to_string(&container)?;
     let sha256 = compute_sha256_hex(&container_json);
 
@@ -78,12 +77,11 @@ pub async fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
         let container_json = serde_json::to_string(&record.container)?;
         let expected_sha256 = compute_sha256_hex(&container_json);
 
-        if record
-            .share_sha256
-            .as_bytes()
-            .ct_eq(expected_sha256.as_bytes())
-            .unwrap_u8()
-            == 0
+        let record_bytes = record.share_sha256.as_bytes();
+        let expected_bytes = expected_sha256.as_bytes();
+
+        if record_bytes.len() != expected_bytes.len()
+            || record_bytes.ct_eq(expected_bytes).unwrap_u8() == 0
         {
             anyhow::bail!(
                 "Błąd integralności! Plik {} został zmodyfikowany lub uszkodzony (niezgodny hash SHA-256).",
