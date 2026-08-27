@@ -74,7 +74,7 @@ services:
       - vhsm_sockets:/run/vhsm
     healthcheck:
       <<: *common-healthcheck
-      test: ["CMD", "test", "-S", "/run/vhsm/vhsm.sock"]
+      test: ["CMD", "/app/hsm_probe"]
   # endregion
 
   # region KMS SERVICE (RUST)

@@ -130,6 +130,7 @@ pub async fn encrypt_via_hsm(
     key_version: Option<u32>,
     plaintext: &[u8],
 ) -> HsmResult<Vec<u8>> {
+    let requested = key_version;
     let req = HsmRequest::Encrypt {
         key_id: key_id.to_string(),
         key_version,
@@ -139,9 +140,11 @@ pub async fn encrypt_via_hsm(
     match send_hsm_request(socket_path, &req).await? {
         HsmResponse::Encrypted {
             ciphertext,
-            key_version,
+            key_version: resp_version,
         } => {
-            if key_version == 0 {
+            // Validate returned key version against requested version to prevent downgrade
+            validate_key_version(requested, resp_version)?;
+            if resp_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
             }
             Ok(ciphertext)
@@ -159,6 +162,7 @@ pub async fn decrypt_via_hsm(
     key_version: Option<u32>,
     ciphertext: &[u8],
 ) -> HsmResult<Vec<u8>> {
+    let requested = key_version;
     let req = HsmRequest::Decrypt {
         key_id: key_id.to_string(),
         key_version,
@@ -168,9 +172,11 @@ pub async fn decrypt_via_hsm(
     match send_hsm_request(socket_path, &req).await? {
         HsmResponse::Decrypted {
             plaintext,
-            key_version,
+            key_version: resp_version,
         } => {
-            if key_version == 0 {
+            // Validate returned key version against requested version to prevent downgrade
+            validate_key_version(requested, resp_version)?;
+            if resp_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
             }
             Ok(plaintext)
@@ -180,6 +186,22 @@ pub async fn decrypt_via_hsm(
         ))),
         _other => Err(HsmClientError::InvalidResponse),
     }
+}
+
+// Helper to validate key version consistency and detect downgrade attacks.
+fn validate_key_version(requested: Option<u32>, response_version: u32) -> HsmResult<()> {
+    if let Some(req_v) = requested {
+        if response_version < req_v {
+            return Err(HsmClientError::Remote(format!(
+                "Downgrade detected: response version {} < requested {}",
+                response_version, req_v
+            )));
+        }
+        if response_version != req_v {
+            return Err(HsmClientError::InvalidResponse);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -201,5 +223,22 @@ mod tests {
         let oversized = vec![0u8; MAX_HSM_FRAME_SIZE + 1];
         let err = framed_message(&oversized).unwrap_err();
         assert!(matches!(err, HsmClientError::InvalidFrame));
+    }
+
+    #[test]
+    fn validate_key_version_accepts_none() {
+        assert!(validate_key_version(None, 1).is_ok());
+    }
+
+    #[test]
+    fn validate_key_version_rejects_downgrade() {
+        let res = validate_key_version(Some(5), 4);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn validate_key_version_rejects_mismatch() {
+        let res = validate_key_version(Some(3), 4);
+        assert!(res.is_err());
     }
 }
