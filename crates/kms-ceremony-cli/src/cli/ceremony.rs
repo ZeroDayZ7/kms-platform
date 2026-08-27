@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, bail};
 use dialoguer::Password;
-use std::fs;
 use std::path::PathBuf;
+use tokio::fs;
 
 use kms_core::crypto::aes::encrypt_bytes_with_password;
 use kms_core::hsm::client::send_hsm_request;
@@ -39,9 +39,9 @@ pub async fn handle_interactive_ceremony(
         _ => bail!("Otrzymano nieoczekiwaną odpowiedź z vHSM"),
     };
 
-    fs::create_dir_all(&output_dir)?;
+    fs::create_dir_all(&output_dir).await?;
     let share_dir = output_dir.join("shares");
-    fs::create_dir_all(&share_dir)?;
+    fs::create_dir_all(&share_dir).await?;
 
     println!("\n[CEREMONY] vHSM wygenerował Master Key w pamięci RAM!");
     println!(
@@ -78,7 +78,8 @@ pub async fn handle_interactive_ceremony(
             threshold,
             shares_count,
             encrypted_container,
-        )?;
+        )
+        .await?;
 
         println!(
             "[OK] Udział nr {index} został zaszyfrowany i zapisany w {}",

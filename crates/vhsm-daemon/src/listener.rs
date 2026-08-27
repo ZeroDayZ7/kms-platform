@@ -33,24 +33,25 @@ const MAX_CONCURRENT_REQUESTS: usize = 100; // Limit równoległych operacji kry
 pub async fn run_unix_listener(
     state: Arc<RwLock<VhsmState>>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    const SOCKET_PATH: &str = "/run/vhsm/vhsm.sock";
+    let socket_path = std::env::var("CRYPTO__HSM_SOCKET_PATH")
+        .unwrap_or_else(|_| "/run/vhsm/vhsm.sock".to_string());
 
-    if let Some(parent) = Path::new(SOCKET_PATH).parent() {
+    if let Some(parent) = Path::new(&socket_path).parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    if Path::new(SOCKET_PATH).exists() {
-        tokio::fs::remove_file(SOCKET_PATH).await?;
+    if Path::new(&socket_path).exists() {
+        tokio::fs::remove_file(&socket_path).await?;
     }
 
-    let listener = UnixListener::bind(SOCKET_PATH)?;
-    std::fs::set_permissions(SOCKET_PATH, std::fs::Permissions::from_mode(0o660))?;
+    let listener = UnixListener::bind(&socket_path)?;
+    std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o660))?;
 
     // Semafor do kontrolowania maksymalnej liczby współbieżnych żądań HSM
     let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_REQUESTS));
 
     tracing::info!(
         "vHSM Daemon oczekuje na inicjalizację kluczem na: {}",
-        SOCKET_PATH
+        socket_path
     );
 
     loop {

@@ -1,10 +1,21 @@
 // crates/kms-core/src/crypto/sss.rs
 use crate::crypto::keys::{KEY_SIZE, SecretKey};
-use anyhow::{Context, Result, bail};
+// (no direct anyhow::Context used here)
 use ssss::{SsssConfig, gen_shares, unlock};
+use thiserror::Error;
 use zeroize::Zeroizing;
 
-pub type KmsError = anyhow::Error;
+#[derive(Error, Debug)]
+pub enum KmsCoreError {
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
+    #[error("sss error: {0}")]
+    Sss(String),
+    #[error("internal error: {0}")]
+    Internal(String),
+}
+
+pub type KmsError = KmsCoreError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecretShare {
@@ -20,25 +31,37 @@ pub struct SecretShare {
 // directly when reconstructing the secret, so we preserve them unchanged.
 
 //#region split_secret
+
 pub fn split_secret(
     secret: &[u8],
     threshold: u8,
     shares_count: u8,
-) -> Result<Vec<SecretShare>, KmsError> {
+) -> std::result::Result<Vec<SecretShare>, KmsError> {
     if secret.len() != KEY_SIZE {
-        bail!("Secret length must be exactly {KEY_SIZE} bytes");
+        return Err(KmsCoreError::InvalidInput(format!(
+            "Secret length must be exactly {} bytes",
+            KEY_SIZE
+        )));
     }
     if shares_count == 0 {
-        bail!("Total shares must be greater than zero");
+        return Err(KmsCoreError::InvalidInput(
+            "Total shares must be greater than zero".to_string(),
+        ));
     }
     if threshold == 0 {
-        bail!("Threshold must be greater than zero");
+        return Err(KmsCoreError::InvalidInput(
+            "Threshold must be greater than zero".to_string(),
+        ));
     }
     if threshold > shares_count {
-        bail!("Threshold cannot be greater than total shares");
+        return Err(KmsCoreError::InvalidInput(
+            "Threshold cannot be greater than total shares".to_string(),
+        ));
     }
     if threshold < 2 {
-        bail!("Threshold must be at least 2");
+        return Err(KmsCoreError::InvalidInput(
+            "Threshold must be at least 2".to_string(),
+        ));
     }
 
     let config = SsssConfig::builder()
@@ -46,7 +69,8 @@ pub fn split_secret(
         .threshold(threshold)
         .build();
 
-    let share_strings = gen_shares(&config, secret)?;
+    let share_strings =
+        gen_shares(&config, secret).map_err(|e| KmsCoreError::Sss(e.to_string()))?;
 
     let mut shares = Vec::with_capacity(share_strings.len());
     for (idx, raw_value) in share_strings.into_iter().enumerate() {
@@ -61,31 +85,45 @@ pub fn split_secret(
 }
 
 //#region combine_shares
-pub fn combine_shares(shares: &[SecretShare]) -> Result<Vec<u8>, KmsError> {
+pub fn combine_shares(shares: &[SecretShare]) -> std::result::Result<Vec<u8>, KmsError> {
     if shares.is_empty() {
-        bail!("At least one share is required to reconstruct the key");
+        return Err(KmsCoreError::InvalidInput(
+            "At least one share is required to reconstruct the key".to_string(),
+        ));
+    }
+    if shares.len() < 2 {
+        return Err(KmsCoreError::InvalidInput(
+            "At least two shares are required to meet minimum threshold".to_string(),
+        ));
     }
 
     // The underlying `unlock` expects the share payloads in the same textual
     // form as `gen_shares` returned. We standardized our `SecretShare.value` to
     // be a hex payload, so pass that directly to `unlock` (it accepts hex).
     let share_strings: Vec<String> = shares.iter().map(|share| share.value.to_string()).collect();
-    let recovered_bytes = unlock(&share_strings).with_context(|| {
-        format!(
-            "Failed to reconstruct secret from {} shares",
-            share_strings.len()
-        )
+    let recovered_bytes = unlock(&share_strings).map_err(|e| {
+        KmsCoreError::Sss(format!(
+            "Failed to reconstruct secret from {} shares: {}",
+            share_strings.len(),
+            e
+        ))
     })?;
 
     if recovered_bytes.len() != KEY_SIZE {
-        bail!("Reconstructed key has invalid size");
+        return Err(KmsCoreError::InvalidInput(
+            "Reconstructed key has invalid size".to_string(),
+        ));
     }
 
     Ok(recovered_bytes)
 }
 
 //#region split_shares
-pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec<(u8, String)>> {
+pub fn split_shares(
+    secret: &SecretKey,
+    shares: u8,
+    threshold: u8,
+) -> std::result::Result<Vec<(u8, String)>, KmsError> {
     let secret_bytes = secret.as_bytes().to_vec();
     let shared = split_secret(&secret_bytes, threshold, shares)?;
     Ok(shared
@@ -99,7 +137,7 @@ pub fn split_shares(secret: &SecretKey, shares: u8, threshold: u8) -> Result<Vec
 }
 
 //#region combine_shares_legacy
-pub fn combine_shares_legacy(shares: &[(u8, String)]) -> Result<SecretKey> {
+pub fn combine_shares_legacy(shares: &[(u8, String)]) -> std::result::Result<SecretKey, KmsError> {
     let secret_shares: Vec<SecretShare> = shares
         .iter()
         .map(|(index, value)| {
@@ -110,7 +148,6 @@ pub fn combine_shares_legacy(shares: &[(u8, String)]) -> Result<SecretKey> {
             }
         })
         .collect();
-
     let recovered_bytes = combine_shares(&secret_shares)?;
     let mut key_arr = [0u8; KEY_SIZE];
     key_arr.copy_from_slice(&recovered_bytes);

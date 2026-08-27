@@ -2,9 +2,9 @@ use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::fs;
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
+use tokio::fs;
 
 // Importujemy EncryptedContainer z kms-core
 use kms_core::crypto::aes::EncryptedContainer;
@@ -27,7 +27,7 @@ pub fn compute_sha256_hex(value: &str) -> String {
 }
 
 //#region write_share_file
-pub fn write_share_file(
+pub async fn write_share_file(
     dir: &Path,
     index: u8,
     threshold: u8,
@@ -52,6 +52,7 @@ pub fn write_share_file(
 
     let json = serde_json::to_string_pretty(&record)?;
     fs::write(&file_path, json)
+        .await
         .with_context(|| format!("Failed to write share file {}", file_path.display()))?;
 
     Ok(file_path)
@@ -59,18 +60,17 @@ pub fn write_share_file(
 
 #[allow(dead_code)]
 //#region load_share_directory
-pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
+pub async fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
     let mut records = Vec::new();
-    let entries = fs::read_dir(dir)?;
+    let mut entries = fs::read_dir(dir).await?;
 
-    for entry in entries {
-        let entry = entry?;
+    while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
         if !path.is_file() || path.extension().and_then(|v| v.to_str()) != Some("json") {
             continue;
         }
 
-        let content = fs::read_to_string(&path)?;
+        let content = fs::read_to_string(&path).await?;
         let record: ShareFileRecord = serde_json::from_str(&content)
             .with_context(|| format!("Uszkodzona struktura JSON w pliku: {}", path.display()))?;
 
@@ -93,12 +93,12 @@ pub fn load_share_directory(dir: &Path) -> Result<Vec<ShareFileRecord>> {
 
         records.push(record);
     }
+
     Ok(records)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use subtle::ConstantTimeEq;
 
     #[test]

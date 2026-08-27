@@ -3,6 +3,7 @@ use dialoguer::{Input, Password};
 use std::collections::HashSet;
 use std::io::{IsTerminal, stdin};
 use std::path::PathBuf;
+use tokio::io::AsyncReadExt;
 
 use kms_core::crypto::aes::decrypt_bytes_with_password;
 use kms_core::hsm::client::send_hsm_request;
@@ -15,16 +16,13 @@ pub async fn handle_unseal_hsm(
     threshold: u8,
     shares_dir: Option<PathBuf>,
 ) -> Result<()> {
-    // Sprawdzenie, czy terminal działa w trybie interaktywnym (TTY)
-    if !stdin().is_terminal() {
-        bail!("Błąd: Brak interaktywnego terminala TTY!");
-    }
+    // Jeśli nie mamy TTY, pozwól na tryb nieinteraktywny (env var lub pipe)
 
     let mut shares_to_send: Vec<(u8, String)> = Vec::new();
 
     if let Some(dir) = shares_dir {
         println!("[INFO] Wczytywanie udziałów z katalogu: {}", dir.display());
-        let mut records = load_share_directory(&dir)?;
+        let mut records = load_share_directory(&dir).await?;
 
         if records.len() < threshold as usize {
             bail!(
@@ -68,17 +66,60 @@ pub async fn handle_unseal_hsm(
             println!("[OK] Odszyfrowano udział Oficera nr {}", record.index);
         }
     } else {
-        println!("[INFO] Tryb interaktywnego wprowadzania udziałów.");
-        for i in 1..=threshold {
-            let index: u8 = Input::new()
-                .with_prompt(format!("Podaj numer Oficera ({i}/{threshold})"))
-                .interact()?;
+        // Non-interactive: attempt to read shares from env var or stdin pipe
+        if !stdin().is_terminal() {
+            if let Ok(env_shares) = std::env::var("UNSEAL_SHARES") {
+                // Expected format: lines "index:share_hex" separated by newlines
+                for line in env_shares.lines() {
+                    let ln = line.trim();
+                    if ln.is_empty() {
+                        continue;
+                    }
+                    if let Some(pos) = ln.find(':') {
+                        let idx = ln[..pos]
+                            .trim()
+                            .parse::<u8>()
+                            .context("Invalid share index in UNSEAL_SHARES")?;
+                        let share = ln[pos + 1..].trim().to_string();
+                        shares_to_send.push((idx, share));
+                    } else {
+                        bail!("UNSEAL_SHARES has invalid format; expected lines 'index:share'")
+                    }
+                }
+            } else {
+                // Read from stdin pipe
+                let mut stdin_buf = String::new();
+                tokio::io::stdin().read_to_string(&mut stdin_buf).await?;
+                for line in stdin_buf.lines() {
+                    let ln = line.trim();
+                    if ln.is_empty() {
+                        continue;
+                    }
+                    if let Some(pos) = ln.find(':') {
+                        let idx = ln[..pos]
+                            .trim()
+                            .parse::<u8>()
+                            .context("Invalid share index from stdin")?;
+                        let share = ln[pos + 1..].trim().to_string();
+                        shares_to_send.push((idx, share));
+                    } else {
+                        bail!("Stdin input has invalid format; expected lines 'index:share'");
+                    }
+                }
+            }
+        } else {
+            println!("[INFO] Tryb interaktywnego wprowadzania udziałów.");
+            for i in 1..=threshold {
+                let index: u8 = Input::new()
+                    .with_prompt(format!("Podaj numer Oficera ({i}/{threshold})"))
+                    .interact()?;
 
-            let share_hex: String = Password::new()
-                .with_prompt(format!("Wklej treść udziału dla Oficera nr {index}"))
-                .interact()?;
+                let share_hex: String = Password::new()
+                    .with_prompt(format!("Wklej treść udziału dla Oficera nr {index}"))
+                    .interact()?;
 
-            shares_to_send.push((index, share_hex.trim().to_string()));
+                shares_to_send.push((index, share_hex.trim().to_string()));
+            }
         }
     }
 

@@ -61,7 +61,6 @@ pub async fn handle_decrypt(socket_path: String, ciphertext_hex: String) -> Resu
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use zeroize::Zeroize;
 
     #[test]
