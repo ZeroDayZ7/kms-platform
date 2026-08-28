@@ -19,7 +19,10 @@ pub struct AuditHashInput<'a> {
 
 pub fn compute_audit_hash(input: &AuditHashInput<'_>) -> String {
     let mut record = BTreeMap::new();
-    record.insert("action".to_string(), Value::String(input.action.to_string()));
+    record.insert(
+        "action".to_string(),
+        Value::String(input.action.to_string()),
+    );
     record.insert(
         "algorithm".to_string(),
         Value::String(input.algorithm.to_string()),
@@ -40,7 +43,10 @@ pub fn compute_audit_hash(input: &AuditHashInput<'_>) -> String {
             None => Value::Null,
         },
     );
-    record.insert("status".to_string(), Value::String(input.status.to_string()));
+    record.insert(
+        "status".to_string(),
+        Value::String(input.status.to_string()),
+    );
     record.insert(
         "target_service".to_string(),
         Value::String(input.target_service.to_string()),
@@ -52,6 +58,10 @@ pub fn compute_audit_hash(input: &AuditHashInput<'_>) -> String {
 
     let payload = Value::Object(Map::from_iter(record));
     let mut hasher = Sha256::new();
-    hasher.update(serde_json::to_string(&payload).expect("canonical audit payload must serialize").as_bytes());
+    hasher.update(
+        serde_json::to_string(&payload)
+            .expect("canonical audit payload must serialize")
+            .as_bytes(),
+    );
     hex::encode(hasher.finalize())
 }

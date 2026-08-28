@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "crates/kms-core",
+    "crates/kms-db",
+    "crates/kms-migrate",
     "crates/kms-service",
     "crates/kms-ceremony-cli",
     "crates/vhsm-daemon",

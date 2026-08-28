@@ -16,7 +16,7 @@ FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json
 COPY . .
-RUN cargo build --release -p kms-ceremony-cli -p kms-service -p vhsm-daemon
+RUN cargo build --release -p kms-ceremony-cli -p kms-service -p kms-migrate -p vhsm-daemon
 
 # STAGE 4: Base Runtime
 FROM debian:bookworm-slim AS runtime-base
@@ -66,3 +66,14 @@ RUN mkdir -p /app/ceremony && \
 USER appuser:appgroup
 ENV RUST_LOG=info
 ENTRYPOINT ["/app/kms-ceremony-cli"]
+
+# ------------------------------------------------------------------------------
+# TARGET 4: kms-migrate
+# ------------------------------------------------------------------------------
+FROM runtime-base AS kms-migrate
+COPY --from=builder /app/target/release/kms-migrate /app/kms-migrate
+COPY --from=builder /app/crates/kms-migrate/migrations /app/migrations
+RUN chown -R appuser:appgroup /app
+USER appuser:appgroup
+ENV RUST_LOG=info
+ENTRYPOINT ["/app/kms-migrate"]
