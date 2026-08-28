@@ -2,8 +2,8 @@ use crate::handlers::{admin, audit, crypto, health, keys};
 use crate::server::middleware::{self, RateLimitLayers};
 use crate::server::state::AppState;
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 
 //#region router

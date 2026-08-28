@@ -25,7 +25,11 @@ pub async fn verify_audit_handler(
     AuthenticatedService(caller): AuthenticatedService,
     axum::extract::Query(q): axum::extract::Query<VerifyQuery>,
 ) -> AppResult<Json<VerifyReport>> {
-    if !state.settings.acl.has_control_action(&caller, &ControlAction::AuditVerify) {
+    if !state
+        .settings
+        .acl
+        .has_control_action(&caller, &ControlAction::AuditVerify)
+    {
         return Err(AppError::Forbidden);
     }
 
@@ -221,7 +225,11 @@ pub async fn audit_logs_handler(
     State(state): State<AppState>,
     AuthenticatedService(caller): AuthenticatedService,
 ) -> AppResult<Json<serde_json::Value>> {
-    if !state.settings.acl.has_control_action(&caller, &ControlAction::AuditRead) {
+    if !state
+        .settings
+        .acl
+        .has_control_action(&caller, &ControlAction::AuditRead)
+    {
         return Err(AppError::Forbidden);
     }
 

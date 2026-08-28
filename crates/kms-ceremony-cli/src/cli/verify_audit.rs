@@ -33,9 +33,11 @@ pub async fn handle_verify_audit(
     }
 
     let client = reqwest::Client::new();
-    let request = client
-        .get(url)
-        .headers(build_signed_request_headers(&cfg, "GET", "/api/v1/audit/verify")?);
+    let request = client.get(url).headers(build_signed_request_headers(
+        &cfg,
+        "GET",
+        "/api/v1/audit/verify",
+    )?);
     let resp = request.send().await?;
     let status = resp.status();
 
