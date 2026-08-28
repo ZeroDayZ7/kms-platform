@@ -37,21 +37,41 @@ pub async fn verify_audit_handler(
     let full = q.full.unwrap_or(false);
 
     // Fetch rows depending on full vs partial
-    let rows = if full {
+    // Fetch rows depending on full vs partial
+    let rows: Vec<crate::infrastructure::sqlc::queries::GetAuditLogsAllRow> = if full {
         crate::infrastructure::sqlc::queries::get_audit_logs_all(&state.db)
             .await
-            .map_err(|e| crate::errors::AppError::from(e))?
+            .map_err(crate::errors::AppError::from)?
     } else {
         // fetch last (limit + 1) to possibly get anchor
         let mut fetched = crate::infrastructure::sqlc::queries::get_audit_logs_last_n(
             &state.db,
-            (limit + 1) as i64,
+            (limit + 1) as i32,
         )
         .await
-        .map_err(|e| crate::errors::AppError::from(e))?;
+        .map_err(crate::errors::AppError::from)?;
         // rows are in DESC order (newest first) -> reverse to chronological
         fetched.reverse();
+
+        // Ujednolicenie typów z GetAuditLogsLastNRow na GetAuditLogsAllRow
         fetched
+            .into_iter()
+            .map(
+                |r| crate::infrastructure::sqlc::queries::GetAuditLogsAllRow {
+                    id: r.id,
+                    caller_service: r.caller_service,
+                    target_service: r.target_service,
+                    action: r.action,
+                    algorithm: r.algorithm,
+                    status: r.status,
+                    reason: r.reason,
+                    prev_hash: r.prev_hash,
+                    hash: r.hash,
+                    signature: r.signature,
+                    created_at: r.created_at,
+                },
+            )
+            .collect()
     };
 
     if rows.is_empty() {
