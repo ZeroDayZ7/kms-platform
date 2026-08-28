@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
+use kms_core::audit::{AuditHashInput, compute_audit_hash};
 use sqlx::PgPool;
 
 use crate::{
@@ -32,53 +32,17 @@ impl AuditRepository for PgAuditRepository {
             "0000000000000000000000000000000000000000000000000000000000000000".to_string()
         });
 
-        // Canonical serialization: deterministic field order
-        let mut map = serde_json::Map::new();
-        map.insert(
-            "id".to_string(),
-            serde_json::Value::String(log.id.to_string()),
-        );
-        map.insert(
-            "caller_service".to_string(),
-            serde_json::Value::String(log.caller_service.to_string()),
-        );
-        map.insert(
-            "target_service".to_string(),
-            serde_json::Value::String(log.target_service.to_string()),
-        );
-        map.insert(
-            "action".to_string(),
-            serde_json::Value::String(format!("{:?}", log.action)),
-        );
-        map.insert(
-            "algorithm".to_string(),
-            serde_json::Value::String(format!("{:?}", log.algorithm)),
-        );
-        map.insert(
-            "status".to_string(),
-            serde_json::Value::String(format!("{:?}", log.status)),
-        );
-        map.insert(
-            "reason".to_string(),
-            match &log.reason {
-                Some(r) => serde_json::Value::String(r.clone()),
-                None => serde_json::Value::Null,
-            },
-        );
-        map.insert(
-            "prev_hash".to_string(),
-            serde_json::Value::String(prev_hash.clone()),
-        );
-        map.insert(
-            "timestamp".to_string(),
-            serde_json::Value::String(log.timestamp.to_rfc3339()),
-        );
-
-        let payload = serde_json::Value::Object(map).to_string();
-
-        // Compute SHA-256 hex of the canonical payload
-        let hash_bytes = Sha256::digest(payload.as_bytes()).to_vec();
-        let hash_hex = hex::encode(hash_bytes.clone());
+        let hash_hex = compute_audit_hash(&AuditHashInput {
+            id: &log.id.to_string(),
+            caller_service: &log.caller_service.0,
+            target_service: &log.target_service.0,
+            action: &format!("{:?}", log.action),
+            algorithm: &format!("{:?}", log.algorithm),
+            status: &format!("{:?}", log.status),
+            reason: log.reason.as_deref(),
+            prev_hash: &prev_hash,
+            timestamp: &log.timestamp,
+        });
 
         // Optionally sign the hash with vHSM here. For now we leave signature NULL (to be filled by vHSM flow).
         let signature: Option<Vec<u8>> = None;

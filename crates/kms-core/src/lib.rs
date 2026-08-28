@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod ceremony;
 pub mod crypto;
 pub mod hsm;
