@@ -4,6 +4,17 @@ FROM audit_logs
 ORDER BY created_at DESC, id DESC
 LIMIT 1;
 
+-- name: GetAuditLogsLastN :many
+SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at
+FROM audit_logs
+ORDER BY created_at DESC, id DESC
+LIMIT $1;
+
+-- name: GetAuditLogsAll :many
+SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at
+FROM audit_logs
+ORDER BY created_at ASC, id ASC;
+
 -- name: InsertAuditLog :exec
 INSERT INTO audit_logs (
     id,

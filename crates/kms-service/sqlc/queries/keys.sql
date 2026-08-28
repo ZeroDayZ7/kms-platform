@@ -1,3 +1,8 @@
+-- name: GetActiveSigningPublicKeys :many
+SELECT public_key_pem 
+FROM keys 
+WHERE purpose = 'Signing' AND is_active = TRUE;
+
 -- name: GetActiveKey :one
 SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at
 FROM keys
