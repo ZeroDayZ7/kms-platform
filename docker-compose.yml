@@ -16,17 +16,22 @@ services:
       - "127.0.0.1:5440:5432"
     environment:
       POSTGRES_DB: ${DATABASE__NAME:-kms_db}
-      POSTGRES_USER: ${DATABASE__USER:-kms_user}
-      POSTGRES_PASSWORD: ${DATABASE__PASSWORD:-kms_password}
+      POSTGRES_USER: ${DATABASE__ROOT_USER:-kms_root_user}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_root_pass
+      KMS_APP_USER: ${DATABASE__USER:-kms_app_user}
       PGDATA: /var/lib/postgresql/data/pgdata
+    secrets:
+      - db_root_pass
+      - kms_app_db_pass
     volumes:
       - postgres_data:/var/lib/postgresql
+      - ./scripts/init-user.sh:/docker-entrypoint-initdb.d/01-init-user.sh:ro
     healthcheck:
       <<: *common-healthcheck
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${DATABASE__USER:-kms_user} -d ${DATABASE__NAME:-kms_db}",
+          "pg_isready -U ${DATABASE__ROOT_USER:-kms_root_user} -d ${DATABASE__NAME:-kms_db}",
         ]
   # endregion
 
@@ -98,8 +103,10 @@ services:
       - DATABASE__HOST=postgres
       - DATABASE__PORT=5432
       - DATABASE__NAME=${DATABASE__NAME}
-      - DATABASE__USER=${DATABASE__USER}
-      - DATABASE__PASSWORD=${DATABASE__PASSWORD}
+      - DATABASE__USER=${DATABASE__USER:-kms_app_user}
+      - DATABASE__PASSWORD_FILE=/run/secrets/kms_app_db_pass
+    secrets:
+      - kms_app_db_pass
     volumes:
       - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - kms_ceremony_data:/app/ceremony:ro
@@ -128,7 +135,7 @@ services:
       - CRYPTO__HSM_SOCKET_PATH=/run/vhsm/vhsm.sock
       - KMS_CLI__SERVICE_ID=kms-cli
       - KMS_CLI__SECRET=${ACL__SERVICES__KMS_CLI__SECRET:-super-long-random-secret-for-kms-cli-hmac-64-bytes}
-      - KMS_CLI__SERVICE_URL=http://kms-service:8080
+      - KMS_CLI__SERVICE_URL=http://kms-service:808
     volumes:
       - kms_ceremony_data:/app/ceremony
       - vhsm_sockets:/run/vhsm
@@ -148,6 +155,14 @@ volumes:
     driver: local
   vhsm_sockets:
     driver: local
+# endregion
+
+# region SECRETS
+secrets:
+  db_root_pass:
+    file: ./secrets/.db_root_password
+  kms_app_db_pass:
+    file: ./secrets/.kms_app_password
 # endregion
 
 # region NETWORKS
