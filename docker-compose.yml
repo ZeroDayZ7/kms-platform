@@ -129,7 +129,8 @@ services:
       dockerfile: Dockerfile
       target: kms-migrate
     container_name: kms_migrate
-    command: ["/app/kms-migrate"]
+    command: ["/app/kms-migrate", "run"]
+    restart: on-failure
     networks:
       - kms-internal-net
     environment:

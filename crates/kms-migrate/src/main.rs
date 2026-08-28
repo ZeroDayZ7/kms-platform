@@ -10,15 +10,8 @@ use std::time::Duration;
 use tokio::runtime::Handle;
 use tokio::time::sleep;
 use tracing::{error, info, warn};
-use zeroize::Zeroizing;
 
-// PostgreSQL advisory locks use a signed 64-bit value. The full ASCII string
-// "KMS_MIGRATE" is 11 bytes long, so we keep the canonical 8-byte prefix that
-// fits into i64 and still preserves the KMS_MIGRATE identity.
 const MIGRATION_LOCK_KEY: i64 = 0x4B4D535F4D494752_i64;
-const DEFAULT_DB_HOST: &str = "127.0.0.1";
-const DEFAULT_DB_NAME: &str = "kms_db";
-const DEFAULT_PORT: u16 = 5432;
 const DB_READY_RETRIES: usize = 10;
 const DB_READY_BACKOFF: Duration = Duration::from_secs(2);
 
@@ -38,7 +31,11 @@ struct Cli {
 enum Commands {
     /// Apply all pending migrations.
     Run {
-        #[arg(short = 'd', long = "dry-run", help = "Only list pending migrations without applying them")]
+        #[arg(
+            short = 'd',
+            long = "dry-run",
+            help = "Only list pending migrations without applying them"
+        )]
         dry_run: bool,
     },
     /// Show applied and pending migrations.
@@ -118,11 +115,15 @@ fn default_command() -> Commands {
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let command = cli.command.unwrap_or_else(default_command);
     let migration_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
-    let db_config = build_database_config();
+
+    let db_config = DatabaseConfig::from_env()
+        .context("Failed to load database configuration from environment")?;
 
     let pool = wait_for_database_ready(&db_config, DB_READY_RETRIES, DB_READY_BACKOFF)
         .await
-        .context("Database is not ready after retrying; PostgreSQL did not become healthy in time")?;
+        .context(
+            "Database is not ready after retrying; PostgreSQL did not become healthy in time",
+        )?;
 
     match command {
         Commands::Status => {
@@ -145,32 +146,6 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     }
 }
 
-fn build_database_config() -> DatabaseConfig {
-    DatabaseConfig {
-        host: std::env::var("DATABASE__HOST")
-            .or_else(|_| std::env::var("DATABASE_HOST"))
-            .unwrap_or_else(|_| DEFAULT_DB_HOST.to_owned()),
-        port: std::env::var("DATABASE__PORT")
-            .or_else(|_| std::env::var("DATABASE_PORT"))
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(DEFAULT_PORT),
-        user: std::env::var("DATABASE__USER")
-            .or_else(|_| std::env::var("DATABASE_USER"))
-            .ok(),
-        password: std::env::var("DATABASE__PASSWORD")
-            .or_else(|_| std::env::var("DATABASE_PASSWORD"))
-            .ok()
-            .map(|passwd| Zeroizing::new(passwd)),
-        name: std::env::var("DATABASE__NAME")
-            .or_else(|_| std::env::var("DATABASE_NAME"))
-            .or_else(|_| std::env::var("POSTGRES_DB"))
-            .unwrap_or_else(|_| DEFAULT_DB_NAME.to_owned()),
-        pool_size: 5,
-        auth_source: None,
-    }
-}
-
 async fn wait_for_database_ready(
     db_config: &DatabaseConfig,
     attempts: usize,
@@ -179,7 +154,11 @@ async fn wait_for_database_ready(
     let conn_str = db_config.connection_string();
 
     for attempt in 1..=attempts {
-        match PgPoolOptions::new().max_connections(db_config.pool_size).connect(&conn_str).await {
+        match PgPoolOptions::new()
+            .max_connections(db_config.pool_size)
+            .connect(&conn_str)
+            .await
+        {
             Ok(pool) => {
                 match sqlx::query("SELECT 1").fetch_one(&pool).await {
                     Ok(_) => {
@@ -210,7 +189,11 @@ async fn wait_for_database_ready(
     ))
 }
 
-async fn run_migration_command(pool: &PgPool, migration_dir: &Path, dry_run: bool) -> anyhow::Result<()> {
+async fn run_migration_command(
+    pool: &PgPool,
+    migration_dir: &Path,
+    dry_run: bool,
+) -> anyhow::Result<()> {
     let local_migrations = list_local_migrations(migration_dir)?;
     let applied = fetch_applied_migrations(pool).await?;
     let applied_by_version: HashMap<i64, AppliedMigration> = applied
@@ -281,7 +264,15 @@ async fn print_status(
     println!("\nApplied migrations:");
     let mut applied_count = 0;
     for migration in &applied {
-        println!("  ✅ {} | {} | {}", migration.version, migration.description, migration.installed_at.clone().unwrap_or_else(|| "n/a".to_owned()));
+        println!(
+            "  ✅ {} | {} | {}",
+            migration.version,
+            migration.description,
+            migration
+                .installed_at
+                .clone()
+                .unwrap_or_else(|| "n/a".to_owned())
+        );
         applied_count += 1;
     }
     if applied_count == 0 {
@@ -301,7 +292,12 @@ async fn print_status(
         println!("  (none)");
     }
 
-    println!("\nTotal local migrations: {} | applied: {} | pending: {}", local_migrations.len(), applied.len(), pending_count);
+    println!(
+        "\nTotal local migrations: {} | applied: {} | pending: {}",
+        local_migrations.len(),
+        applied.len(),
+        pending_count
+    );
     Ok(())
 }
 
@@ -315,7 +311,10 @@ fn list_local_migrations(migration_dir: &Path) -> anyhow::Result<Vec<LocalMigrat
             continue;
         }
 
-        let file_name = path.file_stem().and_then(|name| name.to_str()).unwrap_or_default();
+        let file_name = path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or_default();
         let version_text = file_name.split('_').next().unwrap_or(file_name);
         let version = match version_text.parse::<i64>() {
             Ok(value) => value,
@@ -330,7 +329,7 @@ fn list_local_migrations(migration_dir: &Path) -> anyhow::Result<Vec<LocalMigrat
         });
     }
 
-    migrations.sort_by(|left, right| left.version.cmp(&right.version));
+    migrations.sort_by_key(|migration| migration.version);
     Ok(migrations)
 }
 
@@ -373,8 +372,10 @@ async fn wait_for_exit_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        let mut sigint = signal(SignalKind::interrupt()).expect("sigint handler should be installed");
-        let mut sigterm = signal(SignalKind::terminate()).expect("sigterm handler should be installed");
+        let mut sigint =
+            signal(SignalKind::interrupt()).expect("sigint handler should be installed");
+        let mut sigterm =
+            signal(SignalKind::terminate()).expect("sigterm handler should be installed");
 
         tokio::select! {
             _ = sigint.recv() => {}
@@ -397,7 +398,10 @@ mod tests {
     fn missing_args_leaves_command_unset_but_default_run_is_defined() {
         let cli = Cli::try_parse_from(["kms-migrate"]).unwrap();
         assert!(cli.command.is_none());
-        assert!(matches!(super::default_command(), Commands::Run { dry_run: false }));
+        assert!(matches!(
+            super::default_command(),
+            Commands::Run { dry_run: false }
+        ));
     }
 
     #[test]
