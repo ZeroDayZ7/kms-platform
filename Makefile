@@ -19,6 +19,9 @@ test:
 docker-up:
 	docker compose up --build -d
 
+docker-down:
+	docker compose down -v
+
 clean:
 	cargo clean
 
@@ -26,13 +29,6 @@ rebuild: clean
 	sqlc generate -f crates/kms-service/sqlc.yaml
 	docker compose build --no-cache
 	docker compose up --force-recreate -d
-
-docker-down:
-	docker compose down -v
-
-restartt:
-	docker compose down -v
-	docker compose up --build --force-recreate -d
 
 init:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
