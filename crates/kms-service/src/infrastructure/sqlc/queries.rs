@@ -140,8 +140,7 @@ pub async fn insert_audit_log<E: AsExecutor>(
         .await?;
     Ok(())
 }
-pub const GET_ACTIVE_SIGNING_PUBLIC_KEYS: &str =
-    "SELECT public_key_pem \nFROM keys \nWHERE purpose = 'Signing' AND is_active = TRUE";
+pub const GET_ACTIVE_SIGNING_PUBLIC_KEYS: &str = "SELECT public_key_pem \nFROM keys \nWHERE purpose = 'Signing' AND is_active = TRUE";
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GetActiveSigningPublicKeysRow {
     pub public_key_pem: String,
@@ -247,7 +246,10 @@ pub struct SaveKeyParams {
     pub is_active: bool,
 }
 pub const SAVE_KEY: &str = "INSERT INTO keys (\n    id,\n    service_id,\n    algorithm,\n    version,\n    encrypted_key_data,\n    public_key_pem,\n    purpose,\n    status,\n    is_active,\n    created_at\n) VALUES (\n    $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()\n)\nON CONFLICT (service_id, algorithm, version)\nDO UPDATE SET\n    encrypted_key_data = EXCLUDED.encrypted_key_data,\n    public_key_pem = EXCLUDED.public_key_pem,\n    purpose = EXCLUDED.purpose,\n    status = EXCLUDED.status,\n    is_active = EXCLUDED.is_active,\n    created_at = NOW()";
-pub async fn save_key<E: AsExecutor>(mut db: E, arg: SaveKeyParams) -> Result<(), sqlx::Error> {
+pub async fn save_key<E: AsExecutor>(
+    mut db: E,
+    arg: SaveKeyParams,
+) -> Result<(), sqlx::Error> {
     sqlx::query(SAVE_KEY)
         .bind(arg.id)
         .bind(arg.service_id)
@@ -268,8 +270,7 @@ pub struct UpdateKeyStatusParams {
     pub status: String,
     pub is_active: bool,
 }
-pub const UPDATE_KEY_STATUS: &str =
-    "UPDATE keys\nSET status = $2,\n    is_active = $3,\n    created_at = NOW()\nWHERE id = $1";
+pub const UPDATE_KEY_STATUS: &str = "UPDATE keys\nSET status = $2,\n    is_active = $3,\n    created_at = NOW()\nWHERE id = $1";
 pub async fn update_key_status<E: AsExecutor>(
     mut db: E,
     arg: UpdateKeyStatusParams,
@@ -313,8 +314,8 @@ pub struct GetAllKeysRow {
     pub is_active: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
-pub async fn get_all_keys<E: AsExecutor>(mut db: E) -> Result<Vec<GetAllKeysRow>, sqlx::Error> {
-    sqlx::query_as::<_, GetAllKeysRow>(GET_ALL_KEYS)
-        .fetch_all(db.as_executor())
-        .await
+pub async fn get_all_keys<E: AsExecutor>(
+    mut db: E,
+) -> Result<Vec<GetAllKeysRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetAllKeysRow>(GET_ALL_KEYS).fetch_all(db.as_executor()).await
 }

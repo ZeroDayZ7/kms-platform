@@ -12,6 +12,7 @@ secrets/
 **/roznice.patch
 **/.env
 **/out
+# **/NUL
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
 

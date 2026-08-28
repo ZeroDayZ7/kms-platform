@@ -66,3 +66,14 @@ RUN mkdir -p /app/ceremony && \
 USER appuser:appgroup
 ENV RUST_LOG=info
 ENTRYPOINT ["/app/kms-ceremony-cli"]
+
+# ------------------------------------------------------------------------------
+# TARGET 4: kms-migrate
+# ------------------------------------------------------------------------------
+FROM runtime-base AS kms-migrate
+COPY --from=builder /app/target/release/kms-migrate /app/kms-migrate
+COPY --from=builder /app/crates/kms-migrate/migrations /app/migrations
+RUN chown -R appuser:appgroup /app
+USER appuser:appgroup
+ENV RUST_LOG=info
+ENTRYPOINT ["/app/kms-migrate"]

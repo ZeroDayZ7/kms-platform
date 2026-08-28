@@ -136,10 +136,10 @@ services:
       - DATABASE__HOST=postgres
       - DATABASE__PORT=5432
       - DATABASE__NAME=${DATABASE__NAME:-kms_db}
-      - DATABASE__USER=${DATABASE__USER:-kms_migrator}
+      - DATABASE__USER=${DATABASE__MIGRATOR_USER:-kms_migrator}
       - DATABASE__PASSWORD_FILE=/run/secrets/kms_migrator_db_pass
     secrets:
-      - kms_app_db_pass
+      - kms_migrator_db_pass
     depends_on:
       postgres:
         condition: service_healthy
