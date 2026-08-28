@@ -1,9 +1,9 @@
-use crate::handlers::{admin, crypto, health, keys};
+use crate::handlers::{admin, audit, crypto, health, keys};
 use crate::server::middleware::{self, RateLimitLayers};
 use crate::server::state::AppState;
 use axum::{
-    Router,
     routing::{get, post},
+    Router,
 };
 
 //#region router
@@ -59,17 +59,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/decrypt",
             post(crypto::decrypt_handler).layer(rate_limits.auth.clone()),
-        );
-
-    // Audit endpoints
-    router = router
+        )
+        // Audit endpoints
         .route(
             "/api/v1/audit/verify",
-            get(crate::handlers::audit::verify_audit_handler).layer(rate_limits.health.clone()),
+            get(audit::verify_audit_handler).layer(rate_limits.health.clone()),
         )
         .route(
             "/api/v1/audit/logs",
-            get(crate::handlers::audit::audit_logs_handler).layer(rate_limits.health.clone()),
+            get(audit::audit_logs_handler).layer(rate_limits.health.clone()),
         );
 
     if enable_rewrap {

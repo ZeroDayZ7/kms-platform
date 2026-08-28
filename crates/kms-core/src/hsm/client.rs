@@ -34,6 +34,9 @@ use tokio::{
     net::UnixStream,
 };
 
+#[cfg(unix)]
+use zeroize::Zeroizing;
+
 pub const HSM_SOCKET_DEFAULT_PATH: &str = "/run/vhsm/vhsm.sock";
 
 #[cfg(any(unix, test))]
@@ -100,15 +103,23 @@ pub async fn send_hsm_request(
 
     let payload =
         serde_json::to_vec(req).map_err(|err| HsmClientError::Serialization { source: err })?;
-    let frame = framed_message(&payload)?;
 
-    tokio::time::timeout(timeout, stream.write_all(&frame))
+    // Ensure the serialized payload is zeroized after use
+    let payload_z = Zeroizing::new(payload);
+    let frame = framed_message(&*payload_z)?;
+
+    // Zeroize the frame after writing
+    let frame_z = Zeroizing::new(frame);
+    tokio::time::timeout(timeout, stream.write_all(&*frame_z))
         .await
         .map_err(|_| HsmClientError::Timeout)?
         .map_err(|err| HsmClientError::Io { source: err })?;
 
     let response_bytes = read_frame_with_timeout(&mut stream, timeout).await?;
-    let response: HsmResponse = serde_json::from_slice(&response_bytes)
+
+    // Zeroize raw response bytes after deserialization
+    let response_z = Zeroizing::new(response_bytes);
+    let response: HsmResponse = serde_json::from_slice(&*response_z)
         .map_err(|err| HsmClientError::Serialization { source: err })?;
 
     match response {

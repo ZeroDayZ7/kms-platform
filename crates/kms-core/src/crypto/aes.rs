@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow};
 use argon2::{Algorithm, Argon2, Params, Version, password_hash::SaltString};
 use getrandom::getrandom;
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct EncryptedContainer {
@@ -78,10 +78,18 @@ pub fn encrypt_bytes_with_password(password: &str, data: &[u8]) -> Result<Encryp
         .encrypt(nonce, data)
         .map_err(|e| anyhow!(e.to_string()))?;
 
+    // Wrap ciphertext in Zeroizing so its contents are zeroed when dropped
+    let ciphertext_z = Zeroizing::new(ciphertext);
+    let ciphertext_hex = hex::encode(&*ciphertext_z);
+
+    // Nonce is not secret but zeroize the stack buffer anyway
+    let nonce_hex = hex::encode(nonce_bytes);
+    nonce_bytes.zeroize();
+
     Ok(EncryptedContainer {
         salt,
-        nonce: hex::encode(nonce_bytes),
-        ciphertext: hex::encode(ciphertext),
+        nonce: nonce_hex,
+        ciphertext: ciphertext_hex,
     })
 }
 
@@ -102,9 +110,16 @@ pub fn decrypt_bytes_with_password(
     }
     let nonce = Nonce::from_slice(&nonce_bytes);
 
+    // Wrap ciphertext_bytes in Zeroizing so it is zeroed after decrypt
+    let ciphertext_z = Zeroizing::new(ciphertext_bytes);
     let decrypted_bytes = cipher
-        .decrypt(nonce, ciphertext_bytes.as_slice())
+        .decrypt(nonce, &ciphertext_z[..])
         .map_err(|e| anyhow!(e.to_string()))?;
+
+    // zeroize nonce buffer
+    // nonce_bytes is owned Vec<u8>
+    let mut nb = nonce_bytes;
+    nb.zeroize();
 
     Ok(decrypted_bytes)
 }
