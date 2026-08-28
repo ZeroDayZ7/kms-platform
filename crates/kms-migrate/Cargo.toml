@@ -5,11 +5,13 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0"
+clap = { version = "4.5", features = ["derive", "env"] }
 config = "0.15"
 dotenvy = "0.15"
 serde = { version = "1.0", features = ["derive"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros", "migrate"] }
 kms-db = { path = "../kms-db" }
-tokio = { version = "1.38", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.38", features = ["macros", "rt-multi-thread", "signal"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
