@@ -23,7 +23,7 @@ clean:
 	cargo clean
 
 rebuild: clean
-	cd crates/kms-service && sqlc generate
+	sqlc generate -f crates/kms-service/sqlc.yaml
 	docker compose build --no-cache
 	docker compose up --force-recreate -d
 
