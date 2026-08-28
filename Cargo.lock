@@ -2139,6 +2139,7 @@ dependencies = [
  "clap",
  "dialoguer",
  "hex",
+ "hmac",
  "kms-core",
  "rand 0.8.7",
  "reqwest",

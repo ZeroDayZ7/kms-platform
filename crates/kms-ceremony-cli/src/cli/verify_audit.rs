@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
 use reqwest::Url;
 use std::path::PathBuf;
 
+use crate::cli::hmac::{build_signed_request_headers, resolve_cli_config};
+
 #[derive(serde::Deserialize)]
 struct VerifyReport {
     ok: bool,
@@ -15,12 +17,9 @@ pub async fn handle_verify_audit(
     limit: Option<usize>,
     full: bool,
 ) -> Result<()> {
-    let base = match service_url.or_else(|| std::env::var("KMS_SERVICE_URL").ok()) {
-        Some(u) => u,
-        None => "http://127.0.0.1:8080".to_string(),
-    };
+    let cfg = resolve_cli_config(service_url)?;
 
-    let mut url = Url::parse(&base).context("Invalid service URL")?;
+    let mut url = Url::parse(&cfg.service_url).context("Invalid service URL")?;
     url.set_path("/api/v1/audit/verify");
 
     {
@@ -34,7 +33,10 @@ pub async fn handle_verify_audit(
     }
 
     let client = reqwest::Client::new();
-    let resp = client.get(url).send().await?;
+    let request = client
+        .get(url)
+        .headers(build_signed_request_headers(&cfg, "GET", "/api/v1/audit/verify")?);
+    let resp = request.send().await?;
     let status = resp.status();
 
     if status.is_success() {

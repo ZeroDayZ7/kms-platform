@@ -1,5 +1,6 @@
-use crate::errors::AppResult;
-use crate::server::state::AppState;
+use crate::config::acl::ControlAction;
+use crate::errors::{AppError, AppResult};
+use crate::server::{extractors::authenticated_service::AuthenticatedService, state::AppState};
 use axum::{Json, extract::State};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -21,8 +22,13 @@ pub struct VerifyReport {
 #[allow(clippy::collapsible_if, clippy::redundant_closure)]
 pub async fn verify_audit_handler(
     State(state): State<AppState>,
+    AuthenticatedService(caller): AuthenticatedService,
     axum::extract::Query(q): axum::extract::Query<VerifyQuery>,
 ) -> AppResult<Json<VerifyReport>> {
+    if !state.settings.acl.has_control_action(&caller, &ControlAction::AuditVerify) {
+        return Err(AppError::Forbidden);
+    }
+
     let limit = q.limit.unwrap_or(1000);
     let full = q.full.unwrap_or(false);
 
@@ -213,7 +219,12 @@ fn parse_ed25519_pub_from_pem(pem: &str) -> Result<ed25519_dalek::VerifyingKey, 
 
 pub async fn audit_logs_handler(
     State(state): State<AppState>,
+    AuthenticatedService(caller): AuthenticatedService,
 ) -> AppResult<Json<serde_json::Value>> {
+    if !state.settings.acl.has_control_action(&caller, &ControlAction::AuditRead) {
+        return Err(AppError::Forbidden);
+    }
+
     let rows = crate::infrastructure::sqlc::queries::get_audit_logs_all(&state.db)
         .await
         .map_err(crate::errors::AppError::from)?;

@@ -59,6 +59,10 @@ pub enum ControlAction {
     RotateOwnKeys,
     RotateAllKeys,
     RevokeKeys,
+    #[serde(alias = "AuditVerify")]
+    AuditVerify,
+    #[serde(alias = "AuditRead")]
+    AuditRead,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

@@ -1,0 +1,401 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 7f963a8..eaf675a 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2139,6 +2139,7 @@ dependencies = [
+  "clap",
+  "dialoguer",
+  "hex",
++ "hmac",
+  "kms-core",
+  "rand 0.8.7",
+  "reqwest",
+diff --git a/crates/kms-ceremony-cli/Cargo.toml b/crates/kms-ceremony-cli/Cargo.toml
+index 90aaeae..d07cebf 100644
+--- a/crates/kms-ceremony-cli/Cargo.toml
++++ b/crates/kms-ceremony-cli/Cargo.toml
+@@ -17,6 +17,7 @@ chrono = { version = "0.4", features = ["serde"] }
+ uuid = { version = "1", features = ["v4", "serde"] }
+ anyhow = "1.0"
+ sha2 = "0.10"
++hmac = "0.12"
+ ssss = "1.0.6"
+ tokio = { version = "1", features = ["full"] }
+ kms-core = { path = "../kms-core" }
+diff --git a/crates/kms-ceremony-cli/src/cli/mod.rs b/crates/kms-ceremony-cli/src/cli/mod.rs
+index 4cf3b6f..03db7a8 100644
+--- a/crates/kms-ceremony-cli/src/cli/mod.rs
++++ b/crates/kms-ceremony-cli/src/cli/mod.rs
+@@ -1,5 +1,6 @@
+ pub mod args;
+ pub mod ceremony;
+ pub mod crypto_ops;
++pub mod hmac;
+ pub mod unseal;
+ pub mod verify_audit;
+diff --git a/crates/kms-ceremony-cli/src/cli/verify_audit.rs b/crates/kms-ceremony-cli/src/cli/verify_audit.rs
+index 04bdb7f..31f3537 100644
+--- a/crates/kms-ceremony-cli/src/cli/verify_audit.rs
++++ b/crates/kms-ceremony-cli/src/cli/verify_audit.rs
+@@ -2,6 +2,8 @@ use anyhow::{Context, Result};
+ use reqwest::Url;
+ use std::path::PathBuf;
+ 
++use crate::cli::hmac::{build_signed_request_headers, resolve_cli_config};
++
+ #[derive(serde::Deserialize)]
+ struct VerifyReport {
+     ok: bool,
+@@ -15,12 +17,9 @@ pub async fn handle_verify_audit(
+     limit: Option<usize>,
+     full: bool,
+ ) -> Result<()> {
+-    let base = match service_url.or_else(|| std::env::var("KMS_SERVICE_URL").ok()) {
+-        Some(u) => u,
+-        None => "http://127.0.0.1:8080".to_string(),
+-    };
++    let cfg = resolve_cli_config(service_url)?;
+ 
+-    let mut url = Url::parse(&base).context("Invalid service URL")?;
++    let mut url = Url::parse(&cfg.service_url).context("Invalid service URL")?;
+     url.set_path("/api/v1/audit/verify");
+ 
+     {
+@@ -34,7 +33,10 @@ pub async fn handle_verify_audit(
+     }
+ 
+     let client = reqwest::Client::new();
+-    let resp = client.get(url).send().await?;
++    let request = client
++        .get(url)
++        .headers(build_signed_request_headers(&cfg, "GET", "/api/v1/audit/verify")?);
++    let resp = request.send().await?;
+     let status = resp.status();
+ 
+     if status.is_success() {
+diff --git a/crates/kms-ceremony-cli/src/main.rs b/crates/kms-ceremony-cli/src/main.rs
+index 8619692..0651702 100644
+--- a/crates/kms-ceremony-cli/src/main.rs
++++ b/crates/kms-ceremony-cli/src/main.rs
+@@ -1,14 +1,10 @@
+-mod cli;
+-mod storage;
+-
+ use anyhow::Result;
+ use clap::Parser;
+-
+-use crate::cli::args::{CliArgs, Commands};
+-use crate::cli::ceremony::handle_interactive_ceremony;
+-use crate::cli::crypto_ops::{handle_decrypt, handle_encrypt};
+-use crate::cli::unseal::handle_unseal_hsm;
+-use crate::cli::verify_audit::handle_verify_audit;
++use kms_ceremony_cli::cli::args::{CliArgs, Commands};
++use kms_ceremony_cli::cli::ceremony::handle_interactive_ceremony;
++use kms_ceremony_cli::cli::crypto_ops::{handle_decrypt, handle_encrypt};
++use kms_ceremony_cli::cli::unseal::handle_unseal_hsm;
++use kms_ceremony_cli::cli::verify_audit::handle_verify_audit;
+ 
+ #[tokio::main]
+ async fn main() -> Result<()> {
+diff --git a/crates/kms-service/config/services_acl.toml b/crates/kms-service/config/services_acl.toml
+index 3875bf0..cb1aa84 100644
+--- a/crates/kms-service/config/services_acl.toml
++++ b/crates/kms-service/config/services_acl.toml
+@@ -1,6 +1,7 @@
+ [acl.services.kms_cli]
+ service_id = "kms-cli"
+ secret = "super-long-random-secret-for-kms-cli-hmac-64-bytes"
++allowed_actions = ["AuditVerify", "AuditRead"]
+ allowed_access = [
+     { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
+ ]
+diff --git a/crates/kms-service/src/config/acl.rs b/crates/kms-service/src/config/acl.rs
+index 3dfd47d..64051cf 100644
+--- a/crates/kms-service/src/config/acl.rs
++++ b/crates/kms-service/src/config/acl.rs
+@@ -59,6 +59,10 @@ pub enum ControlAction {
+     RotateOwnKeys,
+     RotateAllKeys,
+     RevokeKeys,
++    #[serde(alias = "AuditVerify")]
++    AuditVerify,
++    #[serde(alias = "AuditRead")]
++    AuditRead,
+ }
+ 
+ #[derive(Debug, Default, Deserialize, Clone)]
+diff --git a/crates/kms-service/src/errors/app_error.rs b/crates/kms-service/src/errors/app_error.rs
+index 27edf83..2b3a27f 100644
+--- a/crates/kms-service/src/errors/app_error.rs
++++ b/crates/kms-service/src/errors/app_error.rs
+@@ -13,6 +13,9 @@ pub enum AppError {
+     #[error("Autoryzacja nie powiodła się")]
+     Unauthorized,
+ 
++    #[error("Brak uprawnień do wykonania tej akcji")]
++    Forbidden,
++
+     #[error("Nie znaleziono zasobu: {0}")]
+     NotFound(String),
+ 
+@@ -87,6 +90,7 @@ impl AppError {
+     fn error_code(&self) -> &'static str {
+         match self {
+             Self::Unauthorized => "UNAUTHORIZED",
++            Self::Forbidden => "FORBIDDEN",
+             Self::NotFound(_) => "RESOURCE_NOT_FOUND",
+             Self::ValidationError(_) => "VALIDATION_ERROR",
+             Self::Conflict(_) => "CONFLICT_ERROR",
+@@ -107,6 +111,7 @@ impl AppError {
+     fn public_message(&self) -> Cow<'static, str> {
+         match self {
+             Self::Unauthorized => "Authentication failed".into(),
++            Self::Forbidden => "Forbidden".into(),
+             Self::NotFound(_) => "Resource not found".into(),
+             Self::ValidationError(_) => "Invalid request".into(),
+             Self::Conflict(_) => "Resource conflict".into(),
+@@ -132,6 +137,7 @@ impl IntoResponse for AppError {
+ 
+         let status = match &self {
+             Self::Unauthorized => StatusCode::UNAUTHORIZED,
++            Self::Forbidden => StatusCode::FORBIDDEN,
+             Self::NotFound(_) => StatusCode::NOT_FOUND,
+             Self::ValidationError(_) => StatusCode::BAD_REQUEST,
+             Self::Conflict(_) => StatusCode::CONFLICT,
+diff --git a/crates/kms-service/src/handlers/audit.rs b/crates/kms-service/src/handlers/audit.rs
+index 2a3b0d5..d92276b 100644
+--- a/crates/kms-service/src/handlers/audit.rs
++++ b/crates/kms-service/src/handlers/audit.rs
+@@ -1,5 +1,6 @@
+-use crate::errors::AppResult;
+-use crate::server::state::AppState;
++use crate::config::acl::ControlAction;
++use crate::errors::{AppError, AppResult};
++use crate::server::{extractors::authenticated_service::AuthenticatedService, state::AppState};
+ use axum::{Json, extract::State};
+ use base64::Engine;
+ use serde::{Deserialize, Serialize};
+@@ -21,8 +22,13 @@ pub struct VerifyReport {
+ #[allow(clippy::collapsible_if, clippy::redundant_closure)]
+ pub async fn verify_audit_handler(
+     State(state): State<AppState>,
++    AuthenticatedService(caller): AuthenticatedService,
+     axum::extract::Query(q): axum::extract::Query<VerifyQuery>,
+ ) -> AppResult<Json<VerifyReport>> {
++    if !state.settings.acl.has_control_action(&caller, &ControlAction::AuditVerify) {
++        return Err(AppError::Forbidden);
++    }
++
+     let limit = q.limit.unwrap_or(1000);
+     let full = q.full.unwrap_or(false);
+ 
+@@ -213,7 +219,12 @@ fn parse_ed25519_pub_from_pem(pem: &str) -> Result<ed25519_dalek::VerifyingKey,
+ 
+ pub async fn audit_logs_handler(
+     State(state): State<AppState>,
++    AuthenticatedService(caller): AuthenticatedService,
+ ) -> AppResult<Json<serde_json::Value>> {
++    if !state.settings.acl.has_control_action(&caller, &ControlAction::AuditRead) {
++        return Err(AppError::Forbidden);
++    }
++
+     let rows = crate::infrastructure::sqlc::queries::get_audit_logs_all(&state.db)
+         .await
+         .map_err(crate::errors::AppError::from)?;
+diff --git a/crates/kms-service/src/server/extractors/authenticated_service.rs b/crates/kms-service/src/server/extractors/authenticated_service.rs
+index 12f1ab6..1f034df 100644
+--- a/crates/kms-service/src/server/extractors/authenticated_service.rs
++++ b/crates/kms-service/src/server/extractors/authenticated_service.rs
+@@ -1,5 +1,5 @@
+ use axum::{extract::FromRequestParts, http::request::Parts};
+-use chrono::{DateTime, Utc};
++use chrono::{DateTime, TimeZone, Utc};
+ use hmac::{Hmac, Mac};
+ use sha2::Sha256;
+ use subtle::ConstantTimeEq;
+@@ -9,11 +9,18 @@ use crate::{domain::keys::models::ServiceId, errors::AppError, server::state::Ap
+ 
+ type HmacSha256 = Hmac<Sha256>;
+ 
+-const MAX_CLOCK_SKEW_SECONDS: i64 = 60;
++const MAX_CLOCK_SKEW_SECONDS: i64 = 300;
+ const MAX_NONCE_TTL_SECONDS: u64 = 300;
+ 
+ //#region parse_timestamp
+ fn parse_timestamp(value: &str) -> Result<DateTime<Utc>, AppError> {
++    if let Ok(epoch_seconds) = value.parse::<i64>() {
++        return Utc
++            .timestamp_opt(epoch_seconds, 0)
++            .single()
++            .ok_or(AppError::Unauthorized);
++    }
++
+     DateTime::parse_from_rfc3339(value)
+         .map(|dt| dt.with_timezone(&Utc))
+         .map_err(|_| AppError::Unauthorized)
+@@ -30,10 +37,11 @@ impl FromRequestParts<AppState> for AuthenticatedService {
+     ) -> Result<Self, Self::Rejection> {
+         let service_name = parts
+             .headers
+-            .get("X-Service-Name")
++            .get("X-Service-ID")
++            .or_else(|| parts.headers.get("X-Service-Name"))
+             .and_then(|v| v.to_str().ok())
+             .ok_or_else(|| {
+-                error!("❌ Brak nagłówka X-Service-Name");
++                error!("❌ Brak nagłówka X-Service-ID / X-Service-Name");
+                 AppError::Unauthorized
+             })?;
+ 
+@@ -56,27 +64,20 @@ impl FromRequestParts<AppState> for AuthenticatedService {
+         let nonce = parts
+             .headers
+             .get("X-Nonce")
+-            .and_then(|v| v.to_str().ok())
+-            .ok_or_else(|| {
+-                error!("❌ Brak nagłówka X-Nonce");
+-                AppError::Unauthorized
+-            })?;
++            .and_then(|v| v.to_str().ok());
+ 
+         let body_hash = parts
+             .headers
+             .get("X-Body-SHA256")
+-            .and_then(|v| v.to_str().ok())
+-            .ok_or_else(|| {
+-                error!("❌ Brak nagłówka X-Body-SHA256");
+-                AppError::Unauthorized
+-            })?;
++            .and_then(|v| v.to_str().ok());
+ 
+         let signature_hex = parts
+             .headers
+-            .get("X-HMAC-Signature")
++            .get("X-Signature")
++            .or_else(|| parts.headers.get("X-HMAC-Signature"))
+             .and_then(|v| v.to_str().ok())
+             .ok_or_else(|| {
+-                error!("❌ Brak nagłówka X-HMAC-Signature");
++                error!("❌ Brak nagłówka X-Signature / X-HMAC-Signature");
+                 AppError::Unauthorized
+             })?;
+ 
+@@ -95,43 +96,66 @@ impl FromRequestParts<AppState> for AuthenticatedService {
+ 
+         let method = parts.method.as_str();
+         let path = parts.uri.path();
+-        let payload_to_sign = format!("{method}:{path}:{timestamp}:{nonce}:{body_hash}");
+-
+-        let mut mac = HmacSha256::new_from_slice(service_cfg.secret.as_bytes())
+-            .map_err(|_| AppError::Internal("Błąd inicjalizacji HMAC".into()))?;
+-        mac.update(payload_to_sign.as_bytes());
++        let canonical_payload = format!("{method}:{path}:{timestamp}");
++        let legacy_payload = if let (Some(nonce), Some(body_hash)) = (nonce, body_hash) {
++            Some(format!("{method}:{path}:{timestamp}:{nonce}:{body_hash}"))
++        } else {
++            None
++        };
++
++        let mut expected_signature = None;
++        for payload in [Some(canonical_payload), legacy_payload] {
++            if let Some(payload) = payload {
++                let mut mac = HmacSha256::new_from_slice(service_cfg.secret.as_bytes())
++                    .map_err(|_| AppError::Internal("Błąd inicjalizacji HMAC".into()))?;
++                mac.update(payload.as_bytes());
++                let candidate = hex::encode(mac.finalize().into_bytes());
++                if signature_hex
++                    .as_bytes()
++                    .ct_eq(candidate.as_bytes())
++                    .unwrap_u8()
++                    == 1
++                {
++                    expected_signature = Some(candidate);
++                    break;
++                }
++            }
++        }
+ 
+-        let expected_signature = hex::encode(mac.finalize().into_bytes());
++        if let Some(nonce) = nonce {
++            if let Some(redis) = state.redis_manager.as_ref() {
++                let nonce_key = format!("hmac:nonce:{}:{}:{}", service_name, nonce, timestamp);
++                let already_used = redis
++                    .set_if_not_exists(&nonce_key, "1", MAX_NONCE_TTL_SECONDS)
++                    .await
++                    .unwrap_or(false);
++                if !already_used {
++                    error!(
++                        "❌ HMAC nonce replay detected for service '{}'",
++                        service_name
++                    );
++                    return Err(AppError::Unauthorized);
++                }
++            }
++        }
+ 
+-        if let Some(redis) = state.redis_manager.as_ref() {
+-            let nonce_key = format!("hmac:nonce:{}:{}:{}", service_name, nonce, timestamp);
+-            let already_used = redis
+-                .set_if_not_exists(&nonce_key, "1", MAX_NONCE_TTL_SECONDS)
+-                .await
+-                .unwrap_or(false);
+-            if !already_used {
++        match expected_signature {
++            Some(_) => {}
++            None => {
+                 error!(
+-                    "❌ HMAC nonce replay detected for service '{}'",
+-                    service_name
++                    "❌ Podpisy HMAC NIE są zgodne! Otrzymano: {}, oczekiwano tego samego dla formatu legacy lub canonical",
++                    signature_hex
+                 );
+                 return Err(AppError::Unauthorized);
+             }
+-        }
++        };
+ 
+-        debug!(service = %service_name, nonce = %nonce, timestamp = %timestamp, "validated HMAC metadata");
+-
+-        if signature_hex
+-            .as_bytes()
+-            .ct_eq(expected_signature.as_bytes())
+-            .unwrap_u8()
+-            != 1
+-        {
+-            error!(
+-                "❌ Podpisy HMAC NIE są zgodne! Otrzymano: {}, Oczekiwano: {}",
+-                signature_hex, expected_signature
+-            );
+-            return Err(AppError::Unauthorized);
+-        }
++        debug!(
++            service = %service_name,
++            nonce = %nonce.unwrap_or("n/a"),
++            timestamp = %timestamp,
++            "validated HMAC metadata"
++        );
+ 
+         info!(
+             "✅ [KMS-AUTH] Autoryzacja HMAC dla serwisu '{}' powiodła się",
+diff --git a/crates/kms-service/src/server/routes.rs b/crates/kms-service/src/server/routes.rs
+index 1e35cfe..1bec546 100644
+--- a/crates/kms-service/src/server/routes.rs
++++ b/crates/kms-service/src/server/routes.rs
+@@ -60,14 +60,14 @@ pub fn router(state: AppState) -> Router {
+             "/api/v1/decrypt",
+             post(crypto::decrypt_handler).layer(rate_limits.auth.clone()),
+         )
+-        // Audit endpoints
++        // Audit endpoints require authenticated HMAC callers with explicit ACL action checks.
+         .route(
+             "/api/v1/audit/verify",
+-            get(audit::verify_audit_handler).layer(rate_limits.health.clone()),
++            get(audit::verify_audit_handler).layer(rate_limits.auth.clone()),
+         )
+         .route(
+             "/api/v1/audit/logs",
+-            get(audit::audit_logs_handler).layer(rate_limits.health.clone()),
++            get(audit::audit_logs_handler).layer(rate_limits.auth.clone()),
+         );
+ 
+     if enable_rewrap {

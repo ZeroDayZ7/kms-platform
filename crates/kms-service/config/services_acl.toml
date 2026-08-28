@@ -1,6 +1,7 @@
 [acl.services.kms_cli]
 service_id = "kms-cli"
 secret = "super-long-random-secret-for-kms-cli-hmac-64-bytes"
+allowed_actions = ["AuditVerify", "AuditRead"]
 allowed_access = [
     { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]

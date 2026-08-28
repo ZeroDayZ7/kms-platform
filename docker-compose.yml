@@ -127,7 +127,7 @@ services:
       - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock
       - CRYPTO__HSM_SOCKET_PATH=/run/vhsm/vhsm.sock
       - KMS_CLI__SERVICE_ID=kms-cli
-      - KMS_CLI__SECRET=super-long-random-secret-for-kms-cli-hmac-64-bytes
+      - KMS_CLI__SECRET=${ACL__SERVICES__KMS_CLI__SECRET:-super-long-random-secret-for-kms-cli-hmac-64-bytes}
       - KMS_CLI__SERVICE_URL=http://kms-service:8080
     volumes:
       - kms_ceremony_data:/app/ceremony

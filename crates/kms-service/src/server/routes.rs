@@ -60,14 +60,14 @@ pub fn router(state: AppState) -> Router {
             "/api/v1/decrypt",
             post(crypto::decrypt_handler).layer(rate_limits.auth.clone()),
         )
-        // Audit endpoints
+        // Audit endpoints require authenticated HMAC callers with explicit ACL action checks.
         .route(
             "/api/v1/audit/verify",
-            get(audit::verify_audit_handler).layer(rate_limits.health.clone()),
+            get(audit::verify_audit_handler).layer(rate_limits.auth.clone()),
         )
         .route(
             "/api/v1/audit/logs",
-            get(audit::audit_logs_handler).layer(rate_limits.health.clone()),
+            get(audit::audit_logs_handler).layer(rate_limits.auth.clone()),
         );
 
     if enable_rewrap {
