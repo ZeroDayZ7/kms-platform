@@ -23,6 +23,7 @@ value = [
 host = "127.0.0.1"
 port = 5440
 name = "kms_db"
+user = "kms_app_user"
 pool_size = 5
 
 [redis]

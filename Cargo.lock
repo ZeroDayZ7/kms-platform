@@ -2114,6 +2114,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "kms-db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "sqlx",
+ "tracing",
+]
+
+[[package]]
+name = "kms-migrate"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "config",
+ "dotenvy",
+ "kms-db",
+ "serde",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "kms-service"
 version = "0.1.0"
 dependencies = [
@@ -2133,6 +2158,7 @@ dependencies = [
  "hex",
  "hmac",
  "kms-core",
+ "kms-db",
  "pem",
  "pkcs8",
  "rand 0.8.7",

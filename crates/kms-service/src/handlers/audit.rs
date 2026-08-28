@@ -94,8 +94,6 @@ pub async fn verify_audit_handler(
         rows
     };
 
-    use sha2::{Digest, Sha256};
-
     let mut last_hash = anchor_hash;
     let mut ok_count = 0usize;
 
@@ -122,50 +120,17 @@ pub async fn verify_audit_handler(
             break;
         }
 
-        // canonicalize
-        let mut map = serde_json::Map::new();
-        map.insert(
-            "id".to_string(),
-            serde_json::Value::String(rec.id.to_string()),
-        );
-        map.insert(
-            "caller_service".to_string(),
-            serde_json::Value::String(rec.caller_service.clone()),
-        );
-        map.insert(
-            "target_service".to_string(),
-            serde_json::Value::String(rec.target_service.clone()),
-        );
-        map.insert(
-            "action".to_string(),
-            serde_json::Value::String(rec.action.clone()),
-        );
-        map.insert(
-            "algorithm".to_string(),
-            serde_json::Value::String(rec.algorithm.clone()),
-        );
-        map.insert(
-            "status".to_string(),
-            serde_json::Value::String(rec.status.clone()),
-        );
-        map.insert(
-            "reason".to_string(),
-            match &rec.reason {
-                Some(x) => serde_json::Value::String(x.clone()),
-                None => serde_json::Value::Null,
-            },
-        );
-        map.insert(
-            "prev_hash".to_string(),
-            serde_json::Value::String(rec.prev_hash.clone()),
-        );
-        map.insert(
-            "timestamp".to_string(),
-            serde_json::Value::String(rec.created_at.to_rfc3339()),
-        );
-
-        let payload = serde_json::Value::Object(map).to_string();
-        let computed = hex::encode(Sha256::digest(payload.as_bytes()));
+        let computed = kms_core::audit::compute_audit_hash(&kms_core::audit::AuditHashInput {
+            id: &rec.id.to_string(),
+            caller_service: &rec.caller_service,
+            target_service: &rec.target_service,
+            action: &rec.action,
+            algorithm: &rec.algorithm,
+            status: &rec.status,
+            reason: rec.reason.as_deref(),
+            prev_hash: &rec.prev_hash,
+            timestamp: &rec.created_at,
+        });
 
         if computed != rec.hash {
             errors.push(format!(

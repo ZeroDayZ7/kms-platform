@@ -8,7 +8,7 @@
     "**/.gitattributes": true,
     // "**/.gitignore": true,
     "**/.github": true,
-    "**/.dockerignore": true,
+    // "**/.dockerignore": true,
 
     // "**/tests": true,
     "**/LICENSE": true,

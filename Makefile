@@ -1,3 +1,5 @@
+export LANG = pl_PL.UTF-8
+
 .PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean
 
 all: fmt check clippy test
@@ -17,22 +19,27 @@ test:
 	cargo test --workspace --all-targets --all-features
 
 docker-up:
-	docker compose up --build -d
-
-clean:
-	cargo clean
-
-rebuild: clean
-	sqlc generate -f crates/kms-service/sqlc.yaml
-	docker compose build --no-cache
-	docker compose up --force-recreate -d
+	docker compose up -d
 
 docker-down:
 	docker compose down -v
 
-restartt:
-	docker compose down -v
-	docker compose up --build --force-recreate -d
+clean:
+	cargo clean
+
+rebuild:
+	@echo "===> Czyszczenie starych kontenerów i wolumenów..."
+	docker compose down -v --remove-orphans
+	@echo "===> Generowanie kodu SQL (sqlc)..."
+	sqlc generate -f crates/kms-service/sqlc.yaml
+	@echo "===> Formatowanie kodu (cargo fmt)..."
+	cargo fmt
+	@echo "===> Budowanie obrazów bez cache..."
+	docker compose build --no-cache
+	@echo "===> Uruchamianie środowiska..."
+	docker compose up -d
+	@echo "===> Śledzenie logów migratora..."
+	docker compose logs -f kms-migrate
 
 init:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock

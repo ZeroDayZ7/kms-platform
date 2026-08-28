@@ -57,6 +57,7 @@ serde_bytes = "0.11.19"
 ssss = "1.0.6"
 sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
 kms-core = { path = "../kms-core" }
+kms-db = { path = "../kms-db" }
 
 [dev-dependencies]
 tokio = { version = "1.53", features = ["full"] }
