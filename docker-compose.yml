@@ -1,10 +1,3 @@
-# region COMMON SETTINGS
-x-common-settings: &common-settings
-  restart: ${DOCKER_RESTART_POLICY:-unless-stopped}
-  networks:
-    - obywatel_app_net
-    - citizen-app-net
-
 x-common-healthcheck: &common-healthcheck
   interval: 180s
   timeout: 5s
@@ -15,11 +8,12 @@ x-common-healthcheck: &common-healthcheck
 services:
   # region POSTGRESQL
   postgres:
-    <<: *common-settings
     image: postgres:18.3-alpine
     container_name: db_kms
+    networks:
+      - kms-internal-net
     ports:
-      - "5440:5432"
+      - "127.0.0.1:5440:5432"
     environment:
       POSTGRES_DB: ${DATABASE__NAME:-kms_db}
       POSTGRES_USER: ${DATABASE__USER:-kms_user}
@@ -63,13 +57,14 @@ services:
 
   # region VHSM DAEMON
   vhsm-daemon:
-    <<: *common-settings
     build:
       context: .
       dockerfile: Dockerfile
       target: vhsm-daemon
     container_name: vhsm_daemon
     entrypoint: ["/app/vhsm-daemon"]
+    networks:
+      - kms-internal-net
     environment:
       - APP_ENVIRONMENT=${APP_ENVIRONMENT:-development}
       - RUST_LOG=${RUST_LOG:-info,vhsm_daemon=debug}
@@ -79,18 +74,20 @@ services:
       - vhsm_sockets:/run/vhsm
     healthcheck:
       <<: *common-healthcheck
-      test: ["CMD", "test", "-S", "/run/vhsm/vhsm.sock"]
+      test: ["CMD", "/app/hsm_probe"]
   # endregion
 
   # region KMS SERVICE (RUST)
   kms-service:
-    <<: *common-settings
     build:
       context: .
       dockerfile: Dockerfile
       target: kms-service
     container_name: kms_service
     command: ["serve"]
+    networks:
+      - kms-internal-net
+      - citizen-app-net
     ports:
       - "8081:8080"
     environment:
@@ -116,7 +113,6 @@ services:
 
   # region KMS CEREMONY CLI (TOOLING)
   kms-ceremony-cli:
-    <<: *common-settings
     build:
       context: .
       dockerfile: Dockerfile
@@ -125,9 +121,14 @@ services:
     profiles:
       - tools
     entrypoint: ["/app/kms-ceremony-cli"]
+    networks:
+      - kms-internal-net
     environment:
       - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock
       - CRYPTO__HSM_SOCKET_PATH=/run/vhsm/vhsm.sock
+      - KMS_CLI__SERVICE_ID=kms-cli
+      - KMS_CLI__SECRET=${ACL__SERVICES__KMS_CLI__SECRET:-super-long-random-secret-for-kms-cli-hmac-64-bytes}
+      - KMS_CLI__SERVICE_URL=http://kms-service:8080
     volumes:
       - kms_ceremony_data:/app/ceremony
       - vhsm_sockets:/run/vhsm
@@ -151,8 +152,9 @@ volumes:
 
 # region NETWORKS
 networks:
-  obywatel_app_net:
+  kms-internal-net:
     driver: bridge
+    internal: false
 
   citizen-app-net:
     name: obywatel_app__network

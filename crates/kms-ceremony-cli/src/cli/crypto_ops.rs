@@ -1,5 +1,5 @@
 use anyhow::{Context, Result, bail};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use kms_core::hsm::client::send_hsm_request;
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
@@ -11,7 +11,7 @@ pub async fn handle_encrypt(socket_path: String, plaintext: String) -> Result<()
         plaintext: plaintext.into_bytes(),
     };
 
-    match send_hsm_request(&socket_path, &request).await {
+    match send_hsm_request(&socket_path, &request, None).await {
         Ok(HsmResponse::Encrypted {
             ciphertext,
             key_version: _,
@@ -35,22 +35,46 @@ pub async fn handle_decrypt(socket_path: String, ciphertext_hex: String) -> Resu
         ciphertext,
     };
 
-    match send_hsm_request(&socket_path, &request).await {
+    match send_hsm_request(&socket_path, &request, None).await {
         Ok(HsmResponse::Decrypted {
             plaintext,
             key_version: _,
-        }) => {
-            let decrypted_str = Zeroizing::new(
-                String::from_utf8(plaintext)
-                    .context("Tekst odszyfrowany nie jest prawidłowym UTF-8")?,
-            );
-            println!("Plaintext: {}", *decrypted_str);
-            Ok(())
-        }
+        }) => match String::from_utf8(plaintext) {
+            Ok(s) => {
+                let decrypted_str = Zeroizing::new(s);
+                println!("Plaintext: {}", *decrypted_str);
+                Ok(())
+            }
+            Err(e) => {
+                let mut bytes = e.into_bytes();
+                bytes.zeroize();
+                bail!("Tekst odszyfrowany nie jest prawidłowym UTF-8")
+            }
+        },
         Ok(HsmResponse::Error { code, message }) => {
             bail!("Błąd dekodowania [{code}]: {message}")
         }
         Ok(_) => bail!("Otrzymano nieoczekiwaną odpowiedź z HSM"),
         Err(err) => bail!("Błąd komunikacji z HSM: {err}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use zeroize::Zeroize;
+
+    #[test]
+    fn utf8_decode_failure_zeroizes_plaintext() {
+        // simulate invalid UTF-8 bytes coming from HSM
+        let invalid: Vec<u8> = vec![0xff, 0xff, 0xff];
+
+        match String::from_utf8(invalid) {
+            Ok(_) => panic!("shouldn't decode"),
+            Err(e) => {
+                let mut bytes = e.into_bytes();
+                bytes.zeroize();
+                assert!(bytes.iter().all(|b| *b == 0));
+            }
+        }
     }
 }

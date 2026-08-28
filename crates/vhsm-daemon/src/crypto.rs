@@ -47,7 +47,7 @@ pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Zeroizing<Vec<u
         .iter()
         .map(|(index, value)| SecretShare {
             index: *index,
-            value: value.clone(),
+            value: Zeroizing::new(value.clone()),
         })
         .collect::<Vec<_>>();
 

@@ -1,4 +1,5 @@
 use crate::hsm::protocol::{HsmRequest, HsmResponse};
+use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -33,6 +34,9 @@ use tokio::{
     net::UnixStream,
 };
 
+#[cfg(unix)]
+use zeroize::Zeroizing;
+
 pub const HSM_SOCKET_DEFAULT_PATH: &str = "/run/vhsm/vhsm.sock";
 
 #[cfg(any(unix, test))]
@@ -56,15 +60,12 @@ pub fn framed_message(payload: &[u8]) -> HsmResult<Vec<u8>> {
 }
 
 #[cfg(unix)]
-async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
+async fn read_frame_with_timeout(stream: &mut UnixStream, timeout: Duration) -> HsmResult<Vec<u8>> {
     let mut len_buf = [0u8; 4];
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        stream.read_exact(&mut len_buf),
-    )
-    .await
-    .map_err(|_| HsmClientError::Timeout)?
-    .map_err(|err| HsmClientError::Io { source: err })?;
+    tokio::time::timeout(timeout, stream.read_exact(&mut len_buf))
+        .await
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
 
     let len = u32::from_be_bytes(len_buf) as usize;
     if len > MAX_HSM_FRAME_SIZE {
@@ -72,19 +73,22 @@ async fn read_frame(stream: &mut UnixStream) -> HsmResult<Vec<u8>> {
     }
 
     let mut payload = vec![0u8; len];
-    tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        stream.read_exact(&mut payload),
-    )
-    .await
-    .map_err(|_| HsmClientError::Timeout)?
-    .map_err(|err| HsmClientError::Io { source: err })?;
+    tokio::time::timeout(timeout, stream.read_exact(&mut payload))
+        .await
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
 
     Ok(payload)
 }
 
 #[cfg(unix)]
-pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<HsmResponse> {
+pub async fn send_hsm_request(
+    socket_path: &str,
+    req: &HsmRequest,
+    timeout: Option<Duration>,
+) -> HsmResult<HsmResponse> {
+    let timeout = timeout.unwrap_or_else(|| Duration::from_secs(5));
+
     let socket = socket_path.trim();
     let path = if socket.is_empty() {
         HSM_SOCKET_DEFAULT_PATH
@@ -92,23 +96,30 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
         socket
     };
 
-    let mut stream =
-        tokio::time::timeout(std::time::Duration::from_secs(5), UnixStream::connect(path))
-            .await
-            .map_err(|_| HsmClientError::Timeout)?
-            .map_err(|err| HsmClientError::Io { source: err })?;
-
-    let payload =
-        serde_json::to_vec(req).map_err(|err| HsmClientError::Serialization { source: err })?;
-    let frame = framed_message(&payload)?;
-
-    tokio::time::timeout(std::time::Duration::from_secs(5), stream.write_all(&frame))
+    let mut stream = tokio::time::timeout(timeout, UnixStream::connect(path))
         .await
         .map_err(|_| HsmClientError::Timeout)?
         .map_err(|err| HsmClientError::Io { source: err })?;
 
-    let response_bytes = read_frame(&mut stream).await?;
-    let response: HsmResponse = serde_json::from_slice(&response_bytes)
+    let payload =
+        serde_json::to_vec(req).map_err(|err| HsmClientError::Serialization { source: err })?;
+
+    // Ensure the serialized payload is zeroized after use
+    let payload_z = Zeroizing::new(payload);
+    let frame = framed_message(&*payload_z)?;
+
+    // Zeroize the frame after writing
+    let frame_z = Zeroizing::new(frame);
+    tokio::time::timeout(timeout, stream.write_all(&*frame_z))
+        .await
+        .map_err(|_| HsmClientError::Timeout)?
+        .map_err(|err| HsmClientError::Io { source: err })?;
+
+    let response_bytes = read_frame_with_timeout(&mut stream, timeout).await?;
+
+    // Zeroize raw response bytes after deserialization
+    let response_z = Zeroizing::new(response_bytes);
+    let response: HsmResponse = serde_json::from_slice(&*response_z)
         .map_err(|err| HsmClientError::Serialization { source: err })?;
 
     match response {
@@ -120,7 +131,11 @@ pub async fn send_hsm_request(socket_path: &str, req: &HsmRequest) -> HsmResult<
 }
 
 #[cfg(not(unix))]
-pub async fn send_hsm_request(_socket_path: &str, _req: &HsmRequest) -> HsmResult<HsmResponse> {
+pub async fn send_hsm_request(
+    _socket_path: &str,
+    _req: &HsmRequest,
+    _timeout: Option<Duration>,
+) -> HsmResult<HsmResponse> {
     Err(HsmClientError::PlatformNotSupported)
 }
 
@@ -129,19 +144,23 @@ pub async fn encrypt_via_hsm(
     key_id: &str,
     key_version: Option<u32>,
     plaintext: &[u8],
+    timeout: Option<Duration>,
 ) -> HsmResult<Vec<u8>> {
+    let requested = key_version;
     let req = HsmRequest::Encrypt {
         key_id: key_id.to_string(),
         key_version,
         plaintext: plaintext.to_vec(),
     };
 
-    match send_hsm_request(socket_path, &req).await? {
+    match send_hsm_request(socket_path, &req, timeout).await? {
         HsmResponse::Encrypted {
             ciphertext,
-            key_version,
+            key_version: resp_version,
         } => {
-            if key_version == 0 {
+            // Validate returned key version against requested version to prevent downgrade
+            validate_key_version(requested, resp_version)?;
+            if resp_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
             }
             Ok(ciphertext)
@@ -158,19 +177,23 @@ pub async fn decrypt_via_hsm(
     key_id: &str,
     key_version: Option<u32>,
     ciphertext: &[u8],
+    timeout: Option<Duration>,
 ) -> HsmResult<Vec<u8>> {
+    let requested = key_version;
     let req = HsmRequest::Decrypt {
         key_id: key_id.to_string(),
         key_version,
         ciphertext: ciphertext.to_vec(),
     };
 
-    match send_hsm_request(socket_path, &req).await? {
+    match send_hsm_request(socket_path, &req, timeout).await? {
         HsmResponse::Decrypted {
             plaintext,
-            key_version,
+            key_version: resp_version,
         } => {
-            if key_version == 0 {
+            // Validate returned key version against requested version to prevent downgrade
+            validate_key_version(requested, resp_version)?;
+            if resp_version == 0 {
                 return Err(HsmClientError::InvalidResponse);
             }
             Ok(plaintext)
@@ -180,6 +203,22 @@ pub async fn decrypt_via_hsm(
         ))),
         _other => Err(HsmClientError::InvalidResponse),
     }
+}
+
+// Helper to validate key version consistency and detect downgrade attacks.
+fn validate_key_version(requested: Option<u32>, response_version: u32) -> HsmResult<()> {
+    if let Some(req_v) = requested {
+        if response_version < req_v {
+            return Err(HsmClientError::Remote(format!(
+                "Downgrade detected: response version {} < requested {}",
+                response_version, req_v
+            )));
+        }
+        if response_version != req_v {
+            return Err(HsmClientError::InvalidResponse);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -201,5 +240,22 @@ mod tests {
         let oversized = vec![0u8; MAX_HSM_FRAME_SIZE + 1];
         let err = framed_message(&oversized).unwrap_err();
         assert!(matches!(err, HsmClientError::InvalidFrame));
+    }
+
+    #[test]
+    fn validate_key_version_accepts_none() {
+        assert!(validate_key_version(None, 1).is_ok());
+    }
+
+    #[test]
+    fn validate_key_version_rejects_downgrade() {
+        let res = validate_key_version(Some(5), 4);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn validate_key_version_rejects_mismatch() {
+        let res = validate_key_version(Some(3), 4);
+        assert!(res.is_err());
     }
 }

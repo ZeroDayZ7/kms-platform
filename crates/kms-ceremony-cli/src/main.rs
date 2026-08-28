@@ -1,14 +1,10 @@
-mod cli;
-mod crypto;
-mod storage;
-
 use anyhow::Result;
 use clap::Parser;
-
-use crate::cli::args::{CliArgs, Commands};
-use crate::cli::ceremony::handle_interactive_ceremony;
-use crate::cli::crypto_ops::{handle_decrypt, handle_encrypt};
-use crate::cli::unseal::handle_unseal_hsm;
+use kms_ceremony_cli::cli::args::{CliArgs, Commands};
+use kms_ceremony_cli::cli::ceremony::handle_interactive_ceremony;
+use kms_ceremony_cli::cli::crypto_ops::{handle_decrypt, handle_encrypt};
+use kms_ceremony_cli::cli::unseal::handle_unseal_hsm;
+use kms_ceremony_cli::cli::verify_audit::handle_verify_audit;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -28,8 +24,9 @@ async fn main() -> Result<()> {
             socket_path,
             threshold,
             shares_dir,
+            share_files,
         } => {
-            handle_unseal_hsm(socket_path, threshold, shares_dir).await?;
+            handle_unseal_hsm(socket_path, threshold, shares_dir, share_files).await?;
         }
 
         Commands::Encrypt {
@@ -44,6 +41,14 @@ async fn main() -> Result<()> {
             ciphertext_hex,
         } => {
             handle_decrypt(socket_path, ciphertext_hex).await?;
+        }
+
+        Commands::VerifyAuditChain {
+            service_url,
+            limit,
+            full,
+        } => {
+            handle_verify_audit(service_url, None, limit, full).await?;
         }
     }
 

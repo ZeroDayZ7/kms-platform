@@ -1,4 +1,4 @@
-use crate::handlers::{admin, crypto, health, keys};
+use crate::handlers::{admin, audit, crypto, health, keys};
 use crate::server::middleware::{self, RateLimitLayers};
 use crate::server::state::AppState;
 use axum::{
@@ -59,6 +59,15 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/api/v1/decrypt",
             post(crypto::decrypt_handler).layer(rate_limits.auth.clone()),
+        )
+        // Audit endpoints require authenticated HMAC callers with explicit ACL action checks.
+        .route(
+            "/api/v1/audit/verify",
+            get(audit::verify_audit_handler).layer(rate_limits.auth.clone()),
+        )
+        .route(
+            "/api/v1/audit/logs",
+            get(audit::audit_logs_handler).layer(rate_limits.auth.clone()),
         );
 
     if enable_rewrap {

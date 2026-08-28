@@ -7,46 +7,39 @@
 )]
 
 pub trait AsExecutor {
-    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres>;
 }
 impl AsExecutor for sqlx::PgPool {
-    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &*self
     }
 }
 impl AsExecutor for &sqlx::PgPool {
-    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         *self
     }
 }
 impl AsExecutor for sqlx::PgConnection {
-    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &mut *self
     }
 }
 impl AsExecutor for sqlx::Transaction<'_, sqlx::Postgres> {
-    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &mut **self
     }
 }
 impl AsExecutor for sqlx::pool::PoolConnection<sqlx::Postgres> {
-    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         &mut **self
     }
 }
 impl<T: AsExecutor + ?Sized> AsExecutor for &mut T {
-    //#region as_executor
     fn as_executor(&mut self) -> impl sqlx::Executor<'_, Database = sqlx::Postgres> {
         (**self).as_executor()
     }
 }
-pub const GET_LAST_AUDIT_LOG: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, signature, created_at\nFROM audit_logs\nORDER BY created_at DESC, id DESC\nLIMIT 1";
+pub const GET_LAST_AUDIT_LOG: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at\nFROM audit_logs\nORDER BY created_at DESC, id DESC\nLIMIT 1";
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct GetLastAuditLogRow {
     pub id: uuid::Uuid,
@@ -56,7 +49,8 @@ pub struct GetLastAuditLogRow {
     pub algorithm: String,
     pub status: String,
     pub reason: Option<String>,
-    pub prev_hash: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
     pub signature: Option<Vec<u8>>,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
@@ -65,6 +59,52 @@ pub async fn get_last_audit_log<E: AsExecutor>(
 ) -> Result<GetLastAuditLogRow, sqlx::Error> {
     sqlx::query_as::<_, GetLastAuditLogRow>(GET_LAST_AUDIT_LOG)
         .fetch_one(db.as_executor())
+        .await
+}
+pub const GET_AUDIT_LOGS_LAST_N: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at\nFROM audit_logs\nORDER BY created_at DESC, id DESC\nLIMIT $1";
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GetAuditLogsLastNRow {
+    pub id: uuid::Uuid,
+    pub caller_service: String,
+    pub target_service: String,
+    pub action: String,
+    pub algorithm: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
+    pub signature: Option<Vec<u8>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+pub async fn get_audit_logs_last_n<E: AsExecutor>(
+    mut db: E,
+    limit: i32,
+) -> Result<Vec<GetAuditLogsLastNRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetAuditLogsLastNRow>(GET_AUDIT_LOGS_LAST_N)
+        .bind(limit)
+        .fetch_all(db.as_executor())
+        .await
+}
+pub const GET_AUDIT_LOGS_ALL: &str = "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at\nFROM audit_logs\nORDER BY created_at ASC, id ASC";
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GetAuditLogsAllRow {
+    pub id: uuid::Uuid,
+    pub caller_service: String,
+    pub target_service: String,
+    pub action: String,
+    pub algorithm: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
+    pub signature: Option<Vec<u8>>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+pub async fn get_audit_logs_all<E: AsExecutor>(
+    mut db: E,
+) -> Result<Vec<GetAuditLogsAllRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetAuditLogsAllRow>(GET_AUDIT_LOGS_ALL)
+        .fetch_all(db.as_executor())
         .await
 }
 #[derive(Debug, Clone)]
@@ -76,10 +116,11 @@ pub struct InsertAuditLogParams {
     pub algorithm: String,
     pub status: String,
     pub reason: Option<String>,
-    pub prev_hash: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
     pub signature: Option<Vec<u8>>,
 }
-pub const INSERT_AUDIT_LOG: &str = "INSERT INTO audit_logs (\n    id,\n    caller_service,\n    target_service,\n    action,\n    algorithm,\n    status,\n    reason,\n    prev_hash,\n    signature,\n    created_at\n) VALUES (\n    $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()\n)";
+pub const INSERT_AUDIT_LOG: &str = "INSERT INTO audit_logs (\n    id,\n    caller_service,\n    target_service,\n    action,\n    algorithm,\n    status,\n    reason,\n    prev_hash,\n    hash,\n    signature,\n    created_at\n) VALUES (\n    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()\n)";
 pub async fn insert_audit_log<E: AsExecutor>(
     mut db: E,
     arg: InsertAuditLogParams,
@@ -93,10 +134,23 @@ pub async fn insert_audit_log<E: AsExecutor>(
         .bind(arg.status)
         .bind(arg.reason)
         .bind(arg.prev_hash)
+        .bind(arg.hash)
         .bind(arg.signature)
         .execute(db.as_executor())
         .await?;
     Ok(())
+}
+pub const GET_ACTIVE_SIGNING_PUBLIC_KEYS: &str = "SELECT public_key_pem \nFROM keys \nWHERE purpose = 'Signing' AND is_active = TRUE";
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct GetActiveSigningPublicKeysRow {
+    pub public_key_pem: String,
+}
+pub async fn get_active_signing_public_keys<E: AsExecutor>(
+    mut db: E,
+) -> Result<Vec<GetActiveSigningPublicKeysRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetActiveSigningPublicKeysRow>(GET_ACTIVE_SIGNING_PUBLIC_KEYS)
+        .fetch_all(db.as_executor())
+        .await
 }
 #[derive(Debug, Clone)]
 pub struct GetActiveKeyParams {
@@ -192,7 +246,10 @@ pub struct SaveKeyParams {
     pub is_active: bool,
 }
 pub const SAVE_KEY: &str = "INSERT INTO keys (\n    id,\n    service_id,\n    algorithm,\n    version,\n    encrypted_key_data,\n    public_key_pem,\n    purpose,\n    status,\n    is_active,\n    created_at\n) VALUES (\n    $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()\n)\nON CONFLICT (service_id, algorithm, version)\nDO UPDATE SET\n    encrypted_key_data = EXCLUDED.encrypted_key_data,\n    public_key_pem = EXCLUDED.public_key_pem,\n    purpose = EXCLUDED.purpose,\n    status = EXCLUDED.status,\n    is_active = EXCLUDED.is_active,\n    created_at = NOW()";
-pub async fn save_key<E: AsExecutor>(mut db: E, arg: SaveKeyParams) -> Result<(), sqlx::Error> {
+pub async fn save_key<E: AsExecutor>(
+    mut db: E,
+    arg: SaveKeyParams,
+) -> Result<(), sqlx::Error> {
     sqlx::query(SAVE_KEY)
         .bind(arg.id)
         .bind(arg.service_id)
@@ -213,8 +270,7 @@ pub struct UpdateKeyStatusParams {
     pub status: String,
     pub is_active: bool,
 }
-pub const UPDATE_KEY_STATUS: &str =
-    "UPDATE keys\nSET status = $2,\n    is_active = $3,\n    created_at = NOW()\nWHERE id = $1";
+pub const UPDATE_KEY_STATUS: &str = "UPDATE keys\nSET status = $2,\n    is_active = $3,\n    created_at = NOW()\nWHERE id = $1";
 pub async fn update_key_status<E: AsExecutor>(
     mut db: E,
     arg: UpdateKeyStatusParams,
@@ -258,8 +314,8 @@ pub struct GetAllKeysRow {
     pub is_active: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
-pub async fn get_all_keys<E: AsExecutor>(mut db: E) -> Result<Vec<GetAllKeysRow>, sqlx::Error> {
-    sqlx::query_as::<_, GetAllKeysRow>(GET_ALL_KEYS)
-        .fetch_all(db.as_executor())
-        .await
+pub async fn get_all_keys<E: AsExecutor>(
+    mut db: E,
+) -> Result<Vec<GetAllKeysRow>, sqlx::Error> {
+    sqlx::query_as::<_, GetAllKeysRow>(GET_ALL_KEYS).fetch_all(db.as_executor()).await
 }

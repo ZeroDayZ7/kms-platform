@@ -5,13 +5,15 @@ use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 #[allow(dead_code)]
 pub struct VhsmClient {
     socket_path: String,
+    timeout_secs: u64,
 }
 
 impl VhsmClient {
     //#region new
-    pub fn new(socket_path: impl Into<String>) -> Self {
+    pub fn new(socket_path: impl Into<String>, timeout_secs: u64) -> Self {
         Self {
             socket_path: socket_path.into(),
+            timeout_secs,
         }
     }
 
@@ -19,38 +21,68 @@ impl VhsmClient {
     async fn send_request(&self, request: &HsmRequest) -> AppResult<HsmResponse> {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::UnixStream;
+        use tokio::time::timeout;
 
         let payload =
             serde_json::to_vec(request).map_err(|e| AppError::SerializationError(e.to_string()))?;
 
         let len_header = (payload.len() as u32).to_be_bytes();
 
-        let mut stream = UnixStream::connect(&self.socket_path).await.map_err(|e| {
+        let mut stream = timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            UnixStream::connect(&self.socket_path),
+        )
+        .await
+        .map_err(|_| {
+            AppError::RuntimeError(format!(
+                "Timeout connecting to vHSM at {}",
+                self.socket_path
+            ))
+        })?
+        .map_err(|e| {
             AppError::RuntimeError(format!(
                 "Nie udało się połączyć z vhsm-daemon pod ścieżką {}: {e}",
                 self.socket_path
             ))
         })?;
 
-        stream
-            .write_all(&len_header)
-            .await
-            .map_err(|e| AppError::RuntimeError(format!("Błąd zapisu nagłówka do vHSM: {e}")))?;
+        timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            stream.write_all(&len_header),
+        )
+        .await
+        .map_err(|_| AppError::RuntimeError("Timeout writing header to vHSM".to_string()))?
+        .map_err(|e| AppError::RuntimeError(format!("Błąd zapisu nagłówka do vHSM: {e}")))?;
 
-        stream
-            .write_all(&payload)
-            .await
-            .map_err(|e| AppError::RuntimeError(format!("Błąd zapisu ładunku do vHSM: {e}")))?;
+        timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            stream.write_all(&payload),
+        )
+        .await
+        .map_err(|_| AppError::RuntimeError("Timeout writing payload to vHSM".to_string()))?
+        .map_err(|e| AppError::RuntimeError(format!("Błąd zapisu ładunku do vHSM: {e}")))?;
 
         let mut header_buf = [0u8; 4];
-        stream.read_exact(&mut header_buf).await.map_err(|e| {
+        timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            stream.read_exact(&mut header_buf),
+        )
+        .await
+        .map_err(|_| AppError::RuntimeError("Timeout reading header from vHSM".to_string()))?
+        .map_err(|e| {
             AppError::RuntimeError(format!("Błąd odczytu nagłówka odpowiedzi z vHSM: {e}"))
         })?;
 
         let response_len = u32::from_be_bytes(header_buf) as usize;
         let mut response_buf = vec![0u8; response_len];
 
-        stream.read_exact(&mut response_buf).await.map_err(|e| {
+        timeout(
+            std::time::Duration::from_secs(self.timeout_secs),
+            stream.read_exact(&mut response_buf),
+        )
+        .await
+        .map_err(|_| AppError::RuntimeError("Timeout reading body from vHSM".to_string()))?
+        .map_err(|e| {
             AppError::RuntimeError(format!("Błąd odczytu treści odpowiedzi z vHSM: {e}"))
         })?;
 

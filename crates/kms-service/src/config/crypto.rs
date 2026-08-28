@@ -64,6 +64,8 @@ pub struct CryptoSettings {
     pub current_master_key_version: i32,
     pub default_key_ttl_days: KeyTtlDays,
     pub grace_period_minutes: GracePeriodMinutes,
+    #[serde(default = "default_hsm_timeout_secs")]
+    pub hsm_timeout_secs: u64,
     #[serde(default)]
     pub enable_http_rewrap: bool,
 }
@@ -71,6 +73,10 @@ pub struct CryptoSettings {
 //#region default_hsm_socket_path
 fn default_hsm_socket_path() -> String {
     "/run/vhsm/vhsm.sock".to_string()
+}
+
+fn default_hsm_timeout_secs() -> u64 {
+    5
 }
 
 #[cfg(test)]

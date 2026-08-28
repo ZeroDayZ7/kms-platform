@@ -8,6 +8,7 @@ target/
 **/*.rs.bk
 **/temp.md
 **/todo.md
+**/roznice.patch
 **/.env
 **/out
 # MSVC Windows builds of rustc generate these, which store debugging information

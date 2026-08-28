@@ -13,6 +13,9 @@ pub enum AppError {
     #[error("Autoryzacja nie powiodła się")]
     Unauthorized,
 
+    #[error("Brak uprawnień do wykonania tej akcji")]
+    Forbidden,
+
     #[error("Nie znaleziono zasobu: {0}")]
     NotFound(String),
 
@@ -87,6 +90,7 @@ impl AppError {
     fn error_code(&self) -> &'static str {
         match self {
             Self::Unauthorized => "UNAUTHORIZED",
+            Self::Forbidden => "FORBIDDEN",
             Self::NotFound(_) => "RESOURCE_NOT_FOUND",
             Self::ValidationError(_) => "VALIDATION_ERROR",
             Self::Conflict(_) => "CONFLICT_ERROR",
@@ -107,6 +111,7 @@ impl AppError {
     fn public_message(&self) -> Cow<'static, str> {
         match self {
             Self::Unauthorized => "Authentication failed".into(),
+            Self::Forbidden => "Forbidden".into(),
             Self::NotFound(_) => "Resource not found".into(),
             Self::ValidationError(_) => "Invalid request".into(),
             Self::Conflict(_) => "Resource conflict".into(),
@@ -132,6 +137,7 @@ impl IntoResponse for AppError {
 
         let status = match &self {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ValidationError(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,

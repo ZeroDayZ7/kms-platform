@@ -1,7 +1,8 @@
 use anyhow::{Context, Result, bail};
 use dialoguer::Password;
-use std::fs;
 use std::path::PathBuf;
+use tokio::fs;
+use zeroize::Zeroizing;
 
 use kms_core::crypto::aes::encrypt_bytes_with_password;
 use kms_core::hsm::client::send_hsm_request;
@@ -29,7 +30,7 @@ pub async fn handle_interactive_ceremony(
         total_shares: shares_count,
     };
 
-    let response = send_hsm_request(&socket_path, &request)
+    let response = send_hsm_request(&socket_path, &request, None)
         .await
         .context("Nie udało się połączyć z daemonem vHSM")?;
 
@@ -39,9 +40,9 @@ pub async fn handle_interactive_ceremony(
         _ => bail!("Otrzymano nieoczekiwaną odpowiedź z vHSM"),
     };
 
-    fs::create_dir_all(&output_dir)?;
+    fs::create_dir_all(&output_dir).await?;
     let share_dir = output_dir.join("shares");
-    fs::create_dir_all(&share_dir)?;
+    fs::create_dir_all(&share_dir).await?;
 
     println!("\n[CEREMONY] vHSM wygenerował Master Key w pamięci RAM!");
     println!(
@@ -53,19 +54,22 @@ pub async fn handle_interactive_ceremony(
         println!("--------------------------------------------------");
         println!("Oficerzie nr {index}, podejmij swój udział.");
 
-        let password = Password::new()
-            .with_prompt(format!(
-                "Podaj hasło/PIN do zaszyfrowania Udziału nr {index}"
-            ))
-            .interact()?;
+        let password = Zeroizing::new(
+            Password::new()
+                .with_prompt(format!(
+                    "Podaj hasło/PIN do zaszyfrowania Udziału nr {index}"
+                ))
+                .interact()?,
+        );
 
-        let confirm = Password::new().with_prompt("Potwierdź hasło").interact()?;
+        let confirm = Zeroizing::new(Password::new().with_prompt("Potwierdź hasło").interact()?);
 
         if password != confirm {
             bail!("Hasła się nie zgadzają! Przerwano ceremonię.");
         }
 
         // Pobieramy surowe bajty z wartości SSS zwrócenie z vHSM (bez dekodowania z HEX)
+        let raw_share_str = Zeroizing::new(raw_share_str);
         let share_bytes = raw_share_str.as_bytes();
 
         // Szyfrowanie udziału SSS hasłem Oficera
@@ -78,7 +82,8 @@ pub async fn handle_interactive_ceremony(
             threshold,
             shares_count,
             encrypted_container,
-        )?;
+        )
+        .await?;
 
         println!(
             "[OK] Udział nr {index} został zaszyfrowany i zapisany w {}",

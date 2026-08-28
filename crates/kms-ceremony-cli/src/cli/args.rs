@@ -73,9 +73,14 @@ pub enum Commands {
         #[arg(
             short = 'd',
             long = "shares-dir",
-            help = "Katalog z plikami JSON udziałów (opcjonalnie)"
+            help = "Katalog z plikami JSON udziałów",
+            default_value = "./out/shares"
         )]
-        shares_dir: Option<PathBuf>,
+        shares_dir: PathBuf,
+
+        /// Bezpośrednie ścieżki do plików udziałów JSON (można podać wiele razy)
+        #[arg(short = 'f', long = "file")]
+        share_files: Vec<PathBuf>,
     },
 
     /// Szyfruje podany tekst za pomocą klucza HSM
@@ -104,5 +109,24 @@ pub enum Commands {
 
         #[arg(short, long, help = "Szyfrogram w formacie HEX (Nonce + Ciphertext)")]
         ciphertext_hex: String,
+    },
+
+    /// Weryfikuje spójność łańcucha audytowego w bazie danych
+    VerifyAuditChain {
+        #[arg(
+            short,
+            long,
+            help = "Base URL of kms-service (e.g. http://localhost:8080)",
+            env = "KMS_SERVICE_URL"
+        )]
+        service_url: Option<String>,
+
+        /// Number of records to verify (default 1000). Use `full` to verify from genesis.
+        #[arg(short = 'n', long = "limit")]
+        limit: Option<usize>,
+
+        /// Verify from genesis (ignore limit)
+        #[arg(short = 'F', long = "full")]
+        full: bool,
     },
 }

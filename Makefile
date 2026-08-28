@@ -1,4 +1,4 @@
-.PHONY: all fmt check clippy test docker-up docker-down lock unlock run
+.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean
 
 all: fmt check clippy test
 
@@ -19,6 +19,14 @@ test:
 docker-up:
 	docker compose up --build -d
 
+clean:
+	cargo clean
+
+rebuild: clean
+	sqlc generate -f crates/kms-service/sqlc.yaml
+	docker compose build --no-cache
+	docker compose up --force-recreate -d
+
 docker-down:
 	docker compose down -v
 
@@ -31,6 +39,12 @@ init:
 
 unlock:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
+
+audit-verify:
+	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli verify-audit-chain
+
+audit-logs:
+	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli audit-logs
 
 run:
 	cargo run -p kms-service --bin kms-service -- serve

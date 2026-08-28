@@ -35,6 +35,7 @@ WORKDIR /app
 # ------------------------------------------------------------------------------
 FROM runtime-base AS vhsm-daemon
 COPY --from=builder /app/target/release/vhsm-daemon /app/vhsm-daemon
+COPY --from=builder /app/target/release/hsm_probe /app/hsm_probe
 RUN mkdir -p /run/vhsm && \
     chown -R appuser:appgroup /run/vhsm && \
     chmod 770 /run/vhsm
