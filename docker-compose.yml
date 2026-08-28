@@ -18,11 +18,15 @@ services:
       POSTGRES_DB: ${DATABASE__NAME:-kms_db}
       POSTGRES_USER: ${DATABASE__ROOT_USER:-kms_root_user}
       POSTGRES_PASSWORD_FILE: /run/secrets/db_root_pass
-      KMS_APP_USER: ${DATABASE__USER:-kms_app_user}
+
+      POSTGRES_MIGRATOR_USER: ${DATABASE__MIGRATOR_USER:-kms_migrator_user}
+      POSTGRES_APP_USER: ${DATABASE__USER:-kms_app_user}
+
       PGDATA: /var/lib/postgresql/data/pgdata
     secrets:
       - db_root_pass
-      - kms_app_db_pass
+      - kms_migrator_db_pass # Sekret dla migratora
+      - kms_app_db_pass # Sekret dla aplikacji
     volumes:
       - postgres_data:/var/lib/postgresql
       - ./scripts/init-user.sh:/docker-entrypoint-initdb.d/01-init-user.sh:ro
@@ -82,7 +86,7 @@ services:
       test: ["CMD", "/app/hsm_probe"]
   # endregion
 
-  # region KMS SERVICE (RUST)
+  # region KMS SERVICE
   kms-service:
     build:
       context: .
@@ -118,7 +122,30 @@ services:
         condition: service_healthy
   # endregion
 
-  # region KMS CEREMONY CLI (TOOLING)
+  # region KMS MIGRATE
+  kms-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: kms-migrate
+    container_name: kms_migrate
+    command: ["/app/kms-migrate"]
+    networks:
+      - kms-internal-net
+    environment:
+      - DATABASE__HOST=postgres
+      - DATABASE__PORT=5432
+      - DATABASE__NAME=${DATABASE__NAME:-kms_db}
+      - DATABASE__USER=${DATABASE__USER:-kms_migrator}
+      - DATABASE__PASSWORD_FILE=/run/secrets/kms_migrator_db_pass
+    secrets:
+      - kms_app_db_pass
+    depends_on:
+      postgres:
+        condition: service_healthy
+  # endregion
+
+  # region KMS CEREMONY
   kms-ceremony-cli:
     build:
       context: .
@@ -163,6 +190,8 @@ secrets:
     file: ./secrets/.db_root_password
   kms_app_db_pass:
     file: ./secrets/.kms_app_password
+  kms_migrator_db_pass:
+    file: ./secrets/.kms_migrator_password
 # endregion
 
 # region NETWORKS
