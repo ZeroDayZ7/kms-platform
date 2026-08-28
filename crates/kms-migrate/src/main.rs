@@ -1,3 +1,4 @@
+// crates/kms-migrate/src/main.rs
 use std::path::Path;
 
 use anyhow::Context;
@@ -14,7 +15,6 @@ struct Settings {
 fn load_settings() -> anyhow::Result<Settings> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
 
-    // Szukamy pliku konfiguracyjnego w folderze kms-migrate lub produkcyjnej ścieżce pracy
     let candidate_paths = [
         manifest_dir.join("config").join("settings.toml"),
         Path::new("config/settings.toml").to_path_buf(),

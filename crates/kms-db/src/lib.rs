@@ -1,5 +1,7 @@
+// crates/kms-db/src/lib.rs
 use serde::Deserialize;
 use sqlx::{PgPool, postgres::PgPoolOptions};
+use zeroize::Zeroizing;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct DatabaseConfig {
@@ -10,7 +12,7 @@ pub struct DatabaseConfig {
     #[serde(default)]
     pub user: Option<String>,
     #[serde(default)]
-    pub password: Option<String>,
+    pub password: Option<Zeroizing<String>>,
     #[serde(default)]
     pub name: String,
     #[serde(default = "default_pool_size")]
@@ -42,25 +44,30 @@ impl Default for DatabaseConfig {
 }
 
 impl DatabaseConfig {
-    pub fn password_value(&self) -> Option<String> {
+    pub fn password_value(&self) -> Option<Zeroizing<String>> {
         if let Some(password) = self
             .password
-            .as_deref()
-            .filter(|value| !value.trim().is_empty())
+            .as_ref()
+            .filter(|pass| !pass.trim().is_empty())
         {
-            return Some(password.to_owned());
+            return Some(password.clone());
         }
 
         let password_file = std::env::var("DATABASE__PASSWORD_FILE")
             .or_else(|_| std::env::var("DATABASE_PASSWORD_FILE"))
-            .ok();
+            .ok()?;
 
-        let raw = password_file.and_then(|path| std::fs::read_to_string(path).ok())?;
-        let password = raw.trim();
-        (!password.is_empty()).then(|| password.to_owned())
+        let raw = Zeroizing::new(std::fs::read_to_string(password_file).ok()?);
+        let trimmed = raw.trim();
+
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(Zeroizing::new(trimmed.to_owned()))
+        }
     }
 
-    pub fn connection_string(&self) -> String {
+    pub fn connection_string(&self) -> Zeroizing<String> {
         let password = self.password_value();
         let credentials = match (self.user.as_deref(), password.as_deref()) {
             (Some(user), Some(pass)) if !user.is_empty() && !pass.is_empty() => {
@@ -70,20 +77,22 @@ impl DatabaseConfig {
             _ => String::new(),
         };
 
-        format!(
+        Zeroizing::new(format!(
             "postgresql://{credentials}{host}:{port}/{database}",
             credentials = credentials,
             host = self.host,
             port = self.port,
             database = self.name,
-        )
+        ))
     }
 }
 
 pub async fn connect(db_set: &DatabaseConfig) -> Result<PgPool, sqlx::Error> {
+    let conn_str = db_set.connection_string();
+
     let pool = PgPoolOptions::new()
         .max_connections(db_set.pool_size)
-        .connect(&db_set.connection_string())
+        .connect(&conn_str)
         .await?;
 
     sqlx::query("SELECT 1")
@@ -100,6 +109,7 @@ pub async fn connect(db_set: &DatabaseConfig) -> Result<PgPool, sqlx::Error> {
 #[cfg(test)]
 mod tests {
     use super::DatabaseConfig;
+    use zeroize::Zeroizing;
 
     #[test]
     fn connection_string_uses_credentials_when_present() {
@@ -107,14 +117,14 @@ mod tests {
             host: "localhost".to_owned(),
             port: 5432,
             user: Some("kms_app_user".to_owned()),
-            password: Some("secret".to_owned()),
+            password: Some(Zeroizing::new("secret".to_owned())),
             name: "kms_db".to_owned(),
             pool_size: 10,
             auth_source: None,
         };
 
         assert_eq!(
-            cfg.connection_string(),
+            *cfg.connection_string(),
             "postgresql://kms_app_user:secret@localhost:5432/kms_db"
         );
     }
@@ -132,7 +142,7 @@ mod tests {
         };
 
         assert_eq!(
-            cfg.connection_string(),
+            *cfg.connection_string(),
             "postgresql://kms_app_user@localhost:5432/kms_db"
         );
     }
