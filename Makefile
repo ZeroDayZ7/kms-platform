@@ -1,4 +1,4 @@
-.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs
+.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean
 
 all: fmt check clippy test
 
@@ -18,6 +18,14 @@ test:
 
 docker-up:
 	docker compose up --build -d
+
+clean:
+	cargo clean
+
+rebuild: clean
+	cd crates/kms-service && sqlc generate
+	docker compose build --no-cache
+	docker compose up --force-recreate -d
 
 docker-down:
 	docker compose down -v
