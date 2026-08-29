@@ -1,6 +1,9 @@
+//crates/kms-core/src/hsm/client.rs
+
 use crate::hsm::protocol::{HsmRequest, HsmResponse};
 use std::time::Duration;
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 #[derive(Debug, Error)]
 pub enum HsmClientError {
@@ -33,9 +36,6 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::UnixStream,
 };
-
-#[cfg(unix)]
-use zeroize::Zeroizing;
 
 pub const HSM_SOCKET_DEFAULT_PATH: &str = "/run/vhsm/vhsm.sock";
 
@@ -200,6 +200,29 @@ pub async fn decrypt_via_hsm(
         }
         HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "HSM decryption failed ({code}): {message}"
+        ))),
+        _other => Err(HsmClientError::InvalidResponse),
+    }
+}
+
+//#region generate_random_bytes_via_hsm
+/// Wywołuje vHSM przez UDS w celu wygenerowania bezpiecznych losowych bajtów (entropii/poświadczenia).
+pub async fn generate_random_bytes_via_hsm(
+    socket_path: &str,
+    length: usize,
+    timeout: Option<Duration>,
+) -> HsmResult<Zeroizing<Vec<u8>>> {
+    let req = HsmRequest::GenerateRandomBytes { length };
+
+    match send_hsm_request(socket_path, &req, timeout).await? {
+        HsmResponse::RandomBytesGenerated { random_bytes } => {
+            if random_bytes.len() != length {
+                return Err(HsmClientError::InvalidResponse);
+            }
+            Ok(Zeroizing::new(random_bytes))
+        }
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
+            "HSM random bytes generation failed ({code}): {message}"
         ))),
         _other => Err(HsmClientError::InvalidResponse),
     }

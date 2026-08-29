@@ -3,7 +3,6 @@ x-common-healthcheck: &common-healthcheck
   timeout: 5s
   retries: 5
   start_period: 15s
-# endregion
 
 services:
   # region POSTGRESQL
@@ -37,7 +36,6 @@ services:
           "CMD-SHELL",
           "pg_isready -U ${DATABASE__ROOT_USER:-kms_root_user} -d ${DATABASE__NAME:-kms_db}",
         ]
-  # endregion
 
   # region REDIS
   # redis:
@@ -62,7 +60,6 @@ services:
   #   healthcheck:
   #     <<: *common-healthcheck
   #     test: ["CMD", "redis-cli", "-a", "${REDIS__PASSWORD:-change_me}", "ping"]
-  # endregion
 
   # region VHSM DAEMON
   vhsm-daemon:
@@ -84,7 +81,6 @@ services:
     healthcheck:
       <<: *common-healthcheck
       test: ["CMD", "/app/hsm_probe"]
-  # endregion
 
   # region KMS SERVICE
   kms-service:
@@ -96,7 +92,7 @@ services:
     command: ["serve"]
     networks:
       - kms-internal-net
-      - citizen-app-net
+      - sec-net
     ports:
       - "8081:8080"
     environment:
@@ -120,7 +116,6 @@ services:
         condition: service_healthy
       vhsm-daemon:
         condition: service_healthy
-  # endregion
 
   # region KMS MIGRATE
   kms-migrate:
@@ -129,7 +124,8 @@ services:
       dockerfile: Dockerfile
       target: kms-migrate
     container_name: kms_migrate
-    command: ["/app/kms-migrate"]
+    command: ["/app/kms-migrate", "run"]
+    restart: on-failure
     networks:
       - kms-internal-net
     environment:
@@ -143,7 +139,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-  # endregion
 
   # region KMS CEREMONY
   kms-ceremony-cli:
@@ -170,7 +165,6 @@ services:
     depends_on:
       vhsm-daemon:
         condition: service_healthy
-  # endregion
 
 # region VOLUMES
 volumes:
@@ -182,7 +176,6 @@ volumes:
     driver: local
   vhsm_sockets:
     driver: local
-# endregion
 
 # region SECRETS
 secrets:
@@ -192,15 +185,12 @@ secrets:
     file: ./secrets/.kms_app_password
   kms_migrator_db_pass:
     file: ./secrets/.kms_migrator_password
-# endregion
 
 # region NETWORKS
 networks:
   kms-internal-net:
     driver: bridge
     internal: false
-
-  citizen-app-net:
-    name: obywatel_app__network
-    external: true
-# endregion
+  sec-net:
+    name: kms_sec-net
+    driver: bridge

@@ -1,4 +1,4 @@
-use crate::handlers::{admin, audit, crypto, health, keys};
+use crate::handlers::{admin, agent, audit, crypto, health, keys};
 use crate::server::middleware::{self, RateLimitLayers};
 use crate::server::state::AppState;
 use axum::{
@@ -27,6 +27,10 @@ pub fn router(state: AppState) -> Router {
         .route(
             "/status",
             get(health::status).layer(rate_limits.health.clone()),
+        )
+        .route(
+            "/api/v1/agent/credentials/issue",
+            post(agent::issue_dynamic_credentials_handler).layer(rate_limits.auth.clone()),
         )
         .route(
             "/api/v1/keys/generate",
@@ -76,6 +80,11 @@ pub fn router(state: AppState) -> Router {
             post(admin::rewrap_keys_handler).layer(rate_limits.auth.clone()),
         );
     }
+
+    router = router.route(
+        "/api/v1/admin/bootstrap/import",
+        post(admin::import_bootstrap_handler).layer(rate_limits.auth.clone()),
+    );
 
     router
         .route_layer(rate_limits.global.clone())

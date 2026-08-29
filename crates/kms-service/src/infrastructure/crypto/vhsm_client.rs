@@ -159,4 +159,24 @@ impl VhsmClient {
             _ => Err(AppError::CryptoError("Nieoczekiwana odpowiedź vHSM".into())),
         }
     }
+
+    pub async fn generate_credential(
+        &self,
+        password_length: usize,
+    ) -> AppResult<(String, String, Vec<u8>, u32)> {
+        let req = HsmRequest::GenerateCredential { password_length };
+
+        match self.send_request(&req).await? {
+            HsmResponse::CredentialGenerated {
+                credential_id,
+                password,
+                wrapped_password,
+                key_version,
+            } => Ok((credential_id, password, wrapped_password, key_version)),
+            HsmResponse::Error { message, .. } => {
+                Err(AppError::CryptoError(format!("vHSM błąd: {message}")))
+            }
+            _ => Err(AppError::CryptoError("Nieoczekiwana odpowiedź vHSM".into())),
+        }
+    }
 }

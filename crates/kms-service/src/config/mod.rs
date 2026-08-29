@@ -10,6 +10,7 @@ mod settings;
 pub mod acl;
 pub mod cors;
 pub mod crypto;
+pub mod iam_json;
 pub mod rate_limit;
 
 pub use cors::HttpMethod;

@@ -1,17 +1,21 @@
+// crates/kms-service/src/server/state.rs
 use crate::application::use_cases::{
     DecryptDataUseCase, EncryptDataUseCase, GenerateDataKeyUseCase, GenerateKeyPairUseCase,
     GetPrivateKeyUseCase, GetPublicKeyUseCase, GetSymmetricKeyUseCase, RotateKeyUseCase,
     SignDataUseCase,
 };
 use crate::config::Settings;
+use crate::config::iam_json::IamCredentialPolicy;
 use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
 use crate::domain::rate_limiter::{InMemoryRateLimiter, RateLimiter};
 use crate::errors::AppResult;
 use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
 use crate::infrastructure::crypto::vhsm_client::VhsmClient;
 use crate::infrastructure::postgres::{PgAuditRepository, PgKeyRepository, init_postgres};
+use crate::infrastructure::providers::ProviderFactory;
 use crate::infrastructure::redis::client::RedisManager;
 use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
+
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -168,6 +172,8 @@ pub struct AppState {
     pub key_repo: Arc<PgKeyRepository>,
     pub crypto_service: Arc<VhsmCryptoService>,
     pub key_cache: Arc<KeyCache>,
+    pub iam_policy: Arc<IamCredentialPolicy>,
+    pub provider_factory: Arc<ProviderFactory>,
 }
 
 impl AppState {
@@ -199,6 +205,8 @@ impl AppState {
         ));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
+        let provider_factory = Arc::new(ProviderFactory::new());
+
         let _ = crate::workers::expiration::run_expiration_worker(
             key_repo.clone(),
             audit_repo.clone(),
@@ -214,6 +222,17 @@ impl AppState {
             shutdown_token.clone(),
         )
         .await;
+
+        let iam_policy_path = IamCredentialPolicy::default_policy_path();
+        let iam_policy = Arc::new(
+            IamCredentialPolicy::load_from_file(&iam_policy_path).unwrap_or_else(|err| {
+                tracing::warn!(error = ?err, "Failed to load IAM policy, using empty default fallback");
+                IamCredentialPolicy {
+                    version: "2026-08-29".into(),
+                    statements: vec![],
+                }
+            }),
+        );
 
         let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(crypto_service.clone()));
         let decrypt_data_use_case = Arc::new(DecryptDataUseCase::new(crypto_service.clone()));
@@ -282,6 +301,8 @@ impl AppState {
             key_repo,
             crypto_service,
             key_cache,
+            iam_policy,
+            provider_factory,
         })
     }
 
