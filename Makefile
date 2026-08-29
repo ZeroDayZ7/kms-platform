@@ -30,8 +30,6 @@ clean:
 rebuild:
 	@echo "===> Czyszczenie starych kontenerów i wolumenów..."
 	docker compose down -v --remove-orphans
-	@echo "===> Generowanie kodu SQL (sqlc)..."
-	sqlc generate -f crates/kms-service/sqlc.yaml
 	@echo "===> Formatowanie kodu (cargo fmt)..."
 	cargo fmt
 	@echo "===> Budowanie obrazów bez cache..."

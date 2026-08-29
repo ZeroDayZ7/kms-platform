@@ -95,14 +95,20 @@ pub async fn import_bootstrap(
             service_id = %rec.service_id,
             target_type = %rec.target_type,
             target_db = %rec.target_db,
+            username = %rec.username,
             "Inserting credential record into PostgreSQL"
         );
 
-        // Duplication check: active credential with same service_id, target_db, username
+        // POPRAWKA: Dodano target_type do zapytania o duplikaty (zgodnie z indeksem bazy)
         let exists: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM db_credentials WHERE service_id = $1 AND target_db = $2 AND username = $3 AND status = 'ACTIVE' LIMIT 1",
+            r#"
+            SELECT id FROM db_credentials 
+            WHERE service_id = $1 AND target_type = $2 AND target_db = $3 AND username = $4 AND status = 'ACTIVE' 
+            LIMIT 1
+            "#,
         )
         .bind(&rec.service_id)
+        .bind(&rec.target_type)
         .bind(&rec.target_db)
         .bind(&rec.username)
         .fetch_optional(&mut *tx)
@@ -112,13 +118,14 @@ pub async fn import_bootstrap(
             let _ = tx.rollback().await;
             error!(
                 service_id = %rec.service_id,
-                username = %rec.username,
+                target_type = %rec.target_type,
                 target_db = %rec.target_db,
+                username = %rec.username,
                 "Duplicate active credential error"
             );
             return Err(AppError::ValidationError(format!(
-                "Duplicate active credential: {}@{}",
-                rec.username, rec.target_db
+                "Duplicate active credential: {}@{} ({})",
+                rec.username, rec.target_db, rec.target_type
             )));
         }
 
@@ -130,8 +137,7 @@ pub async fn import_bootstrap(
         .fetch_optional(&mut *tx)
         .await?;
 
-        let kek_id = kek_row;
-        if kek_id.is_none() {
+        if kek_row.is_none() {
             let _ = tx.rollback().await;
             error!(service_id = %rec.service_id, "No active KEK found for service");
             return Err(AppError::Internal(format!(
@@ -139,6 +145,7 @@ pub async fn import_bootstrap(
                 rec.service_id
             )));
         }
+        let kek_id = kek_row.unwrap(); // Używamy unwrap po sprawdzeniu is_none()
 
         // Encrypt password via crypto service (vHSM)
         let pwd_bytes = rec.password.as_bytes().to_vec();
@@ -149,21 +156,20 @@ pub async fn import_bootstrap(
             .await
             .map_err(|e| AppError::CryptoError(format!("Failed to encrypt credential: {}", e)))?;
 
-        // Ensure ciphertext contains nonce
         if encrypted.ciphertext.len() < 12 {
             let _ = tx.rollback().await;
             return Err(AppError::CryptoError("Encrypted payload too short".into()));
         }
         let nonce = encrypted.ciphertext[..12].to_vec();
 
-        // Insert into db_credentials
+        // POPRAWKA: Precyzyjne wskazanie kolumn oraz jawnego statusu 'ACTIVE'
         sqlx::query(
             r#"
-        INSERT INTO db_credentials 
-            (id, service_id, target_type, target_db, resource, username, encrypted_password, nonce, kek_id, created_at)
-        VALUES 
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        "#,
+            INSERT INTO db_credentials 
+                (id, service_id, target_type, target_db, resource, username, encrypted_password, nonce, kek_id, status, created_at)
+            VALUES 
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10)
+            "#,
         )
         .bind(Uuid::new_v4())
         .bind(&rec.service_id)
@@ -173,7 +179,7 @@ pub async fn import_bootstrap(
         .bind(&rec.username)
         .bind(&encrypted.ciphertext)
         .bind(&nonce)
-        .bind(kek_id)
+        .bind(kek_id) // Użycie wymaganego UUID (nie Option<Uuid>)
         .bind(now)
         .execute(&mut *tx)
         .await?;
