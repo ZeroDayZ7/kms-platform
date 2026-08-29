@@ -16,6 +16,13 @@ FROM keys
 WHERE service_id = $1 AND algorithm = $2 AND version = $3
 LIMIT 1;
 
+-- name: GetLatestActiveKeyForService :one
+SELECT id
+FROM keys
+WHERE service_id = $1 AND is_active = TRUE
+ORDER BY version DESC
+LIMIT 1;
+
 -- name: GetAllActiveKeys :many
 SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at
 FROM keys
