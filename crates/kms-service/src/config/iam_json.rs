@@ -1,17 +1,21 @@
+use crate::errors::{AppError, AppResult};
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::{Path, PathBuf};
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct IamStatement {
+    pub sid: String,
+    pub effect: String,
+    pub roles: Vec<String>,
+    pub actions: Vec<String>,
+    pub resources: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct IamCredentialPolicy {
     pub version: String,
-    pub policies: Vec<IamPolicy>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct IamPolicy {
-    pub role: String,
-    pub actions: Vec<String>,
-    pub resources: Vec<String>,
+    pub statements: Vec<IamStatement>,
 }
 
 impl IamCredentialPolicy {
@@ -21,40 +25,59 @@ impl IamCredentialPolicy {
             .join("iam_credentials_policy.json")
     }
 
-    pub fn load_from_file(path: impl AsRef<Path>) -> Result<Self, String> {
-        let content = std::fs::read_to_string(path.as_ref()).map_err(|err| {
-            format!(
-                "Failed to read IAM policy file '{}': {err}",
-                path.as_ref().display()
-            )
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> AppResult<Self> {
+        let path_ref = path.as_ref();
+        let content = fs::read_to_string(path_ref).map_err(|e| {
+            AppError::Internal(format!(
+                "Failed to read IAM policy file '{}': {e}",
+                path_ref.display()
+            ))
         })?;
 
-        serde_json::from_str(&content)
-            .map_err(|err| format!("Failed to parse IAM policy JSON: {err}"))
+        let policy: Self = serde_json::from_str(&content)
+            .map_err(|e| AppError::Internal(format!("Failed to parse IAM policy JSON: {e}")))?;
+
+        Ok(policy)
     }
 
-    pub fn load_default() -> Result<Self, String> {
+    pub fn load_default() -> AppResult<Self> {
         Self::load_from_file(Self::default_policy_path())
     }
 
     pub fn is_action_allowed(&self, role: &str, action: &str, resource: &str) -> bool {
-        self.policies.iter().any(|policy| {
-            if policy.role != role {
-                return false;
+        for stmt in &self.statements {
+            if stmt.effect != "Allow" {
+                continue;
             }
 
-            let matches_action = policy.actions.iter().any(|candidate| candidate == action);
-            let matches_resource = policy.resources.iter().any(|candidate| {
-                if candidate.ends_with('*') {
-                    let prefix = candidate.trim_end_matches('*');
-                    return resource.starts_with(prefix);
-                }
-                candidate == resource
-            });
+            let role_matches = stmt.roles.iter().any(|r| r == "*" || r == role);
+            if !role_matches {
+                continue;
+            }
 
-            matches_action && matches_resource
-        })
+            let action_matches = stmt.actions.iter().any(|a| match_pattern(a, action));
+            if !action_matches {
+                continue;
+            }
+
+            let resource_matches = stmt.resources.iter().any(|r| match_pattern(r, resource));
+            if resource_matches {
+                return true;
+            }
+        }
+        false
     }
+}
+
+/// Dynamiczny matcher wspierający wildcard `*` na końcu lub jako pełny zamiennik
+fn match_pattern(pattern: &str, candidate: &str) -> bool {
+    if pattern == "*" || pattern == candidate {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix('*') {
+        return candidate.starts_with(prefix);
+    }
+    false
 }
 
 #[cfg(test)]

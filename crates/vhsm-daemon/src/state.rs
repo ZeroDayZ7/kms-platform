@@ -5,7 +5,6 @@ pub struct VhsmState {
     pub initialized: bool,
     pub active_key_version: u32,
     pub master_key: Option<Zeroizing<Vec<u8>>>,
-    /// Znacznik czasu rozpoczęcia procedury Unseal (pierwszego wgranego udziału)
     pub unseal_started_at: Option<Instant>,
 }
 
