@@ -5,6 +5,8 @@ use sqlx::postgres::PgPoolOptions;
 
 use super::{GeneratedCredential, TargetResourceProvider};
 use crate::errors::AppError;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 
 pub struct PostgresTargetProvider;
 
@@ -15,6 +17,7 @@ impl TargetResourceProvider for PostgresTargetProvider {
         target_conn_str: &str,
         role: &str,
         ttl_seconds: i64,
+        password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError> {
         let pool = PgPoolOptions::new()
             .max_connections(2)
@@ -31,11 +34,20 @@ impl TargetResourceProvider for PostgresTargetProvider {
             .collect();
 
         let username = format!("kms_tmp_{}", random_suffix);
-        let password: String = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(32)
-            .map(char::from)
-            .collect();
+
+        // Use provided password bytes when available, otherwise generate a random password
+        let password: String = if let Some(bytes) = password {
+            match std::str::from_utf8(bytes) {
+                Ok(s) => s.to_string(),
+                Err(_) => BASE64.encode(bytes),
+            }
+        } else {
+            rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(32)
+                .map(char::from)
+                .collect()
+        };
 
         let create_query = format!(
             "CREATE USER {} WITH PASSWORD '{}' VALID UNTIL NOW() + INTERVAL '{} seconds';",

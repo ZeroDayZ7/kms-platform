@@ -8,6 +8,8 @@ use crate::{
     errors::{AppError, AppResult},
     server::state::AppState,
 };
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 
 pub const DEFAULT_PASSWORD_LEN: usize = 32;
 
@@ -76,12 +78,8 @@ impl IssueAgentCredentialUseCase {
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
         // 3. Utworzenie konta w zewnętrznej usłudze (zgodnie z interfejsem TargetResourceProvider)
-        let provider = state.provider_factory.get(&target_type_clean)?;
-        let _provider_credential = provider
-            .create_user(&input.target_service, &username, input.ttl_seconds as i64)
-            .await?;
-
-        // 4. ATOMOWY ZAPIS W BAZIE KMS (Transakcja SQL)
+        // 3. ATOMOWY ZAPIS W BAZIE KMS (Transakcja SQL)
+        // Insert preliminary record inside a transaction; we will commit only after provider succeeds.
         let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
 
         insert_db_credential_tx(
@@ -95,6 +93,46 @@ impl IssueAgentCredentialUseCase {
         )
         .await?;
 
+        // 4. Create account in target provider using plaintext password from vHSM.
+        let provider = state.provider_factory.get(&target_type_clean)?;
+
+        // Decode base64 plaintext password into secure Zeroizing buffer for provider call
+        let secret_bytes = BASE64
+            .decode(generated.plaintext_password.as_str())
+            .map_err(|e| {
+                AppError::ValidationError(format!("Invalid base64 password from vHSM: {e}"))
+            })?;
+        let secret_zero = zeroize::Zeroizing::new(secret_bytes);
+
+        let provider_result = provider
+            .create_user(
+                &input.target_service,
+                &username,
+                input.ttl_seconds as i64,
+                Some(secret_zero.as_ref()),
+            )
+            .await;
+
+        // Ensure secret bytes are zeroed as soon as possible
+        drop(secret_zero);
+
+        let provider_credential = match provider_result {
+            Ok(c) => c,
+            Err(e) => {
+                // Provider failed: rollback DB transaction so no pending record remains
+                let _ = tx.rollback().await;
+                return Err(e);
+            }
+        };
+
+        // Update DB record with actual provider username (if provider generated a different one)
+        update_db_credential_username_tx(
+            &mut tx,
+            generated.credential_id,
+            &provider_credential.username,
+        )
+        .await?;
+
         insert_audit_log_tx(
             &mut tx,
             &input.caller_service,
@@ -105,8 +143,17 @@ impl IssueAgentCredentialUseCase {
         )
         .await?;
 
-        // Zatwierdzenie transakcji
-        tx.commit().await?;
+        // Commit transaction now that provider account was created and DB updated
+        if let Err(commit_err) = tx.commit().await {
+            // Attempt best-effort cleanup: revoke provider account to avoid orphan
+            let _ = provider
+                .revoke_user(&input.target_service, &provider_credential.username)
+                .await;
+
+            return Err(AppError::Internal(format!(
+                "DB commit failed: {commit_err}"
+            )));
+        }
 
         Ok(IssueAgentCredentialOutput {
             credential_id: generated.credential_id,
@@ -210,6 +257,26 @@ pub async fn insert_db_credential_tx(
     .bind(&blob.nonce)
     .bind(kek_id)
     .bind(created_at)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn update_db_credential_username_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+    username: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        UPDATE db_credentials
+        SET username = $1
+        WHERE id = $2
+        "#,
+    )
+    .bind(username)
+    .bind(id)
     .execute(&mut **tx)
     .await?;
 

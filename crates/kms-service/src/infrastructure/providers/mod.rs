@@ -21,6 +21,7 @@ pub trait TargetResourceProvider: Send + Sync {
         target_conn_str: &str,
         role: &str,
         ttl_seconds: i64,
+        password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError>;
 
     async fn revoke_user(&self, target_conn_str: &str, username: &str) -> Result<(), AppError>;
