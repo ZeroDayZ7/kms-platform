@@ -25,6 +25,9 @@ pub enum HsmRequest {
     GenerateRandomBytes {
         length: usize,
     },
+    GenerateCredential {
+        password_length: usize,
+    },
     Encrypt {
         key_id: String,
         key_version: Option<u32>,
@@ -70,6 +73,12 @@ pub enum HsmResponse {
     },
     Decrypted {
         plaintext: Vec<u8>,
+        key_version: u32,
+    },
+    CredentialGenerated {
+        credential_id: String,
+        password: String,
+        wrapped_password: Vec<u8>,
         key_version: u32,
     },
     Error {

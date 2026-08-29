@@ -4682,6 +4682,7 @@ name = "vhsm-daemon"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
+ "base64 0.21.7",
  "hex",
  "kms-core",
  "rand 0.8.7",

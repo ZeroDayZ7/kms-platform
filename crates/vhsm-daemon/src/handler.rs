@@ -223,6 +223,62 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
+        HsmRequest::GenerateCredential { password_length } => {
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(key) => key,
+                None => {
+                    return HsmResponse::Error {
+                        code: 403,
+                        message: "vHSM is locked. Master key must be initialized first."
+                            .to_string(),
+                    };
+                }
+            };
+
+            let key_version = guard.active_key_version;
+            drop(guard);
+
+            if password_length == 0 || password_length > 1024 {
+                return HsmResponse::Error {
+                    code: 400,
+                    message: "Invalid password length".to_string(),
+                };
+            }
+
+            // Generate credential_id (non-secret, unpredictable)
+            let mut id_bytes = [0u8; 16];
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut id_bytes);
+            let credential_id = hex::encode(id_bytes);
+
+            // Generate password bytes securely and keep in Zeroizing
+            let mut password_bytes = Zeroizing::new(vec![0u8; password_length]);
+            rand::rngs::OsRng.fill_bytes(password_bytes.as_mut());
+
+            // Encrypt (wrap) the raw password bytes with the root key
+            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), password_bytes.as_ref()) {
+                Ok(v) => v,
+                Err(msg) => {
+                    // ensure zeroize of password happens automatically
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: msg,
+                    };
+                }
+            };
+
+            // Convert password to a safe string representation (base64) for transport
+            let password_b64 = base64::encode(password_bytes.as_ref());
+
+            HsmResponse::CredentialGenerated {
+                credential_id,
+                password: password_b64,
+                wrapped_password: wrapped,
+                key_version,
+            }
+        }
+
         HsmRequest::Encrypt {
             key_id,
             key_version,
@@ -472,5 +528,179 @@ mod tests {
             }
             other => panic!("unexpected data key response: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn generate_credential_happy_path_and_unwrap() {
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 11;
+            guard.master_key = Some(Zeroizing::new(vec![7u8; 32]));
+        }
+
+        let resp = handle_request(
+            HsmRequest::GenerateCredential {
+                password_length: 32,
+            },
+            state.clone(),
+        )
+        .await;
+
+        match resp {
+            HsmResponse::CredentialGenerated {
+                credential_id,
+                password,
+                wrapped_password,
+                key_version,
+            } => {
+                assert!(!credential_id.is_empty());
+                let pwd_bytes = base64::decode(&password).expect("base64 decode");
+                assert_eq!(pwd_bytes.len(), 32);
+                assert!(!wrapped_password.is_empty());
+                assert_eq!(key_version, 11);
+
+                // Ensure wrapped_password is not plaintext
+                assert_ne!(wrapped_password, pwd_bytes);
+
+                // Decrypt wrapped_password using master key
+                let guard = state.read().await;
+                let root = guard.master_key.as_ref().unwrap();
+                let decrypted = crypto::decrypt_bytes(root.as_ref(), &wrapped_password)
+                    .expect("decrypt should succeed");
+                assert_eq!(decrypted.as_ref(), pwd_bytes.as_slice());
+
+                // Nonce should be present (first 12 bytes) and non-zero
+                assert!(wrapped_password.len() > 12);
+                let nonce = &wrapped_password[..12];
+                assert!(nonce.iter().any(|b| *b != 0));
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_credential_uniqueness_and_locked_rejection() {
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 4;
+            guard.master_key = Some(Zeroizing::new(vec![9u8; 32]));
+        }
+
+        let r1 = handle_request(
+            HsmRequest::GenerateCredential {
+                password_length: 16,
+            },
+            state.clone(),
+        )
+        .await;
+
+        let r2 = handle_request(
+            HsmRequest::GenerateCredential {
+                password_length: 16,
+            },
+            state.clone(),
+        )
+        .await;
+
+        let (id1, pwd1) = match r1 {
+            HsmResponse::CredentialGenerated {
+                credential_id,
+                password,
+                ..
+            } => (credential_id, password),
+            other => panic!("unexpected: {other:?}"),
+        };
+
+        let (id2, pwd2) = match r2 {
+            HsmResponse::CredentialGenerated {
+                credential_id,
+                password,
+                ..
+            } => (credential_id, password),
+            other => panic!("unexpected: {other:?}"),
+        };
+
+        assert_ne!(id1, id2);
+        assert_ne!(pwd1, pwd2);
+
+        // Now test locked rejection
+        let state_locked = Arc::new(RwLock::new(VhsmState::new()));
+        let resp = handle_request(
+            HsmRequest::GenerateCredential { password_length: 8 },
+            state_locked,
+        )
+        .await;
+
+        match resp {
+            HsmResponse::Error { code, .. } => assert_eq!(code, 403),
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_credential_not_logged() {
+        use std::io::{self, Write};
+        use std::sync::{Arc as StdArc, Mutex};
+        use tracing_subscriber::fmt::MakeWriter;
+
+        // Shared buffer for logs
+        let buf = StdArc::new(Mutex::new(Vec::new()));
+
+        struct SharedWriter(StdArc<Mutex<Vec<u8>>>);
+        impl<'a> MakeWriter<'a> for SharedWriter {
+            type Writer = SharedGuardWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                SharedGuardWriter(self.0.clone())
+            }
+        }
+
+        struct SharedGuardWriter(StdArc<Mutex<Vec<u8>>>);
+        impl Write for SharedGuardWriter {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                let mut guard = self.0.lock().unwrap();
+                guard.extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+
+        let writer = SharedWriter(buf.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(writer)
+            .with_max_level(tracing::Level::INFO)
+            .finish();
+        let _ = tracing::subscriber::set_global_default(subscriber);
+
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 2;
+            guard.master_key = Some(Zeroizing::new(vec![3u8; 32]));
+        }
+
+        let resp = handle_request(
+            HsmRequest::GenerateCredential {
+                password_length: 12,
+            },
+            state,
+        )
+        .await;
+
+        let pwd_b64 = match resp {
+            HsmResponse::CredentialGenerated { password, .. } => password,
+            other => panic!("unexpected: {other:?}"),
+        };
+
+        // Inspect captured logs to ensure password not present
+        let logs = buf.lock().unwrap();
+        let logs_str = String::from_utf8_lossy(&logs);
+        assert!(!logs_str.contains(&pwd_b64));
     }
 }
