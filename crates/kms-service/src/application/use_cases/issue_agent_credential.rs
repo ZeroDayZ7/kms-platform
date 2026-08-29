@@ -74,6 +74,37 @@ impl IssueAgentCredentialUseCase {
         )
         .await?;
 
+        // Lookup target resource admin connection (encrypted) and decrypt it via vHSM
+        let target_row: Option<(Uuid, Vec<u8>)> = sqlx::query_as(
+            "SELECT id, connection_url_encrypted FROM target_resources WHERE target_name = $1 AND active = true LIMIT 1",
+        )
+        .bind(&input.target_service)
+        .fetch_optional(&state.db)
+        .await?;
+
+        let (target_id, conn_encrypted) = match target_row {
+            Some(v) => v,
+            None => {
+                return Err(AppError::NotFound(format!(
+                    "Target resource not found: {}",
+                    input.target_service
+                )));
+            }
+        };
+
+        let admin_conn_bytes = state
+            .crypto_service
+            .decrypt_bytes(&conn_encrypted)
+            .await
+            .map_err(|e| {
+                AppError::CryptoError(format!("Failed to decrypt target connection string: {e}"))
+            })?;
+        let admin_conn = String::from_utf8(admin_conn_bytes).map_err(|_| {
+            AppError::CryptoError(
+                "Decrypted target connection string is not valid UTF-8".to_string(),
+            )
+        })?;
+
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
@@ -106,7 +137,7 @@ impl IssueAgentCredentialUseCase {
 
         let provider_result = provider
             .create_user(
-                &input.target_service,
+                &admin_conn,
                 &username,
                 input.ttl_seconds as i64,
                 Some(secret_zero.as_ref()),
@@ -140,6 +171,19 @@ impl IssueAgentCredentialUseCase {
             &action,
             &generated.credential_id,
             created_at,
+        )
+        .await?;
+
+        // Insert provisioned_credentials record in same transaction
+        insert_provisioned_credential_tx(
+            &mut tx,
+            Uuid::new_v4(),
+            &input.caller_service,
+            target_id,
+            &provider_credential.username,
+            &generated.encrypted_password,
+            &username, // granted_role
+            expires_at,
         )
         .await?;
 
@@ -277,6 +321,39 @@ pub async fn update_db_credential_username_tx(
     )
     .bind(username)
     .bind(id)
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_provisioned_credential_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+    service_id: &str,
+    target_id: Uuid,
+    username: &str,
+    password_encrypted: &[u8],
+    granted_role: &str,
+    expires_at: DateTime<Utc>,
+) -> AppResult<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO provisioned_credentials
+            (id, service_id, target_id, username, password_encrypted, granted_role, expires_at, revoked, created_at)
+        VALUES
+            ($1, $2, $3, $4, $5, $6, $7, false, $8)
+        "#,
+    )
+    .bind(id)
+    .bind(service_id)
+    .bind(target_id)
+    .bind(username)
+    .bind(password_encrypted)
+    .bind(granted_role)
+    .bind(expires_at)
+    .bind(Utc::now())
     .execute(&mut **tx)
     .await?;
 

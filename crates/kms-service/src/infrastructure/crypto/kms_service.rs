@@ -32,6 +32,11 @@ impl VhsmCryptoService {
             self.client.generate_credential(password_length).await?;
         Ok((credential_id, password_b64, wrapped, key_version as i32))
     }
+
+    pub async fn decrypt_bytes(&self, ciphertext: &[u8]) -> AppResult<Vec<u8>> {
+        let plaintext = self.client.decrypt(ciphertext).await?;
+        Ok(plaintext)
+    }
 }
 
 #[async_trait::async_trait]

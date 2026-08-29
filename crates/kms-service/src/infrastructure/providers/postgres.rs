@@ -1,12 +1,12 @@
 use async_trait::async_trait;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use rand::Rng;
 use rand::distributions::Alphanumeric;
 use sqlx::postgres::PgPoolOptions;
 
 use super::{GeneratedCredential, TargetResourceProvider};
 use crate::errors::AppError;
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
 
 pub struct PostgresTargetProvider;
 
@@ -35,35 +35,42 @@ impl TargetResourceProvider for PostgresTargetProvider {
 
         let username = format!("kms_tmp_{}", random_suffix);
 
-        // Use provided password bytes when available, otherwise generate a random password
-        let password: String = if let Some(bytes) = password {
-            match std::str::from_utf8(bytes) {
-                Ok(s) => s.to_string(),
-                Err(_) => BASE64.encode(bytes),
-            }
-        } else {
-            rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(32)
-                .map(char::from)
-                .collect()
+        let password_bytes = password.ok_or_else(|| {
+            AppError::Internal("No password provided for Postgres provider".to_string())
+        })?;
+        let password: String = match std::str::from_utf8(password_bytes) {
+            Ok(s) => s.to_string(),
+            Err(_) => BASE64.encode(password_bytes),
         };
 
-        let create_query = format!(
-            "CREATE USER {} WITH PASSWORD '{}' VALID UNTIL NOW() + INTERVAL '{} seconds';",
-            username, password, ttl_seconds
-        );
-        let grant_query = format!("GRANT {} TO {};", role, username);
+        // 1. ROUND-TRIP: Generowanie połączonego, bezpiecznego ciągu DDL po stronie Postgresa
+        let query_builder = r#"
+            SELECT format(
+                'CREATE USER %s WITH PASSWORD %L VALID UNTIL NOW() + INTERVAL %L seconds; GRANT %s TO %s;',
+                quote_ident($1),
+                $2,
+                $3,
+                quote_ident($4),
+                quote_ident($1)
+            )
+        "#;
 
-        sqlx::query(&create_query)
+        let row: (String,) = sqlx::query_as(query_builder)
+            .bind(&username)
+            .bind(&password)
+            .bind(ttl_seconds)
+            .bind(role)
+            .fetch_one(&pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("Failed to build SQL batch: {}", e)))?;
+
+        let combined_ddl = row.0;
+
+        // 2. ROUND-TRIP: Wykonanie CREATE USER oraz GRANT w jednym batchu
+        sqlx::query(&combined_ddl)
             .execute(&pool)
             .await
-            .map_err(|e| AppError::Internal(format!("Failed to create PG target user: {}", e)))?;
-
-        sqlx::query(&grant_query)
-            .execute(&pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("Failed to grant PG role: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("Failed to execute combined PG DDL: {}", e)))?;
 
         Ok(GeneratedCredential {
             username,
@@ -80,8 +87,16 @@ impl TargetResourceProvider for PostgresTargetProvider {
                 AppError::DatabaseError(format!("Failed to connect to target PG: {}", e))
             })?;
 
-        let drop_query = format!("DROP USER IF EXISTS {};", username);
-        sqlx::query(&drop_query)
+        let drop_row: (String,) =
+            sqlx::query_as("SELECT format('DROP USER IF EXISTS %s;', quote_ident($1))")
+                .bind(username)
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| {
+                    AppError::Internal(format!("Failed to build DROP USER statement: {}", e))
+                })?;
+
+        sqlx::query(&drop_row.0)
             .execute(&pool)
             .await
             .map_err(|e| AppError::Internal(format!("Failed to drop PG user: {}", e)))?;
