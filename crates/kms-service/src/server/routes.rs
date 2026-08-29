@@ -1,4 +1,4 @@
-use crate::handlers::{admin, audit, credentials, crypto, health, keys};
+use crate::handlers::{admin, agent, audit, crypto, health, keys};
 use crate::server::middleware::{self, RateLimitLayers};
 use crate::server::state::AppState;
 use axum::{
@@ -29,8 +29,8 @@ pub fn router(state: AppState) -> Router {
             get(health::status).layer(rate_limits.health.clone()),
         )
         .route(
-            "/api/v1/credentials/provision",
-            post(credentials::provision_credential_handler).layer(rate_limits.auth.clone()),
+            "/api/v1/agent/credentials/issue",
+            post(agent::issue_dynamic_credentials_handler).layer(rate_limits.auth.clone()),
         )
         .route(
             "/api/v1/keys/generate",

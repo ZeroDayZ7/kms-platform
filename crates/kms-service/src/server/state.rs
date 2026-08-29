@@ -1,3 +1,4 @@
+// crates/kms-service/src/server/state.rs
 use crate::application::use_cases::{
     DecryptDataUseCase, EncryptDataUseCase, GenerateDataKeyUseCase, GenerateKeyPairUseCase,
     GetPrivateKeyUseCase, GetPublicKeyUseCase, GetSymmetricKeyUseCase, RotateKeyUseCase,
@@ -11,6 +12,7 @@ use crate::errors::AppResult;
 use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
 use crate::infrastructure::crypto::vhsm_client::VhsmClient;
 use crate::infrastructure::postgres::{PgAuditRepository, PgKeyRepository, init_postgres};
+use crate::infrastructure::providers::ProviderFactory;
 use crate::infrastructure::redis::client::RedisManager;
 use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
 
@@ -203,6 +205,8 @@ impl AppState {
         ));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
+        let provider_factory = Arc::new(ProviderFactory::new());
+
         let _ = crate::workers::expiration::run_expiration_worker(
             key_repo.clone(),
             audit_repo.clone(),
@@ -298,6 +302,7 @@ impl AppState {
             crypto_service,
             key_cache,
             iam_policy,
+            provider_factory,
         })
     }
 
