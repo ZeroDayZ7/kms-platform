@@ -6,6 +6,13 @@ allowed_access = [
     { target_service = "hmac-gateway-auth", algorithm = "HmacSha256", access_level = "SecretKey", preload = true }
 ]
 
+[acl.services.kms-system]
+service_id = "kms-system"
+secret = "super-long-random-secret-for-kms-system-hmac-64-bytes"
+allowed_access = [
+    { target_service = "kms-system", algorithm = "AES256GCM", access_level = "SecretKey", preload = true }
+]
+
 [acl.services.gateway-service]
 service_id = "gateway-service"
 secret = "super-long-random-secret-for-gateway-service-hmac-64-bytes"

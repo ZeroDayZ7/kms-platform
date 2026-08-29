@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{FromRow, PgPool};
 use uuid::Uuid;
 
 use crate::{
@@ -24,26 +24,55 @@ impl PgKeyRepository {
     }
 }
 
+#[derive(Debug, Clone, FromRow)]
+struct KeyRow {
+    pub id: Uuid,
+    pub service_id: String,
+    pub algorithm: String,
+    pub version: i32,
+    pub encrypted_key_data: Vec<u8>,
+    pub public_key_pem: String,
+    pub purpose: String,
+    pub status: String,
+    #[allow(dead_code)]
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
 impl KeyRepository for PgKeyRepository {
     async fn save_key(&self, key_pair: &KeyPairEntity) -> AppResult<()> {
         let status = format!("{:?}", key_pair.status)
             .replace("Deprecated { valid_until: ... }", "Deprecated");
         let is_active = matches!(key_pair.status, KeyStatus::Active);
 
-        crate::infrastructure::sqlc::queries::save_key(
-            &self.pool,
-            crate::infrastructure::sqlc::queries::SaveKeyParams {
-                id: key_pair.id,
-                service_id: key_pair.service_id.0.clone(),
-                algorithm: format!("{:?}", key_pair.algorithm),
-                version: key_pair.version as i32,
-                encrypted_key_data: key_pair.encrypted_private_key.ciphertext.clone(),
-                public_key_pem: key_pair.public_key_pem.clone(),
-                purpose: format!("{:?}", key_pair.purpose),
-                status: status.clone(),
-                is_active,
-            },
+        sqlx::query(
+            r#"
+            INSERT INTO keys (
+                id, service_id, algorithm, version, encrypted_key_data,
+                public_key_pem, purpose, status, is_active, created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()
+            )
+            ON CONFLICT (service_id, algorithm, version)
+            DO UPDATE SET
+                encrypted_key_data = EXCLUDED.encrypted_key_data,
+                public_key_pem = EXCLUDED.public_key_pem,
+                purpose = EXCLUDED.purpose,
+                status = EXCLUDED.status,
+                is_active = EXCLUDED.is_active,
+                created_at = NOW()
+            "#,
         )
+        .bind(key_pair.id)
+        .bind(key_pair.service_id.0.clone())
+        .bind(format!("{:?}", key_pair.algorithm))
+        .bind(key_pair.version as i32)
+        .bind(key_pair.encrypted_private_key.ciphertext.clone())
+        .bind(key_pair.public_key_pem.clone())
+        .bind(format!("{:?}", key_pair.purpose))
+        .bind(status)
+        .bind(is_active)
+        .execute(&self.pool)
         .await
         .map_err(AppError::from)?;
 
@@ -55,18 +84,18 @@ impl KeyRepository for PgKeyRepository {
         service_id: &ServiceId,
         algo: KeyAlgorithm,
     ) -> AppResult<Option<KeyPairEntity>> {
-        match crate::infrastructure::sqlc::queries::get_active_key(
-            &self.pool,
-            crate::infrastructure::sqlc::queries::GetActiveKeyParams {
-                service_id: service_id.0.clone(),
-                algorithm: format!("{:?}", algo),
-            },
+        let row = sqlx::query_as::<_, KeyRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE service_id = $1 AND algorithm = $2 AND is_active = true LIMIT 1"
         )
+        .bind(service_id.0.clone())
+        .bind(format!("{:?}", algo))
+        .fetch_optional(&self.pool)
         .await
-        {
-            Ok(row) => Ok(Some(map_active_key_row(row)?)),
-            Err(sqlx::Error::RowNotFound) => Ok(None),
-            Err(err) => Err(AppError::from(err)),
+        .map_err(AppError::from)?;
+
+        match row {
+            Some(r) => Ok(Some(map_key_row(r)?)),
+            None => Ok(None),
         }
     }
 
@@ -76,27 +105,31 @@ impl KeyRepository for PgKeyRepository {
         algo: KeyAlgorithm,
         version: u32,
     ) -> AppResult<Option<KeyPairEntity>> {
-        match crate::infrastructure::sqlc::queries::get_key_by_version(
-            &self.pool,
-            crate::infrastructure::sqlc::queries::GetKeyByVersionParams {
-                service_id: service_id.0.clone(),
-                algorithm: format!("{:?}", algo),
-                version: version as i32,
-            },
+        let row = sqlx::query_as::<_, KeyRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE service_id = $1 AND algorithm = $2 AND version = $3 LIMIT 1"
         )
+        .bind(service_id.0.clone())
+        .bind(format!("{:?}", algo))
+        .bind(version as i32)
+        .fetch_optional(&self.pool)
         .await
-        {
-            Ok(row) => Ok(Some(map_key_by_version_row(row)?)),
-            Err(sqlx::Error::RowNotFound) => Ok(None),
-            Err(err) => Err(AppError::from(err)),
+        .map_err(AppError::from)?;
+
+        match row {
+            Some(r) => Ok(Some(map_key_row(r)?)),
+            None => Ok(None),
         }
     }
 
     async fn get_all_active_public_keys(&self) -> AppResult<Vec<KeyPairEntity>> {
-        let rows = crate::infrastructure::sqlc::queries::get_all_active_keys(&self.pool)
-            .await
-            .map_err(AppError::from)?;
-        rows.into_iter().map(map_all_active_key_row).collect()
+        let rows = sqlx::query_as::<_, KeyRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE is_active = true ORDER BY service_id, algorithm, version DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        rows.into_iter().map(map_key_row).collect()
     }
 
     async fn deactivate_keys_for_service(
@@ -128,16 +161,14 @@ impl KeyRepository for PgKeyRepository {
         let is_active = matches!(status, KeyStatus::Active);
         let _ = deprecated_until;
 
-        crate::infrastructure::sqlc::queries::update_key_status(
-            &self.pool,
-            crate::infrastructure::sqlc::queries::UpdateKeyStatusParams {
-                id: *key_id,
-                status: status_str.to_string(),
-                is_active,
-            },
-        )
-        .await
-        .map_err(AppError::from)?;
+        sqlx::query("UPDATE keys SET status = $2, is_active = $3 WHERE id = $1")
+            .bind(*key_id)
+            .bind(status_str)
+            .bind(is_active)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::from)?;
+
         Ok(())
     }
 
@@ -214,7 +245,7 @@ impl KeyRepository for PgKeyRepository {
         &self,
         now: DateTime<Utc>,
     ) -> AppResult<Vec<KeyPairEntity>> {
-        let rows = sqlx::query_as::<_, crate::infrastructure::sqlc::queries::GetAllKeysRow>(
+        let rows = sqlx::query_as::<_, KeyRow>(
             "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE status = 'Deprecated' ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
@@ -222,7 +253,7 @@ impl KeyRepository for PgKeyRepository {
 
         let mut out = Vec::new();
         for row in rows {
-            let entity = map_all_key_row(row)?;
+            let entity = map_key_row(row)?;
             if matches!(entity.status, KeyStatus::Deprecated { valid_until } if valid_until <= now)
             {
                 out.push(entity);
@@ -237,11 +268,15 @@ impl KeyRepository for PgKeyRepository {
         algo: KeyAlgorithm,
         now: DateTime<Utc>,
     ) -> AppResult<Option<KeyPairEntity>> {
-        let rows = crate::infrastructure::sqlc::queries::get_all_active_keys(&self.pool)
-            .await
-            .map_err(AppError::from)?;
+        let rows = sqlx::query_as::<_, KeyRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE is_active = true ORDER BY service_id, algorithm, version DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
         for row in rows {
-            let entity = map_all_active_key_row(row)?;
+            let entity = map_key_row(row)?;
             if entity.service_id == *service_id
                 && entity.algorithm == algo
                 && (matches!(entity.status, KeyStatus::Active)
@@ -255,10 +290,14 @@ impl KeyRepository for PgKeyRepository {
     }
 
     async fn get_all_keys(&self) -> AppResult<Vec<KeyPairEntity>> {
-        let rows = crate::infrastructure::sqlc::queries::get_all_keys(&self.pool)
-            .await
-            .map_err(AppError::from)?;
-        rows.into_iter().map(map_all_key_row).collect()
+        let rows = sqlx::query_as::<_, KeyRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        rows.into_iter().map(map_key_row).collect()
     }
 
     async fn update_encrypted_key(
@@ -266,15 +305,13 @@ impl KeyRepository for PgKeyRepository {
         key_id: &Uuid,
         encrypted: EncryptedPrivateKey,
     ) -> AppResult<()> {
-        crate::infrastructure::sqlc::queries::update_encrypted_key(
-            &self.pool,
-            crate::infrastructure::sqlc::queries::UpdateEncryptedKeyParams {
-                id: *key_id,
-                encrypted_key_data: encrypted.ciphertext,
-            },
-        )
-        .await
-        .map_err(AppError::from)?;
+        sqlx::query("UPDATE keys SET encrypted_key_data = $2 WHERE id = $1")
+            .bind(*key_id)
+            .bind(encrypted.ciphertext)
+            .execute(&self.pool)
+            .await
+            .map_err(AppError::from)?;
+
         Ok(())
     }
 
@@ -284,12 +321,16 @@ impl KeyRepository for PgKeyRepository {
         batch_size: usize,
     ) -> AppResult<Vec<KeyPairEntity>> {
         let _ = current_master_version;
-        let rows = crate::infrastructure::sqlc::queries::get_all_keys(&self.pool)
-            .await
-            .map_err(AppError::from)?;
+        let rows = sqlx::query_as::<_, KeyRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys ORDER BY created_at DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
         let mut out = Vec::new();
         for row in rows.into_iter().take(batch_size) {
-            out.push(map_all_key_row(row)?);
+            out.push(map_key_row(row)?);
         }
         Ok(out)
     }
@@ -298,19 +339,15 @@ impl KeyRepository for PgKeyRepository {
         &self,
         updates: Vec<(Uuid, EncryptedPrivateKey, i32)>,
     ) -> AppResult<usize> {
-        // Perform updates within a single transaction so partial failures rollback
         let mut tx = self.pool.begin().await?;
         let mut updated = 0usize;
+
         for (key_id, encrypted, _current_version) in updates {
-            // Use the same update query as update_encrypted_key
-            let res = crate::infrastructure::sqlc::queries::update_encrypted_key(
-                &mut tx,
-                crate::infrastructure::sqlc::queries::UpdateEncryptedKeyParams {
-                    id: key_id,
-                    encrypted_key_data: encrypted.ciphertext,
-                },
-            )
-            .await;
+            let res = sqlx::query("UPDATE keys SET encrypted_key_data = $2 WHERE id = $1")
+                .bind(key_id)
+                .bind(encrypted.ciphertext)
+                .execute(&mut *tx)
+                .await;
 
             if let Err(e) = res {
                 tx.rollback().await?;
@@ -325,88 +362,8 @@ impl KeyRepository for PgKeyRepository {
     }
 }
 
-//#region map_active_key_row
-fn map_active_key_row(
-    row: crate::infrastructure::sqlc::queries::GetActiveKeyRow,
-) -> AppResult<KeyPairEntity> {
-    map_key_row(
-        row.id,
-        row.service_id,
-        row.algorithm,
-        row.version as u32,
-        row.encrypted_key_data,
-        row.public_key_pem,
-        row.purpose,
-        row.status,
-        row.created_at,
-    )
-}
-
-//#region map_key_by_version_row
-fn map_key_by_version_row(
-    row: crate::infrastructure::sqlc::queries::GetKeyByVersionRow,
-) -> AppResult<KeyPairEntity> {
-    map_key_row(
-        row.id,
-        row.service_id,
-        row.algorithm,
-        row.version as u32,
-        row.encrypted_key_data,
-        row.public_key_pem,
-        row.purpose,
-        row.status,
-        row.created_at,
-    )
-}
-
-//#region map_all_active_key_row
-fn map_all_active_key_row(
-    row: crate::infrastructure::sqlc::queries::GetAllActiveKeysRow,
-) -> AppResult<KeyPairEntity> {
-    map_key_row(
-        row.id,
-        row.service_id,
-        row.algorithm,
-        row.version as u32,
-        row.encrypted_key_data,
-        row.public_key_pem,
-        row.purpose,
-        row.status,
-        row.created_at,
-    )
-}
-
-//#region map_all_key_row
-fn map_all_key_row(
-    row: crate::infrastructure::sqlc::queries::GetAllKeysRow,
-) -> AppResult<KeyPairEntity> {
-    map_key_row(
-        row.id,
-        row.service_id,
-        row.algorithm,
-        row.version as u32,
-        row.encrypted_key_data,
-        row.public_key_pem,
-        row.purpose,
-        row.status,
-        row.created_at,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-//#region map_key_row
-fn map_key_row(
-    id: Uuid,
-    service_id: String,
-    algorithm: String,
-    version: u32,
-    encrypted_key_data: Vec<u8>,
-    public_key_pem: String,
-    purpose: String,
-    status: String,
-    created_at: DateTime<Utc>,
-) -> AppResult<KeyPairEntity> {
-    let algorithm = match algorithm.as_str() {
+fn map_key_row(row: KeyRow) -> AppResult<KeyPairEntity> {
+    let algorithm = match row.algorithm.as_str() {
         "Ed25519" => KeyAlgorithm::Ed25519,
         "X25519" => KeyAlgorithm::X25519,
         "AES256GCM" => KeyAlgorithm::AES256GCM,
@@ -414,52 +371,52 @@ fn map_key_row(
         _ => {
             return Err(AppError::Internal(format!(
                 "Unknown algorithm in database: {}",
-                algorithm
+                row.algorithm
             )));
         }
     };
 
-    let purpose = match purpose.as_str() {
+    let purpose = match row.purpose.as_str() {
         "Signing" => KeyPurpose::Signing,
         "Encryption" => KeyPurpose::Encryption,
         "Authentication" => KeyPurpose::Authentication,
         _ => {
             return Err(AppError::Internal(format!(
                 "Unknown purpose in database: {}",
-                purpose
+                row.purpose
             )));
         }
     };
 
-    let status = match status.as_str() {
+    let status = match row.status.as_str() {
         "Active" => KeyStatus::Active,
         "Revoked" => KeyStatus::Revoked,
         "Compromised" => KeyStatus::Compromised,
         "Deprecated" => KeyStatus::Deprecated {
-            valid_until: created_at + chrono::Duration::minutes(30),
+            valid_until: row.created_at + chrono::Duration::minutes(30),
         },
         "Expired" => KeyStatus::Expired,
         _ => {
             return Err(AppError::Internal(format!(
                 "Unknown key status in database: {}",
-                status
+                row.status
             )));
         }
     };
 
     Ok(KeyPairEntity {
-        id,
-        service_id: ServiceId(service_id),
+        id: row.id,
+        service_id: ServiceId(row.service_id),
         algorithm,
         purpose,
-        public_key_pem,
+        public_key_pem: row.public_key_pem,
         encrypted_private_key: EncryptedPrivateKey {
-            ciphertext: encrypted_key_data,
+            ciphertext: row.encrypted_key_data,
             master_key_version: 0,
         },
-        version,
+        version: row.version as u32,
         status,
-        created_at,
+        created_at: row.created_at,
         expires_at: None,
     })
 }

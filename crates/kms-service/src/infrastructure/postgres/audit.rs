@@ -32,13 +32,17 @@ impl AuditRepository for PgAuditRepository {
             "0000000000000000000000000000000000000000000000000000000000000000".to_string()
         });
 
+        let action_str = format!("{:?}", log.action);
+        let algorithm_str = format!("{:?}", log.algorithm);
+        let status_str = format!("{:?}", log.status);
+
         let hash_hex = compute_audit_hash(&AuditHashInput {
             id: &log.id.to_string(),
             caller_service: &log.caller_service.0,
             target_service: &log.target_service.0,
-            action: &format!("{:?}", log.action),
-            algorithm: &format!("{:?}", log.algorithm),
-            status: &format!("{:?}", log.status),
+            action: &action_str,
+            algorithm: &algorithm_str,
+            status: &status_str,
             reason: log.reason.as_deref(),
             prev_hash: &prev_hash,
             timestamp: &log.timestamp,
@@ -47,21 +51,28 @@ impl AuditRepository for PgAuditRepository {
         // Optionally sign the hash with vHSM here. For now we leave signature NULL (to be filled by vHSM flow).
         let signature: Option<Vec<u8>> = None;
 
-        crate::infrastructure::sqlc::queries::insert_audit_log(
-            &self.pool,
-            crate::infrastructure::sqlc::queries::InsertAuditLogParams {
-                id: log.id,
-                caller_service: log.caller_service.0,
-                target_service: log.target_service.0,
-                action: format!("{:?}", log.action),
-                algorithm: format!("{:?}", log.algorithm),
-                status: format!("{:?}", log.status),
-                reason: log.reason,
-                prev_hash,
-                hash: hash_hex,
-                signature,
-            },
+        sqlx::query(
+            r#"
+            INSERT INTO audit_logs (
+                id, caller_service, target_service, action, algorithm, 
+                status, reason, prev_hash, hash, signature, created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+            )
+            "#,
         )
+        .bind(log.id)
+        .bind(log.caller_service.0)
+        .bind(log.target_service.0)
+        .bind(action_str)
+        .bind(algorithm_str)
+        .bind(status_str)
+        .bind(log.reason)
+        .bind(prev_hash)
+        .bind(hash_hex)
+        .bind(signature)
+        .bind(log.timestamp)
+        .execute(&self.pool)
         .await
         .map_err(AppError::from)?;
 

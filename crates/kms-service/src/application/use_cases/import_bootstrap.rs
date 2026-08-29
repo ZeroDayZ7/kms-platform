@@ -122,14 +122,16 @@ pub async fn import_bootstrap(
         sqlx::query(
             r#"
         INSERT INTO db_credentials 
-            (id, service_id, target_db, username, encrypted_password, nonce, kek_id, created_at)
+            (id, service_id, target_type, target_db, resource, username, encrypted_password, nonce, kek_id, created_at)
         VALUES 
-            ($1, $2, $3, $4, $5, $6, $7, $8)
+            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         "#,
         )
         .bind(Uuid::new_v4())
         .bind(&rec.service_id)
+        .bind(&rec.target_type)
         .bind(&rec.target_db)
+        .bind(&rec.resource)
         .bind(&rec.username)
         .bind(&encrypted.ciphertext)
         .bind(&nonce)
