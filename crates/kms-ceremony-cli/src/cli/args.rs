@@ -129,4 +129,17 @@ pub enum Commands {
         #[arg(short = 'F', long = "full")]
         full: bool,
     },
+    /// Import encrypted bootstrap secrets file and send into KMS
+    ImportBootstrap {
+        #[arg(short, long, help = "Path to encrypted bootstrap file")]
+        file: PathBuf,
+
+        #[arg(
+            short,
+            long,
+            help = "Base URL of kms-service (e.g. http://localhost:8081)",
+            env = "KMS_SERVICE_URL"
+        )]
+        service_url: Option<String>,
+    },
 }

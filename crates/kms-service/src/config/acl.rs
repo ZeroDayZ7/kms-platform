@@ -63,6 +63,8 @@ pub enum ControlAction {
     AuditVerify,
     #[serde(alias = "AuditRead")]
     AuditRead,
+    #[serde(alias = "BootstrapImport")]
+    BootstrapImport,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

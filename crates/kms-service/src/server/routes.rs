@@ -81,6 +81,11 @@ pub fn router(state: AppState) -> Router {
         );
     }
 
+    router = router.route(
+        "/api/v1/admin/bootstrap/import",
+        post(admin::import_bootstrap_handler).layer(rate_limits.auth.clone()),
+    );
+
     router
         .route_layer(rate_limits.global.clone())
         .layer(redis_mw)

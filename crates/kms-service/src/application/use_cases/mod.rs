@@ -7,6 +7,7 @@ pub mod generate_key_pair;
 pub mod get_private_key;
 pub mod get_public_key;
 pub mod get_symmetric_key;
+pub mod import_bootstrap;
 pub mod issue_agent_credential;
 pub mod rewrap_keys;
 pub mod rotate_key;

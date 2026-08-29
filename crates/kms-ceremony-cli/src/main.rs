@@ -3,6 +3,7 @@ use clap::Parser;
 use kms_ceremony_cli::cli::args::{CliArgs, Commands};
 use kms_ceremony_cli::cli::ceremony::handle_interactive_ceremony;
 use kms_ceremony_cli::cli::crypto_ops::{handle_decrypt, handle_encrypt};
+use kms_ceremony_cli::cli::import_bootstrap::handle_import_bootstrap;
 use kms_ceremony_cli::cli::unseal::handle_unseal_hsm;
 use kms_ceremony_cli::cli::verify_audit::handle_verify_audit;
 
@@ -49,6 +50,9 @@ async fn main() -> Result<()> {
             full,
         } => {
             handle_verify_audit(service_url, None, limit, full).await?;
+        }
+        Commands::ImportBootstrap { file, service_url } => {
+            handle_import_bootstrap(file, service_url).await?;
         }
     }
 
