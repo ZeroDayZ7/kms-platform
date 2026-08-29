@@ -1,4 +1,8 @@
 #[cfg(unix)]
+use base64::Engine;
+#[cfg(unix)]
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+#[cfg(unix)]
 use std::sync::Arc;
 
 #[cfg(unix)]
@@ -223,21 +227,36 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
-        HsmRequest::GenerateCredential { password_length } => {
-            let guard = state.read().await;
-            let root_key = match guard.master_key.as_ref() {
-                Some(key) => key,
-                None => {
-                    return HsmResponse::Error {
-                        code: 403,
-                        message: "vHSM is locked. Master key must be initialized first."
-                            .to_string(),
-                    };
-                }
-            };
+        HsmRequest::GenerateRandomBytes { length } => {
+            if length == 0 || length > 4096 {
+                return HsmResponse::Error {
+                    code: 400,
+                    message: "Invalid random bytes length".to_string(),
+                };
+            }
 
-            let key_version = guard.active_key_version;
-            drop(guard);
+            let mut random_bytes = vec![0u8; length];
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut random_bytes);
+
+            HsmResponse::RandomBytesGenerated { random_bytes }
+        }
+
+        HsmRequest::GenerateCredential { password_length } => {
+            let (root_key, key_version) = {
+                let guard = state.read().await;
+                let key = match guard.master_key.as_ref() {
+                    Some(k) => k.clone(), // Klonujemy referencję/zawartość Zeroizing (lub trzymamy klucz)
+                    None => {
+                        return HsmResponse::Error {
+                            code: 403,
+                            message: "vHSM is locked. Master key must be initialized first."
+                                .to_string(),
+                        };
+                    }
+                };
+                (key, guard.active_key_version)
+            };
 
             if password_length == 0 || password_length > 1024 {
                 return HsmResponse::Error {
@@ -269,7 +288,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             };
 
             // Convert password to a safe string representation (base64) for transport
-            let password_b64 = base64::encode(password_bytes.as_ref());
+            let password_b64 = BASE64_STANDARD.encode(&password_bytes[..]);
 
             HsmResponse::CredentialGenerated {
                 credential_id,
@@ -556,7 +575,7 @@ mod tests {
                 key_version,
             } => {
                 assert!(!credential_id.is_empty());
-                let pwd_bytes = base64::decode(&password).expect("base64 decode");
+                let pwd_bytes = BASE64_STANDARD.decode(&password).expect("base64 decode");
                 assert_eq!(pwd_bytes.len(), 32);
                 assert!(!wrapped_password.is_empty());
                 assert_eq!(key_version, 11);

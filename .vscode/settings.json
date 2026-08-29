@@ -10,7 +10,7 @@
     "**/.github": true,
     "**/.dockerignore": true,
 
-    "**/tests": true,
+    // "**/tests": true,
     "**/LICENSE": true,
     // "**/*.env": true,
     // "**/README.md": true,
@@ -36,7 +36,11 @@
   },
 
   // === Formatowanie ===
-  "editor.formatOnSave": true
+  "editor.formatOnSave": true,
+  "files.eol": "\n",
+  "[shellscript]": {
+    "files.eol": "\n"
+  }
   // "[rust]": {
   //     "editor.defaultFormatter": "rust-lang.rust-analyzer"
   // },

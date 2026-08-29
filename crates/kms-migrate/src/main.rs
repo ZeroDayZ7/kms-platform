@@ -82,7 +82,7 @@ impl Drop for AdvisoryLockGuard {
         let key = self.key;
 
         if let Ok(handle) = Handle::try_current() {
-            handle.block_on(async move {
+            handle.spawn(async move {
                 let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                     .bind(key)
                     .execute(&pool)
@@ -114,7 +114,7 @@ fn default_command() -> Commands {
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let command = cli.command.unwrap_or_else(default_command);
-    let migration_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let migration_dir = Path::new("migrations");
 
     let db_config = DatabaseConfig::from_env()
         .context("Failed to load database configuration from environment")?;
