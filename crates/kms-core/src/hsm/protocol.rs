@@ -22,6 +22,9 @@ pub enum HsmRequest {
         kek_version: Option<u32>,
         algorithm: String,
     },
+    GenerateRandomBytes {
+        length: usize,
+    },
     Encrypt {
         key_id: String,
         key_version: Option<u32>,
@@ -57,6 +60,9 @@ pub enum HsmResponse {
         wrapped_dek: Vec<u8>,
         kek_version: u32,
         root_key_version: u32,
+    },
+    RandomBytesGenerated {
+        random_bytes: Vec<u8>,
     },
     Encrypted {
         ciphertext: Vec<u8>,

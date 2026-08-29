@@ -1,3 +1,4 @@
+// crates/kms-service/src/hsm/client.rs
 use kms_core::hsm::client::{
     decrypt_via_hsm as core_decrypt, encrypt_via_hsm as core_encrypt, send_hsm_request as core_send,
 };
