@@ -23,6 +23,15 @@ impl VhsmCryptoService {
     pub fn new(client: Arc<VhsmClient>) -> Self {
         Self { client }
     }
+
+    pub async fn generate_credential(
+        &self,
+        password_length: usize,
+    ) -> AppResult<(String, String, Vec<u8>, i32)> {
+        let (credential_id, password_b64, wrapped, key_version) =
+            self.client.generate_credential(password_length).await?;
+        Ok((credential_id, password_b64, wrapped, key_version as i32))
+    }
 }
 
 #[async_trait::async_trait]

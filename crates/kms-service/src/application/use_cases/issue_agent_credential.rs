@@ -5,7 +5,6 @@ use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
-    domain::crypto::KmsCryptoService,
     errors::{AppError, AppResult},
     server::state::AppState,
 };
@@ -13,6 +12,7 @@ use crate::{
 pub const DEFAULT_PASSWORD_LEN: usize = 32;
 
 pub struct GeneratedCredentialBlob {
+    pub credential_id: uuid::Uuid,
     pub username: String,
     pub plaintext_password: zeroize::Zeroizing<String>,
     pub encrypted_password: Vec<u8>,
@@ -72,7 +72,6 @@ impl IssueAgentCredentialUseCase {
         )
         .await?;
 
-        let credential_id = Uuid::new_v4();
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
@@ -87,7 +86,7 @@ impl IssueAgentCredentialUseCase {
 
         insert_db_credential_tx(
             &mut tx,
-            credential_id,
+            generated.credential_id,
             &input.caller_service,
             &input.target_service,
             &generated,
@@ -101,7 +100,7 @@ impl IssueAgentCredentialUseCase {
             &input.caller_service,
             &input.target_service,
             &action,
-            &credential_id,
+            &generated.credential_id,
             created_at,
         )
         .await?;
@@ -110,7 +109,7 @@ impl IssueAgentCredentialUseCase {
         tx.commit().await?;
 
         Ok(IssueAgentCredentialOutput {
-            credential_id,
+            credential_id: generated.credential_id,
             username: generated.username,
             password: generated.plaintext_password.as_str().to_string(),
             expires_at,
@@ -143,33 +142,44 @@ pub async fn generate_secure_credential(
     username: &str,
     length: usize,
 ) -> AppResult<GeneratedCredentialBlob> {
-    use rand::Rng;
-
-    // Generujemy hasło w osobnym bloku {}, aby `rng` został usunięty ze stosu przed `.await`
-    let password = {
-        let charset = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-        let mut rng = rand::thread_rng();
-        (0..length)
-            .map(|_| {
-                let idx = rng.gen_range(0..charset.len());
-                charset[idx] as char
-            })
-            .collect::<String>()
-    };
-
-    // Sprawdzamy czy istnieje KEK
+    // Ensure KEK exists (KMS responsibility remains to have an active KEK record for metadata)
     let _key_id =
         kek_id.ok_or_else(|| AppError::Internal("No active KEK found for encryption".into()))?;
 
-    let encrypted_obj = crypto_service
-        .encrypt_private_key(password.as_bytes())
-        .await?;
+    // Delegate credential generation to vHSM
+    let (credential_id, password_b64, wrapped_password, _key_version) = crypto_service
+        .generate_credential(length)
+        .await
+        .map_err(|e| {
+            AppError::CryptoError(format!("Failed to generate credential via vHSM: {e}"))
+        })?;
+
+    // Extract nonce (first 12 bytes) if present
+    if wrapped_password.len() < 12 {
+        return Err(AppError::CryptoError(
+            "Wrapped password payload too short (missing nonce)".to_string(),
+        ));
+    }
+    let nonce = wrapped_password[..12].to_vec();
+
+    // Parse vHSM credential_id (hex 16 bytes) into Uuid for DB
+    let id_bytes = hex::decode(&credential_id)
+        .map_err(|_| AppError::CryptoError("Invalid credential id format from vHSM".to_string()))?;
+    if id_bytes.len() != 16 {
+        return Err(AppError::CryptoError(
+            "Credential id from vHSM has invalid length".to_string(),
+        ));
+    }
+    let uuid = Uuid::from_slice(&id_bytes).map_err(|_| {
+        AppError::CryptoError("Failed to parse credential id into UUID".to_string())
+    })?;
 
     Ok(GeneratedCredentialBlob {
+        credential_id: uuid,
         username: username.to_string(),
-        plaintext_password: zeroize::Zeroizing::new(password),
-        encrypted_password: encrypted_obj.ciphertext,
-        nonce: Vec::new(),
+        plaintext_password: zeroize::Zeroizing::new(password_b64),
+        encrypted_password: wrapped_password,
+        nonce,
     })
 }
 
