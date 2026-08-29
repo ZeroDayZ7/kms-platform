@@ -180,6 +180,48 @@ pub fn decrypt_storage_key(
     Ok(SecretKey::from_bytes(out))
 }
 
+/// Odszyfrowuje surowy bufor pliku zaszyfrowany przez Go (`EncryptFileArgon2`)
+/// Format układu bajtów w pliku: [16 B salt][12 B nonce][ciphertext + tag]
+pub fn decrypt_bytes_with_argon2_raw(password: &str, data: &[u8]) -> Result<Vec<u8>> {
+    const SALT_LEN: usize = 16;
+    const NONCE_LEN: usize = 12;
+
+    if data.len() < SALT_LEN + NONCE_LEN {
+        return Err(anyhow!("Invalid encrypted file format: file too short"));
+    }
+
+    let salt = &data[..SALT_LEN];
+    let encrypted_data = &data[SALT_LEN..];
+
+    let nonce_bytes = &encrypted_data[..NONCE_LEN];
+    let ciphertext = &encrypted_data[NONCE_LEN..];
+
+    // DOPASOWANE PARAMETRY z Go DefaultArgon2Params():
+    // Memory: 65536 (64 MB), Time: 3, Threads: 4, KeyLen: 32
+    let params = Params::new(65536, 3, 4, Some(KEY_SIZE))
+        .map_err(|e| anyhow!("Błąd parametrów Argon2id dla binarnego formatu Go: {e}"))?;
+
+    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+
+    let mut key_bytes = [0u8; KEY_SIZE];
+    argon2
+        .hash_password_into(password.as_bytes(), salt, &mut key_bytes)
+        .map_err(|e| anyhow!("Błąd derywacji klucza Argon2id: {e}"))?;
+
+    let cipher = Aes256Gcm::new_from_slice(&key_bytes)
+        .map_err(|e| anyhow!("Błąd inicjalizacji AES-256-GCM: {e}"))?;
+
+    // Czyszczenie klucza w pamięci
+    key_bytes.zeroize();
+
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let decrypted_bytes = cipher.decrypt(nonce, ciphertext).map_err(|e| {
+        anyhow!("Błąd deszyfrowania (nieprawidłowe hasło lub uszkodzony plik): {e}")
+    })?;
+
+    Ok(decrypted_bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

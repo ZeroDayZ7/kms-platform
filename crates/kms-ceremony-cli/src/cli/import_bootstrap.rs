@@ -1,13 +1,12 @@
 use crate::cli::hmac::{build_signed_request_headers, resolve_cli_config};
 use anyhow::{Context, Result, bail};
 use dialoguer::Password;
-use kms_core::crypto::aes::{EncryptedContainer, decrypt_bytes_with_password};
+use kms_core::crypto::aes::decrypt_bytes_with_argon2_raw;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
-use zeroize::Zeroize;
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MiB
 const MAX_CREDENTIALS: usize = 1000;
@@ -46,13 +45,8 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
         bail!("File too large (>5MiB): {} bytes", meta.len());
     }
 
-    let content = fs::read_to_string(&file)
-        .await
-        .context("Failed to read file")?;
-
-    // Parse as EncryptedContainer
-    let container: EncryptedContainer =
-        serde_json::from_str(&content).context("Invalid encrypted container JSON format")?;
+    // 1. Odczytujemy surowe bajty binarne pliku `.enc`
+    let content_bytes = fs::read(&file).await.context("Failed to read file")?;
 
     // Prompt for passphrase
     let pass = Password::new()
@@ -61,15 +55,15 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
         .interact()
         .context("Failed to read passphrase")?;
 
-    // Decrypt
-    let plaintext = decrypt_bytes_with_password(&pass, &container)
-        .map_err(|_| anyhow::anyhow!("bootstrap file authentication failed"))?;
+    // 2. Odszyfrowujemy surowe bajty wygenerowane przez Go (Argon2id + AES-GCM)
+    let plaintext = decrypt_bytes_with_argon2_raw(&pass, &content_bytes)
+        .map_err(|e| anyhow::anyhow!("bootstrap file authentication failed: {e}"))?;
 
     // Zeroize passphrase
     let mut pass_z = Zeroizing::new(pass);
     pass_z.zeroize();
 
-    // Parse JSON without creating extra copies; wrap plaintext in Zeroizing so it's cleared on drop
+    // 3. Parsujemy odszyfrowany ładunek JSON do struktury BootstrapFile
     let plaintext_z = Zeroizing::new(plaintext);
     let bootstrap: BootstrapFile =
         serde_json::from_slice(&plaintext_z).context("Invalid bootstrap JSON payload")?;
@@ -133,6 +127,5 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
 
     println!("Bootstrap import successful");
 
-    // plaintext_z is dropped here and zeroized
     Ok(())
 }

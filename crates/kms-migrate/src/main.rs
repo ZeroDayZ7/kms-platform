@@ -127,14 +127,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
     match command {
         Commands::Status => {
-            print_status(&pool, &migration_dir, &db_config).await?;
+            print_status(&pool, migration_dir, &db_config).await?;
             Ok(())
         }
         Commands::Run { dry_run } => {
             let lock = AdvisoryLockGuard::acquire(&pool, MIGRATION_LOCK_KEY).await?;
 
             let result = tokio::select! {
-                result = run_migration_command(&pool, &migration_dir, dry_run) => result,
+                result = run_migration_command(&pool, migration_dir, dry_run) => result,
                 _ = wait_for_exit_signal() => {
                     bail!("Termination signal received; exiting before applying migrations")
                 }
