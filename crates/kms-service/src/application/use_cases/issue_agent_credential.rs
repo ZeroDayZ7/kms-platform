@@ -129,7 +129,7 @@ pub async fn fetch_latest_kek_id(
     caller_service: &str,
 ) -> AppResult<Option<Uuid>> {
     let row: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM keys WHERE target_service = $1 AND is_active = true ORDER BY version DESC LIMIT 1"
+        "SELECT id FROM keys WHERE service_id = $1 AND is_active = true ORDER BY version DESC LIMIT 1"
     )
     .bind(caller_service)
     .fetch_optional(db)
