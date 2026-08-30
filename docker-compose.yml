@@ -93,6 +93,7 @@ services:
     networks:
       - kms-internal-net
       - sec-net
+      - target-admin-net
     ports:
       - "8081:8080"
     environment:
@@ -193,4 +194,7 @@ networks:
     internal: false
   sec-net:
     name: kms_sec-net
+    driver: bridge
+  target-admin-net:
+    name: kms_target-admin-net
     driver: bridge

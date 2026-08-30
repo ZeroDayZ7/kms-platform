@@ -74,3 +74,16 @@ db-reset:
 	docker compose rm -f postgres
 	-docker volume ls -q -f name=postgres_data | xargs -r docker volume rm
 	docker compose up -d
+
+	# Domyślne wartości zmiennych (możesz je nadpisać przy wywołaniu)
+DB_CONTAINER ?= db_kms
+DB_USER      ?= kms_root_user
+DB_NAME      ?= kms_db
+
+# Komenda do szybkiego podglądu zaimportowanych zasobów
+check-targets:
+	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, target_name, target_type, active, created_at FROM target_resources;"
+
+# Komenda do sprawdzenia zaimplementowanych poświadczeń
+check-creds:
+	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, service_id, target_type, target_db, username, status FROM db_credentials;"
