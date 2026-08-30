@@ -35,7 +35,7 @@ pub struct BootstrapCredentialRecord {
 pub struct BootstrapFile {
     pub version: u32,
     #[serde(default)]
-    pub target_resources: Vec<TargetResourceRecord>, // <-- DODANE
+    pub target_resources: Vec<TargetResourceRecord>,
     #[serde(default)]
     pub credentials: Vec<BootstrapCredentialRecord>,
 }
@@ -43,7 +43,7 @@ pub struct BootstrapFile {
 #[derive(Serialize)]
 struct PostPayload<'a> {
     version: u32,
-    target_resources: &'a [TargetResourceRecord], // <-- DODANE
+    target_resources: &'a [TargetResourceRecord],
     credentials: &'a [BootstrapCredentialRecord],
 }
 
@@ -79,6 +79,11 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
     let plaintext_z = Zeroizing::new(plaintext);
     let bootstrap: BootstrapFile =
         serde_json::from_slice(&plaintext_z).context("Invalid bootstrap JSON payload")?;
+
+    println!(
+        "DEBUG CLI: Parsed target_resources len = {}",
+        bootstrap.target_resources.len()
+    );
 
     // Basic validation
     if bootstrap.version != 1 {
@@ -129,7 +134,7 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
     // Budujemy pełny payload zawierający target_resources
     let payload = PostPayload {
         version: bootstrap.version,
-        target_resources: &bootstrap.target_resources, // <-- PRZEKAZUJEMY DO REST API
+        target_resources: &bootstrap.target_resources,
         credentials: &bootstrap.credentials,
     };
 

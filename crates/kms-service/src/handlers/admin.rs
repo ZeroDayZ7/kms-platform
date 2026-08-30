@@ -2,9 +2,7 @@ use axum::{Json, extract::State};
 use serde::Deserialize;
 
 use crate::{
-    application::use_cases::import_bootstrap::{
-        ImportBootstrapInput, TargetResourceRecord, import_bootstrap,
-    },
+    application::use_cases::import_bootstrap::{ImportBootstrapInput, import_bootstrap},
     application::use_cases::rewrap_keys::{RewrapKeysInput, rewrap_keys},
     errors::AppResult,
     server::{extractors::authenticated_service::AuthenticatedService, state::AppState},
@@ -42,7 +40,7 @@ pub async fn rewrap_keys_handler(
 pub struct ImportBootstrapRequest {
     pub version: u32,
     #[serde(default)]
-    pub target_resources: Vec<TargetResourceRecord>,
+    pub target_resources: Vec<serde_json::Value>,
     #[serde(default)]
     pub credentials: Vec<serde_json::Value>,
 }

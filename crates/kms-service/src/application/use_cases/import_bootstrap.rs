@@ -15,7 +15,7 @@ use zeroize::Zeroizing;
 pub struct ImportBootstrapInput {
     pub version: u32,
     #[serde(default)]
-    pub target_resources: Vec<TargetResourceRecord>,
+    pub target_resources: Vec<serde_json::Value>,
     #[serde(default)]
     pub credentials: Vec<serde_json::Value>,
 }
@@ -95,12 +95,26 @@ pub async fn import_bootstrap(
     // ==========================================
     // KROK A: IMPORT DO target_resources
     // ==========================================
+    let mut target_records: Vec<TargetResourceRecord> = Vec::new();
+    for (idx, v) in input.target_resources.into_iter().enumerate() {
+        match serde_json::from_value::<TargetResourceRecord>(v.clone()) {
+            Ok(rec) => target_records.push(rec),
+            Err(err) => {
+                error!(index = idx, raw_json = %v, error = %err, "Failed to deserialize target_resource record");
+                return Err(AppError::ValidationError(format!(
+                    "Invalid target_resource record schema at index {}: {}",
+                    idx, err
+                )));
+            }
+        }
+    }
+
     info!(
-        count = input.target_resources.len(),
+        count = target_records.len(),
         "Rozpoczynam pętlę KROK A dla target_resources"
     );
 
-    for target in input.target_resources.iter() {
+    for target in target_records.iter() {
         info!(
             target_name = %target.target_name,
             target_type = %target.target_type,
