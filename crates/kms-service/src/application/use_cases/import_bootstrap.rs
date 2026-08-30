@@ -7,6 +7,7 @@ use chrono::Utc;
 use serde::Deserialize;
 use sqlx::Postgres;
 use sqlx::Transaction;
+use tracing::{error, info};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -39,6 +40,7 @@ pub async fn import_bootstrap(
         &ServiceId(caller_service.clone()),
         &ControlAction::BootstrapImport,
     ) {
+        error!(caller_service = %caller_service, "Forbidden attempt to perform BootstrapImport");
         return Err(AppError::Forbidden);
     }
 
@@ -48,12 +50,34 @@ pub async fn import_bootstrap(
         ));
     }
 
-    // Parse records
+    // Parse records z zalogowaniem każdego wpisu
     let mut records: Vec<BootstrapCredentialRecord> = Vec::new();
-    for v in input.credentials.into_iter() {
-        let rec: BootstrapCredentialRecord = serde_json::from_value(v)
-            .map_err(|_| AppError::ValidationError("Invalid credential record schema".into()))?;
-        records.push(rec);
+    for (idx, v) in input.credentials.into_iter().enumerate() {
+        match serde_json::from_value::<BootstrapCredentialRecord>(v.clone()) {
+            Ok(rec) => {
+                info!(
+                    index = idx,
+                    service_id = %rec.service_id,
+                    target_type = %rec.target_type,
+                    target_db = %rec.target_db,
+                    username = %rec.username,
+                    "Parsed bootstrap record successfully"
+                );
+                records.push(rec);
+            }
+            Err(err) => {
+                error!(
+                    index = idx,
+                    raw_json = %v,
+                    error = %err,
+                    "Failed to deserialize bootstrap credential record"
+                );
+                return Err(AppError::ValidationError(format!(
+                    "Invalid credential record schema at index {}: {}",
+                    idx, err
+                )));
+            }
+        }
     }
 
     if records.is_empty() {
@@ -67,11 +91,24 @@ pub async fn import_bootstrap(
     let now = Utc::now();
 
     for rec in records.iter() {
-        // Duplication check: active credential with same service_id, target_db, username
+        info!(
+            service_id = %rec.service_id,
+            target_type = %rec.target_type,
+            target_db = %rec.target_db,
+            username = %rec.username,
+            "Inserting credential record into PostgreSQL"
+        );
+
+        // POPRAWKA: Dodano target_type do zapytania o duplikaty (zgodnie z indeksem bazy)
         let exists: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM db_credentials WHERE service_id = $1 AND target_db = $2 AND username = $3 AND status = 'ACTIVE' LIMIT 1",
+            r#"
+            SELECT id FROM db_credentials 
+            WHERE service_id = $1 AND target_type = $2 AND target_db = $3 AND username = $4 AND status = 'ACTIVE' 
+            LIMIT 1
+            "#,
         )
         .bind(&rec.service_id)
+        .bind(&rec.target_type)
         .bind(&rec.target_db)
         .bind(&rec.username)
         .fetch_optional(&mut *tx)
@@ -79,9 +116,16 @@ pub async fn import_bootstrap(
 
         if exists.is_some() {
             let _ = tx.rollback().await;
+            error!(
+                service_id = %rec.service_id,
+                target_type = %rec.target_type,
+                target_db = %rec.target_db,
+                username = %rec.username,
+                "Duplicate active credential error"
+            );
             return Err(AppError::ValidationError(format!(
-                "Duplicate active credential: {}@{}",
-                rec.username, rec.target_db
+                "Duplicate active credential: {}@{} ({})",
+                rec.username, rec.target_db, rec.target_type
             )));
         }
 
@@ -93,14 +137,15 @@ pub async fn import_bootstrap(
         .fetch_optional(&mut *tx)
         .await?;
 
-        let kek_id = kek_row;
-        if kek_id.is_none() {
+        if kek_row.is_none() {
             let _ = tx.rollback().await;
+            error!(service_id = %rec.service_id, "No active KEK found for service");
             return Err(AppError::Internal(format!(
                 "No active KEK for service: {}",
                 rec.service_id
             )));
         }
+        let kek_id = kek_row.unwrap(); // Używamy unwrap po sprawdzeniu is_none()
 
         // Encrypt password via crypto service (vHSM)
         let pwd_bytes = rec.password.as_bytes().to_vec();
@@ -111,35 +156,35 @@ pub async fn import_bootstrap(
             .await
             .map_err(|e| AppError::CryptoError(format!("Failed to encrypt credential: {}", e)))?;
 
-        // Ensure ciphertext contains nonce
         if encrypted.ciphertext.len() < 12 {
             let _ = tx.rollback().await;
             return Err(AppError::CryptoError("Encrypted payload too short".into()));
         }
         let nonce = encrypted.ciphertext[..12].to_vec();
 
-        // Insert into db_credentials
+        // POPRAWKA: Precyzyjne wskazanie kolumn oraz jawnego statusu 'ACTIVE'
         sqlx::query(
             r#"
-        INSERT INTO db_credentials 
-            (id, service_id, target_db, username, encrypted_password, nonce, kek_id, created_at)
-        VALUES 
-            ($1, $2, $3, $4, $5, $6, $7, $8)
-        "#,
+            INSERT INTO db_credentials 
+                (id, service_id, target_type, target_db, resource, username, encrypted_password, nonce, kek_id, status, created_at)
+            VALUES 
+                ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10)
+            "#,
         )
         .bind(Uuid::new_v4())
         .bind(&rec.service_id)
+        .bind(&rec.target_type)
         .bind(&rec.target_db)
+        .bind(rec.resource.as_deref().unwrap_or(""))
         .bind(&rec.username)
         .bind(&encrypted.ciphertext)
         .bind(&nonce)
-        .bind(kek_id)
+        .bind(kek_id) // Użycie wymaganego UUID (nie Option<Uuid>)
         .bind(now)
         .execute(&mut *tx)
         .await?;
 
         inserted += 1;
-        // pwd_zero will be dropped/zeroized at end of scope
     }
 
     // Insert audit log for import
@@ -182,6 +227,11 @@ pub async fn import_bootstrap(
     .await?;
 
     tx.commit().await?;
+
+    info!(
+        count = inserted,
+        "Successfully committed bootstrap import transaction"
+    );
 
     Ok(inserted)
 }

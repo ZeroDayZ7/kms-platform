@@ -82,7 +82,7 @@ impl Drop for AdvisoryLockGuard {
         let key = self.key;
 
         if let Ok(handle) = Handle::try_current() {
-            handle.block_on(async move {
+            handle.spawn(async move {
                 let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                     .bind(key)
                     .execute(&pool)
@@ -114,7 +114,7 @@ fn default_command() -> Commands {
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let command = cli.command.unwrap_or_else(default_command);
-    let migration_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations");
+    let migration_dir = Path::new("migrations");
 
     let db_config = DatabaseConfig::from_env()
         .context("Failed to load database configuration from environment")?;
@@ -127,14 +127,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
 
     match command {
         Commands::Status => {
-            print_status(&pool, &migration_dir, &db_config).await?;
+            print_status(&pool, migration_dir, &db_config).await?;
             Ok(())
         }
         Commands::Run { dry_run } => {
             let lock = AdvisoryLockGuard::acquire(&pool, MIGRATION_LOCK_KEY).await?;
 
             let result = tokio::select! {
-                result = run_migration_command(&pool, &migration_dir, dry_run) => result,
+                result = run_migration_command(&pool, migration_dir, dry_run) => result,
                 _ = wait_for_exit_signal() => {
                     bail!("Termination signal received; exiting before applying migrations")
                 }

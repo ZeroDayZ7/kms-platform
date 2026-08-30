@@ -316,12 +316,6 @@ dependencies = [
 
 [[package]]
 name = "base64"
-version = "0.21.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d297deb1925b89f2ccc13d7635fa0714f12c87adce1c75356b39ca9b7178567"
-
-[[package]]
-name = "base64"
 version = "0.22.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
@@ -337,15 +331,6 @@ name = "base64ct"
 version = "1.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
-
-[[package]]
-name = "bincode"
-version = "1.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "bitflags"
@@ -804,15 +789,6 @@ name = "crc16"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338089f42c427b86394a5ee60ff321da23a5c89c9d89514c829687b26359fcff"
-
-[[package]]
-name = "crossbeam-channel"
-version = "0.5.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d85363c37faeca707aef026efa9f3b34d077bce547e48f770770625c6013679e"
-dependencies = [
- "crossbeam-utils",
-]
 
 [[package]]
 name = "crossbeam-queue"
@@ -2070,24 +2046,19 @@ dependencies = [
 name = "kms-ceremony-cli"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
- "bincode",
  "chrono",
  "clap",
  "dialoguer",
  "hex",
  "hmac",
  "kms-core",
- "rand 0.8.7",
  "reqwest",
  "serde",
  "serde_json",
  "sha2",
- "ssss",
  "subtle",
  "tokio",
- "uuid",
  "zeroize",
 ]
 
@@ -2098,11 +2069,9 @@ dependencies = [
  "aes-gcm",
  "anyhow",
  "argon2",
- "base64 0.21.7",
  "chrono",
  "getrandom 0.2.17",
  "hex",
- "rand 0.10.2",
  "serde",
  "serde_json",
  "sha2",
@@ -2117,7 +2086,6 @@ dependencies = [
 name = "kms-db"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "serde",
  "sqlx",
  "tracing",
@@ -2130,22 +2098,18 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "config",
  "dotenvy",
  "kms-db",
- "serde",
  "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",
- "zeroize",
 ]
 
 [[package]]
 name = "kms-service"
 version = "0.1.0"
 dependencies = [
- "aes-gcm",
  "anyhow",
  "async-trait",
  "axum",
@@ -2166,11 +2130,9 @@ dependencies = [
  "pkcs8",
  "rand 0.8.7",
  "serde",
- "serde_bytes",
  "serde_json",
  "sha2",
  "sqlx",
- "ssss",
  "subtle",
  "tempfile",
  "testcontainers",
@@ -2183,7 +2145,6 @@ dependencies = [
  "tower-http",
  "tower_governor",
  "tracing",
- "tracing-appender",
  "tracing-subscriber",
  "uuid",
  "x25519-dalek",
@@ -3921,12 +3882,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
-name = "symlink"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7973cce6668464ea31f176d85b13c7ab3bba2cb3b77a2ed26abd7801688010a"
-
-[[package]]
 name = "syn"
 version = "2.0.119"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4427,19 +4382,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tracing-appender"
-version = "0.2.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "050686193eb999b4bb3bc2acfa891a13da00f79734704c4b8b4ef1a10b368a3c"
-dependencies = [
- "crossbeam-channel",
- "symlink",
- "thiserror 2.0.20",
- "time",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "tracing-attributes"
 version = "0.1.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4682,11 +4624,10 @@ name = "vhsm-daemon"
 version = "0.1.0"
 dependencies = [
  "aes-gcm",
- "base64 0.21.7",
+ "base64 0.23.1",
  "hex",
  "kms-core",
  "rand 0.8.7",
- "serde",
  "serde_json",
  "tokio",
  "tracing",

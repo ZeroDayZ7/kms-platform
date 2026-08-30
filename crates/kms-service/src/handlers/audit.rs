@@ -3,7 +3,10 @@ use crate::errors::{AppError, AppResult};
 use crate::server::{extractors::authenticated_service::AuthenticatedService, state::AppState};
 use axum::{Json, extract::State};
 use base64::Engine;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyQuery {
@@ -17,6 +20,21 @@ pub struct VerifyReport {
     pub total_checked: usize,
     pub ok_count: usize,
     pub errors: Vec<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct AuditLogRow {
+    pub id: Uuid,
+    pub caller_service: String,
+    pub target_service: String,
+    pub action: String,
+    pub algorithm: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub prev_hash: String,
+    pub hash: String,
+    pub signature: Option<Vec<u8>>,
+    pub created_at: DateTime<Utc>,
 }
 
 #[allow(clippy::collapsible_if, clippy::redundant_closure)]
@@ -36,42 +54,23 @@ pub async fn verify_audit_handler(
     let limit = q.limit.unwrap_or(1000);
     let full = q.full.unwrap_or(false);
 
-    // Fetch rows depending on full vs partial
-    // Fetch rows depending on full vs partial
-    let rows: Vec<crate::infrastructure::sqlc::queries::GetAuditLogsAllRow> = if full {
-        crate::infrastructure::sqlc::queries::get_audit_logs_all(&state.db)
-            .await
-            .map_err(crate::errors::AppError::from)?
-    } else {
-        // fetch last (limit + 1) to possibly get anchor
-        let mut fetched = crate::infrastructure::sqlc::queries::get_audit_logs_last_n(
-            &state.db,
-            (limit + 1) as i32,
+    // Fetch rows using native sqlx queries
+    let rows: Vec<AuditLogRow> = if full {
+        sqlx::query_as::<_, AuditLogRow>(
+            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
         )
-        .await
-        .map_err(crate::errors::AppError::from)?;
-        // rows are in DESC order (newest first) -> reverse to chronological
-        fetched.reverse();
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        let mut fetched = sqlx::query_as::<_, AuditLogRow>(
+            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT $1"
+        )
+        .bind((limit + 1) as i64)
+        .fetch_all(&state.db)
+        .await?;
 
-        // Ujednolicenie typów z GetAuditLogsLastNRow na GetAuditLogsAllRow
+        fetched.reverse();
         fetched
-            .into_iter()
-            .map(
-                |r| crate::infrastructure::sqlc::queries::GetAuditLogsAllRow {
-                    id: r.id,
-                    caller_service: r.caller_service,
-                    target_service: r.target_service,
-                    action: r.action,
-                    algorithm: r.algorithm,
-                    status: r.status,
-                    reason: r.reason,
-                    prev_hash: r.prev_hash,
-                    hash: r.hash,
-                    signature: r.signature,
-                    created_at: r.created_at,
-                },
-            )
-            .collect()
     };
 
     if rows.is_empty() {
@@ -83,7 +82,6 @@ pub async fn verify_audit_handler(
         }));
     }
 
-    // If not full and we fetched limit+1, the first row may be anchor
     let mut errors: Vec<String> = Vec::new();
     let mut anchor_hash =
         "0000000000000000000000000000000000000000000000000000000000000000".to_string();
@@ -97,21 +95,21 @@ pub async fn verify_audit_handler(
     let mut last_hash = anchor_hash;
     let mut ok_count = 0usize;
 
-    // Load active signing public keys (PEM) to allow signature verification if present
-    let signing_keys =
-        crate::infrastructure::sqlc::queries::get_active_signing_public_keys(&state.db)
-            .await
-            .map_err(crate::errors::AppError::from)?;
+    // Fetch active signing keys using native sqlx query
+    let signing_keys: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT public_key_pem FROM keys WHERE purpose = 'Signing' AND is_active = TRUE",
+    )
+    .fetch_all(&state.db)
+    .await?;
 
     let mut pubkeys: Vec<ed25519_dalek::VerifyingKey> = Vec::new();
-    for row in signing_keys.iter() {
-        if let Ok(pk) = parse_ed25519_pub_from_pem(&row.public_key_pem) {
+    for pem in signing_keys.iter() {
+        if let Ok(pk) = parse_ed25519_pub_from_pem(pem) {
             pubkeys.push(pk);
         }
     }
 
     for rec in records_to_verify.iter() {
-        // check prev_hash matches last_hash
         if rec.prev_hash != last_hash {
             errors.push(format!(
                 "Integrity violation at id {}: prev_hash mismatch (expected {} got {})",
@@ -140,10 +138,8 @@ pub async fn verify_audit_handler(
             break;
         }
 
-        // verify signature if present
         if let Some(sig_bytes) = &rec.signature {
             if sig_bytes.len() == 64 && !pubkeys.is_empty() {
-                // convert signature Vec<u8> -> [u8;64]
                 let sig_arr: [u8; 64] = match sig_bytes.as_slice().try_into() {
                     Ok(a) => a,
                     Err(_) => {
@@ -182,7 +178,6 @@ pub async fn verify_audit_handler(
 }
 
 fn parse_ed25519_pub_from_pem(pem: &str) -> Result<ed25519_dalek::VerifyingKey, ()> {
-    // extract base64 lines
     let b64 = pem
         .lines()
         .filter(|l| !l.starts_with("-----"))
@@ -218,17 +213,17 @@ pub async fn audit_logs_handler(
         return Err(AppError::Forbidden);
     }
 
-    let rows = crate::infrastructure::sqlc::queries::get_audit_logs_all(&state.db)
-        .await
-        .map_err(crate::errors::AppError::from)?;
+    let rows: Vec<AuditLogRow> = sqlx::query_as::<_, AuditLogRow>(
+        "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
+    )
+    .fetch_all(&state.db)
+    .await?;
 
-    // try to fetch active signing public key PEMs
-    let signing_keys =
-        crate::infrastructure::sqlc::queries::get_active_signing_public_keys(&state.db)
-            .await
-            .map_err(crate::errors::AppError::from)?;
-
-    let keys: Vec<String> = signing_keys.into_iter().map(|r| r.public_key_pem).collect();
+    let signing_keys: Vec<String> = sqlx::query_scalar::<_, String>(
+        "SELECT public_key_pem FROM keys WHERE purpose = 'Signing' AND is_active = TRUE",
+    )
+    .fetch_all(&state.db)
+    .await?;
 
     let logs: Vec<serde_json::Value> = rows
         .into_iter()
@@ -273,6 +268,6 @@ pub async fn audit_logs_handler(
         .collect();
 
     Ok(Json(
-        serde_json::json!({"logs": logs, "signing_public_keys": keys}),
+        serde_json::json!({"logs": logs, "signing_public_keys": signing_keys}),
     ))
 }
