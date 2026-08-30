@@ -57,9 +57,12 @@ pub struct AuditLog {
 
 impl AuditLog {
     pub fn sanitize_reason(reason: Option<&str>) -> Option<String> {
-        let Some(reason) = reason else { return None };
-        let mut sanitized = reason.to_string();
-        for secret_name in [
+        let reason = reason?;
+        if reason.trim().is_empty() {
+            return None;
+        }
+
+        const SENSITIVE_KEYWORDS: &[&str] = &[
             "password",
             "secret",
             "private_key",
@@ -72,13 +75,21 @@ impl AuditLog {
             "hmac",
             "plaintext",
             "bootstrap",
-        ] {
-            if sanitized.to_ascii_lowercase().contains(secret_name) {
-                sanitized = sanitized
-                    .replace(secret_name, "[REDACTED]")
-                    .replace("[REDACTED]", "[REDACTED]");
+        ];
+
+        let mut sanitized = reason.to_string();
+        for &keyword in SENSITIVE_KEYWORDS {
+            loop {
+                let lower = sanitized.to_ascii_lowercase();
+                if let Some(pos) = lower.find(keyword) {
+                    let end = pos + keyword.len();
+                    sanitized.replace_range(pos..end, "[REDACTED]");
+                } else {
+                    break;
+                }
             }
         }
+
         if sanitized.is_empty() {
             None
         } else {
