@@ -77,6 +77,11 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
 
     // 3. Parsujemy odszyfrowany ładunek JSON do struktury BootstrapFile
     let plaintext_z = Zeroizing::new(plaintext);
+
+    if let Ok(json_str) = std::str::from_utf8(&plaintext_z) {
+        println!("DEBUG PLAINTEXT JSON:\n{}", json_str);
+    }
+
     let bootstrap: BootstrapFile =
         serde_json::from_slice(&plaintext_z).context("Invalid bootstrap JSON payload")?;
 
