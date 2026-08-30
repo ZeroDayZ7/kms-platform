@@ -11,10 +11,20 @@ use tracing::{error, info};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-#[derive(Debug)]
+#[derive(Debug, Deserialize)]
 pub struct ImportBootstrapInput {
     pub version: u32,
+    #[serde(default)]
+    pub target_resources: Vec<serde_json::Value>,
+    #[serde(default)]
     pub credentials: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TargetResourceRecord {
+    pub target_name: String,
+    pub target_type: String,
+    pub connection_url: String,
 }
 
 #[allow(dead_code)]
@@ -34,7 +44,7 @@ pub async fn import_bootstrap(
     caller_service: String,
     input: ImportBootstrapInput,
 ) -> AppResult<usize> {
-    // Authorization: ensure caller has BootstrapImport action
+    // 1. Weryfikacja uprawnień ACL
     let compiled = state.settings.acl.compile();
     if !compiled.has_control_action(
         &ServiceId(caller_service.clone()),
@@ -50,28 +60,19 @@ pub async fn import_bootstrap(
         ));
     }
 
-    // Parse records z zalogowaniem każdego wpisu
-    let mut records: Vec<BootstrapCredentialRecord> = Vec::new();
+    info!(
+        target_resources_len = input.target_resources.len(),
+        credentials_len = input.credentials.len(),
+        "Rozpoczynam przetwarzanie bootstrap import - stan wejściowy"
+    );
+
+    // 2. Walidacja sekcji Credentials
+    let mut cred_records: Vec<BootstrapCredentialRecord> = Vec::new();
     for (idx, v) in input.credentials.into_iter().enumerate() {
         match serde_json::from_value::<BootstrapCredentialRecord>(v.clone()) {
-            Ok(rec) => {
-                info!(
-                    index = idx,
-                    service_id = %rec.service_id,
-                    target_type = %rec.target_type,
-                    target_db = %rec.target_db,
-                    username = %rec.username,
-                    "Parsed bootstrap record successfully"
-                );
-                records.push(rec);
-            }
+            Ok(rec) => cred_records.push(rec),
             Err(err) => {
-                error!(
-                    index = idx,
-                    raw_json = %v,
-                    error = %err,
-                    "Failed to deserialize bootstrap credential record"
-                );
+                error!(index = idx, raw_json = %v, error = %err, "Failed to deserialize bootstrap credential record");
                 return Err(AppError::ValidationError(format!(
                     "Invalid credential record schema at index {}: {}",
                     idx, err
@@ -80,26 +81,91 @@ pub async fn import_bootstrap(
         }
     }
 
-    if records.is_empty() {
-        return Err(AppError::ValidationError("No credentials to import".into()));
+    if input.target_resources.is_empty() && cred_records.is_empty() {
+        return Err(AppError::ValidationError(
+            "Nothing to import: both target_resources and credentials are empty".into(),
+        ));
     }
 
-    // Atomic import: one DB transaction for all
+    // 3. Rozpoczęcie ATOMOWEJ transakcji w bazie
     let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
-
-    let mut inserted = 0usize;
+    let mut inserted_total = 0usize;
     let now = Utc::now();
 
-    for rec in records.iter() {
+    // ==========================================
+    // KROK A: IMPORT DO target_resources
+    // ==========================================
+    let mut target_records: Vec<TargetResourceRecord> = Vec::new();
+    for (idx, v) in input.target_resources.into_iter().enumerate() {
+        match serde_json::from_value::<TargetResourceRecord>(v.clone()) {
+            Ok(rec) => target_records.push(rec),
+            Err(err) => {
+                error!(index = idx, raw_json = %v, error = %err, "Failed to deserialize target_resource record");
+                return Err(AppError::ValidationError(format!(
+                    "Invalid target_resource record schema at index {}: {}",
+                    idx, err
+                )));
+            }
+        }
+    }
+
+    info!(
+        count = target_records.len(),
+        "Rozpoczynam pętlę KROK A dla target_resources"
+    );
+
+    for target in target_records.iter() {
+        info!(
+            target_name = %target.target_name,
+            target_type = %target.target_type,
+            "Importing target resource master credentials"
+        );
+
+        // Szyfrowanie całego ciągu connection_url jako 1 pętla krypto
+        let url_bytes = target.connection_url.as_bytes().to_vec();
+        let url_zero = Zeroizing::new(url_bytes);
+        let encrypted = state
+            .crypto_service
+            .encrypt_private_key(url_zero.as_ref())
+            .await
+            .map_err(|e| {
+                AppError::CryptoError(format!("Failed to encrypt connection_url: {}", e))
+            })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO target_resources (id, target_name, target_type, connection_url_encrypted, active, created_at)
+            VALUES ($1, $2, $3, $4, true, $5)
+            ON CONFLICT (target_name) 
+            DO UPDATE SET 
+                target_type = EXCLUDED.target_type,
+                connection_url_encrypted = EXCLUDED.connection_url_encrypted,
+                active = true
+            "#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(&target.target_name)
+        .bind(&target.target_type)
+        .bind(&encrypted.ciphertext)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+        inserted_total += 1;
+    }
+
+    // ==========================================
+    // KROK B: IMPORT DO db_credentials
+    // ==========================================
+    for rec in cred_records.iter() {
         info!(
             service_id = %rec.service_id,
             target_type = %rec.target_type,
             target_db = %rec.target_db,
             username = %rec.username,
-            "Inserting credential record into PostgreSQL"
+            "Inserting static credential record into PostgreSQL"
         );
 
-        // POPRAWKA: Dodano target_type do zapytania o duplikaty (zgodnie z indeksem bazy)
         let exists: Option<Uuid> = sqlx::query_scalar(
             r#"
             SELECT id FROM db_credentials 
@@ -116,20 +182,12 @@ pub async fn import_bootstrap(
 
         if exists.is_some() {
             let _ = tx.rollback().await;
-            error!(
-                service_id = %rec.service_id,
-                target_type = %rec.target_type,
-                target_db = %rec.target_db,
-                username = %rec.username,
-                "Duplicate active credential error"
-            );
             return Err(AppError::ValidationError(format!(
                 "Duplicate active credential: {}@{} ({})",
                 rec.username, rec.target_db, rec.target_type
             )));
         }
 
-        // Fetch latest KEK id for service
         let kek_row: Option<Uuid> = sqlx::query_scalar(
             "SELECT id FROM keys WHERE service_id = $1 AND is_active = true ORDER BY version DESC LIMIT 1",
         )
@@ -137,17 +195,17 @@ pub async fn import_bootstrap(
         .fetch_optional(&mut *tx)
         .await?;
 
-        if kek_row.is_none() {
-            let _ = tx.rollback().await;
-            error!(service_id = %rec.service_id, "No active KEK found for service");
-            return Err(AppError::Internal(format!(
-                "No active KEK for service: {}",
-                rec.service_id
-            )));
-        }
-        let kek_id = kek_row.unwrap(); // Używamy unwrap po sprawdzeniu is_none()
+        let kek_id = match kek_row {
+            Some(id) => id,
+            None => {
+                let _ = tx.rollback().await;
+                return Err(AppError::Internal(format!(
+                    "No active KEK for service: {}",
+                    rec.service_id
+                )));
+            }
+        };
 
-        // Encrypt password via crypto service (vHSM)
         let pwd_bytes = rec.password.as_bytes().to_vec();
         let pwd_zero = Zeroizing::new(pwd_bytes);
         let encrypted = state
@@ -162,7 +220,6 @@ pub async fn import_bootstrap(
         }
         let nonce = encrypted.ciphertext[..12].to_vec();
 
-        // POPRAWKA: Precyzyjne wskazanie kolumn oraz jawnego statusu 'ACTIVE'
         sqlx::query(
             r#"
             INSERT INTO db_credentials 
@@ -179,15 +236,17 @@ pub async fn import_bootstrap(
         .bind(&rec.username)
         .bind(&encrypted.ciphertext)
         .bind(&nonce)
-        .bind(kek_id) // Użycie wymaganego UUID (nie Option<Uuid>)
+        .bind(kek_id)
         .bind(now)
         .execute(&mut *tx)
         .await?;
 
-        inserted += 1;
+        inserted_total += 1;
     }
 
-    // Insert audit log for import
+    // ==========================================
+    // KROK C: REJESTRACJA W AUDIT LOG
+    // ==========================================
     let action = "bootstrap:import";
     let prev_hash_row: Option<String> =
         sqlx::query_scalar("SELECT hash FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1")
@@ -201,9 +260,16 @@ pub async fn import_bootstrap(
         action,
         algorithm: "bootstrap-import",
         status: "Success",
-        reason: Some(&format!("imported {} credentials", inserted)),
+        reason: Some(&format!(
+            "imported {} total records (resources + credentials)",
+            inserted_total
+        )),
         prev_hash,
         timestamp: &now,
+        request_id: None,
+        operation_id: None,
+        target_id: None,
+        metadata: Some("bootstrap_import_v2"),
     });
 
     sqlx::query(
@@ -218,7 +284,7 @@ pub async fn import_bootstrap(
     .bind(action)
     .bind("bootstrap-import")
     .bind("Success")
-    .bind(format!("imported {} credentials", inserted))
+    .bind(format!("imported {} total records", inserted_total))
     .bind(prev_hash)
     .bind(hash)
     .bind(Vec::<u8>::new())
@@ -229,9 +295,8 @@ pub async fn import_bootstrap(
     tx.commit().await?;
 
     info!(
-        count = inserted,
-        "Successfully committed bootstrap import transaction"
+        total = inserted_total,
+        "Successfully committed combined bootstrap transaction"
     );
-
-    Ok(inserted)
+    Ok(inserted_total)
 }

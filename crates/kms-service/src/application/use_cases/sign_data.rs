@@ -81,8 +81,12 @@ where
                     target_service: input.target_service.clone(),
                     action: AuditAction::SignData,
                     algorithm: input.algorithm,
-                    status: AuditStatus::Failure,
-                    reason: Some("Only Ed25519 signing is supported".to_string()),
+                    status: AuditStatus::ValidationFailure,
+                    reason: AuditLog::sanitize_reason(Some("Only Ed25519 signing is supported")),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: None,
+                    metadata: Some("unsupported_algorithm".to_string()),
                     timestamp: Utc::now(),
                 })
                 .await?;
@@ -109,7 +113,11 @@ where
                     action: AuditAction::SignData,
                     algorithm: input.algorithm,
                     status: AuditStatus::AccessDenied,
-                    reason: Some("ACL Policy Violation".to_string()),
+                    reason: AuditLog::sanitize_reason(Some("ACL Policy Violation")),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: None,
+                    metadata: Some("acl_policy_violation".to_string()),
                     timestamp: Utc::now(),
                 })
                 .await?;
@@ -148,7 +156,11 @@ where
                             action: AuditAction::SignData,
                             algorithm: input.algorithm,
                             status: AuditStatus::NotFound,
-                            reason: Some("Signing key not found".to_string()),
+                            reason: AuditLog::sanitize_reason(Some("Signing key not found")),
+                            request_id: None,
+                            operation_id: None,
+                            target_id: None,
+                            metadata: Some("key_missing".to_string()),
                             timestamp: Utc::now(),
                         })
                         .await?;
@@ -172,7 +184,11 @@ where
                             action: AuditAction::SignData,
                             algorithm: input.algorithm,
                             status: AuditStatus::Failure,
-                            reason: Some(err.to_string()),
+                            reason: AuditLog::sanitize_reason(Some(&err.to_string())),
+                            request_id: None,
+                            operation_id: None,
+                            target_id: None,
+                            metadata: Some("crypto_failure".to_string()),
                             timestamp: Utc::now(),
                         })
                         .await?;
@@ -205,7 +221,11 @@ where
                     action: AuditAction::SignData,
                     algorithm: input.algorithm,
                     status: AuditStatus::Failure,
-                    reason: Some("Invalid Ed25519 private key length".to_string()),
+                    reason: AuditLog::sanitize_reason(Some("Invalid Ed25519 private key length")),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: None,
+                    metadata: Some("invalid_private_key_length".to_string()),
                     timestamp: Utc::now(),
                 })
                 .await?;
@@ -244,6 +264,10 @@ where
                 algorithm: input.algorithm,
                 status: AuditStatus::Success,
                 reason: None,
+                request_id: None,
+                operation_id: None,
+                target_id: None,
+                metadata: Some("data_signed".to_string()),
                 timestamp: Utc::now(),
             })
             .await?;

@@ -10,6 +10,13 @@ allowed_access = [
 service_id = "kms-system"
 secret = "super-long-random-secret-for-kms-system-hmac-64-bytes"
 allowed_access = [
+    # Klucz dla usługi bazy danych (np. Postgres / MySQL)
+    # { target_service = "postgres", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+
+    # Klucz dla kolejki RabbitMQ
+    # { target_service = "rabbitmq", algorithm = "AES256GCM", access_level = "SecretKey", preload = true },
+
+    # Opcjonalnie: główny klucz systemowy
     { target_service = "kms-system", algorithm = "AES256GCM", access_level = "SecretKey", preload = true }
 ]
 

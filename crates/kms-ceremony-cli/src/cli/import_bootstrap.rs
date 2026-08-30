@@ -12,6 +12,14 @@ const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MiB
 const MAX_CREDENTIALS: usize = 1000;
 const MAX_FIELD_LEN: usize = 1024;
 
+// --- NOWA STRUKTURA DLA TARGET RESOURCES ---
+#[derive(Debug, Deserialize, Serialize)]
+pub struct TargetResourceRecord {
+    pub target_name: String,
+    pub target_type: String,
+    pub connection_url: String,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct BootstrapCredentialRecord {
     pub service_id: String,
@@ -26,12 +34,16 @@ pub struct BootstrapCredentialRecord {
 #[derive(Debug, Deserialize)]
 pub struct BootstrapFile {
     pub version: u32,
+    #[serde(default)]
+    pub target_resources: Vec<TargetResourceRecord>,
+    #[serde(default)]
     pub credentials: Vec<BootstrapCredentialRecord>,
 }
 
 #[derive(Serialize)]
 struct PostPayload<'a> {
     version: u32,
+    target_resources: &'a [TargetResourceRecord],
     credentials: &'a [BootstrapCredentialRecord],
 }
 
@@ -65,6 +77,7 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
 
     // 3. Parsujemy odszyfrowany ładunek JSON do struktury BootstrapFile
     let plaintext_z = Zeroizing::new(plaintext);
+
     let bootstrap: BootstrapFile =
         serde_json::from_slice(&plaintext_z).context("Invalid bootstrap JSON payload")?;
 
@@ -72,11 +85,21 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
     if bootstrap.version != 1 {
         bail!("Unsupported bootstrap file version: {}", bootstrap.version);
     }
-    if bootstrap.credentials.is_empty() {
-        bail!("No credentials in bootstrap file");
+    if bootstrap.credentials.is_empty() && bootstrap.target_resources.is_empty() {
+        bail!("No credentials nor target resources in bootstrap file");
     }
     if bootstrap.credentials.len() > MAX_CREDENTIALS {
         bail!("Too many credentials in file");
+    }
+
+    // Walidacja target_resources
+    for target in &bootstrap.target_resources {
+        if target.target_name.is_empty()
+            || target.target_type.is_empty()
+            || target.connection_url.is_empty()
+        {
+            bail!("Missing required fields in target resource record");
+        }
     }
 
     for rec in &bootstrap.credentials {
@@ -104,8 +127,10 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
     let path = "/api/v1/admin/bootstrap/import";
     let headers = build_signed_request_headers(&cfg, "POST", path)?;
 
+    // Budujemy pełny payload zawierający target_resources
     let payload = PostPayload {
         version: bootstrap.version,
+        target_resources: &bootstrap.target_resources,
         credentials: &bootstrap.credentials,
     };
 

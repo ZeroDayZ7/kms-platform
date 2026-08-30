@@ -18,24 +18,31 @@ clippy:
 test:
 	cargo test --workspace --all-targets --all-features
 
+docker-down:
+	docker compose down -v
+
 docker-up:
 	docker compose up -d
 
-docker-down:
+docker-rebuild:
 	docker compose down -v
+	docker compose up -d --build --force-recreate
+
+profile:
+	docker compose --profile tools build --no-cache kms-ceremony-cli
 
 clean:
 	cargo clean
 
 rebuild:
 	@echo "===> Czyszczenie starych kontenerów i wolumenów..."
-	docker compose down -v --remove-orphans
+	docker compose --profile tools down -v --remove-orphans
 	@echo "===> Formatowanie kodu (cargo fmt)..."
 	cargo fmt
-	@echo "===> Budowanie obrazów bez cache..."
-	docker compose build --no-cache
+	@echo "===> Budowanie wszystkich obrazów (w tym tools) bez cache..."
+	docker compose --profile tools build --no-cache
 	@echo "===> Uruchamianie środowiska..."
-	docker compose up -d
+	docker compose --profile tools up -d
 	@echo "===> Śledzenie logów migratora..."
 	docker compose logs -f kms-migrate
 
@@ -67,3 +74,16 @@ db-reset:
 	docker compose rm -f postgres
 	-docker volume ls -q -f name=postgres_data | xargs -r docker volume rm
 	docker compose up -d
+
+	# Domyślne wartości zmiennych (możesz je nadpisać przy wywołaniu)
+DB_CONTAINER ?= db_kms
+DB_USER      ?= kms_root_user
+DB_NAME      ?= kms_db
+
+# Komenda do szybkiego podglądu zaimportowanych zasobów
+check-targets:
+	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, target_name, target_type, active, created_at FROM target_resources;"
+
+# Komenda do sprawdzenia zaimplementowanych poświadczeń
+check-creds:
+	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, service_id, target_type, target_db, username, status FROM db_credentials;"

@@ -63,18 +63,18 @@ impl IssueAgentCredentialUseCase {
             return Err(AppError::Forbidden);
         }
 
-        // 2. Generowanie poświadczeń
-        let kek_id = fetch_latest_kek_id(&state.db, &input.caller_service).await?;
+        // 2. Generowanie poświadczeń przez vHSM
+        let kek_id = fetch_latest_kek_id(&state.db, "kms-system").await?;
         let username = build_generic_username(&input.caller_service, &input.target_service);
         let generated = generate_secure_credential(
             &state.crypto_service,
-            kek_id,
+            Some(kek_id),
             &username,
             DEFAULT_PASSWORD_LEN,
         )
         .await?;
 
-        // Lookup target resource admin connection (encrypted) and decrypt it via vHSM
+        // 3. Pobranie connection string admina dla docelowej bazy
         let target_row: Option<(Uuid, Vec<u8>)> = sqlx::query_as(
             "SELECT id, connection_url_encrypted FROM target_resources WHERE target_name = $1 AND active = true LIMIT 1",
         )
@@ -108,26 +108,26 @@ impl IssueAgentCredentialUseCase {
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
-        // 3. Utworzenie konta w zewnętrznej usłudze (zgodnie z interfejsem TargetResourceProvider)
-        // 3. ATOMOWY ZAPIS W BAZIE KMS (Transakcja SQL)
-        // Insert preliminary record inside a transaction; we will commit only after provider succeeds.
+        // 4. Rozpoczęcie transakcji SQL w KMS
         let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
-
-        insert_db_credential_tx(
-            &mut tx,
-            generated.credential_id,
-            &input.caller_service,
-            &input.target_service,
-            &generated,
-            kek_id,
-            created_at,
+        // 4.1 Unieważnienie starych, aktywnych poświadczeń dla tego caller
+        sqlx::query(
+            r#"
+            UPDATE provisioned_credentials
+            SET revoked = true
+            WHERE service_id = $1 
+              AND target_id = $2 
+              AND revoked = false
+            "#,
         )
+        .bind(&input.caller_service)
+        .bind(target_id)
+        .execute(&mut *tx)
         .await?;
 
-        // 4. Create account in target provider using plaintext password from vHSM.
+        // 5. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
         let provider = state.provider_factory.get(&target_type_clean)?;
 
-        // Decode base64 plaintext password into secure Zeroizing buffer for provider call
         let secret_bytes = BASE64
             .decode(generated.plaintext_password.as_str())
             .map_err(|e| {
@@ -144,26 +144,30 @@ impl IssueAgentCredentialUseCase {
             )
             .await;
 
-        // Ensure secret bytes are zeroed as soon as possible
         drop(secret_zero);
 
         let provider_credential = match provider_result {
             Ok(c) => c,
             Err(e) => {
-                // Provider failed: rollback DB transaction so no pending record remains
                 let _ = tx.rollback().await;
                 return Err(e);
             }
         };
 
-        // Update DB record with actual provider username (if provider generated a different one)
-        update_db_credential_username_tx(
+        // 6. Zapis dynamicznych poświadczeń wyłącznie w tabeli provisioned_credentials
+        insert_provisioned_credential_tx(
             &mut tx,
             generated.credential_id,
+            &input.caller_service,
+            target_id,
             &provider_credential.username,
+            &generated.encrypted_password,
+            &username,
+            expires_at,
         )
         .await?;
 
+        // 7. Zapis wpisu audytowego
         insert_audit_log_tx(
             &mut tx,
             &input.caller_service,
@@ -174,22 +178,8 @@ impl IssueAgentCredentialUseCase {
         )
         .await?;
 
-        // Insert provisioned_credentials record in same transaction
-        insert_provisioned_credential_tx(
-            &mut tx,
-            Uuid::new_v4(),
-            &input.caller_service,
-            target_id,
-            &provider_credential.username,
-            &generated.encrypted_password,
-            &username, // granted_role
-            expires_at,
-        )
-        .await?;
-
-        // Commit transaction now that provider account was created and DB updated
+        // 8. Zatwierdzenie transakcji
         if let Err(commit_err) = tx.commit().await {
-            // Attempt best-effort cleanup: revoke provider account to avoid orphan
             let _ = provider
                 .revoke_user(&input.target_service, &provider_credential.username)
                 .await;
@@ -201,7 +191,7 @@ impl IssueAgentCredentialUseCase {
 
         Ok(IssueAgentCredentialOutput {
             credential_id: generated.credential_id,
-            username: generated.username,
+            username: provider_credential.username,
             password: generated.plaintext_password.as_str().to_string(),
             expires_at,
         })
@@ -214,17 +204,28 @@ pub fn build_generic_username(caller_service: &str, target_service: &str) -> Str
     format!("kms_{}_{}", caller_service, target_service)
 }
 
-pub async fn fetch_latest_kek_id(
-    db: &sqlx::PgPool,
-    caller_service: &str,
-) -> AppResult<Option<Uuid>> {
-    let row: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM keys WHERE service_id = $1 AND is_active = true ORDER BY version DESC LIMIT 1"
+pub async fn fetch_latest_kek_id(db: &sqlx::PgPool, target_service_id: &str) -> AppResult<Uuid> {
+    let kek_id = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT id FROM keys 
+        WHERE service_id = $1 
+          AND is_active = true 
+          AND algorithm = 'AES256GCM'
+        ORDER BY version DESC 
+        LIMIT 1
+        "#,
     )
-    .bind(caller_service)
+    .bind(target_service_id)
     .fetch_optional(db)
-    .await?;
-    Ok(row)
+    .await?
+    .ok_or_else(|| {
+        AppError::KeyNotFound(format!(
+            "No active AES256GCM KEK found for {}",
+            target_service_id
+        ))
+    })?;
+
+    Ok(kek_id)
 }
 
 pub async fn generate_secure_credential(
@@ -233,11 +234,9 @@ pub async fn generate_secure_credential(
     username: &str,
     length: usize,
 ) -> AppResult<GeneratedCredentialBlob> {
-    // Ensure KEK exists (KMS responsibility remains to have an active KEK record for metadata)
     let _key_id =
         kek_id.ok_or_else(|| AppError::Internal("No active KEK found for encryption".into()))?;
 
-    // Delegate credential generation to vHSM
     let (credential_id, password_b64, wrapped_password, _key_version) = crypto_service
         .generate_credential(length)
         .await
@@ -245,7 +244,6 @@ pub async fn generate_secure_credential(
             AppError::CryptoError(format!("Failed to generate credential via vHSM: {e}"))
         })?;
 
-    // Extract nonce (first 12 bytes) if present
     if wrapped_password.len() < 12 {
         return Err(AppError::CryptoError(
             "Wrapped password payload too short (missing nonce)".to_string(),
@@ -253,7 +251,6 @@ pub async fn generate_secure_credential(
     }
     let nonce = wrapped_password[..12].to_vec();
 
-    // Parse vHSM credential_id (hex 16 bytes) into Uuid for DB
     let id_bytes = hex::decode(&credential_id)
         .map_err(|_| AppError::CryptoError("Invalid credential id format from vHSM".to_string()))?;
     if id_bytes.len() != 16 {
@@ -275,57 +272,6 @@ pub async fn generate_secure_credential(
 }
 
 // --- Funkcje pomocnicze transakcyjne ---
-
-pub async fn insert_db_credential_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    id: Uuid,
-    service_id: &str,
-    target_db: &str,
-    blob: &GeneratedCredentialBlob,
-    kek_id: Option<Uuid>,
-    created_at: DateTime<Utc>,
-) -> AppResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO db_credentials 
-            (id, service_id, target_db, username, encrypted_password, nonce, kek_id, created_at)
-        VALUES 
-            ($1, $2, $3, $4, $5, $6, $7, $8)
-        "#,
-    )
-    .bind(id)
-    .bind(service_id)
-    .bind(target_db)
-    .bind(&blob.username)
-    .bind(&blob.encrypted_password)
-    .bind(&blob.nonce)
-    .bind(kek_id)
-    .bind(created_at)
-    .execute(&mut **tx)
-    .await?;
-
-    Ok(())
-}
-
-pub async fn update_db_credential_username_tx(
-    tx: &mut Transaction<'_, Postgres>,
-    id: Uuid,
-    username: &str,
-) -> AppResult<()> {
-    sqlx::query(
-        r#"
-        UPDATE db_credentials
-        SET username = $1
-        WHERE id = $2
-        "#,
-    )
-    .bind(username)
-    .bind(id)
-    .execute(&mut **tx)
-    .await?;
-
-    Ok(())
-}
 
 #[allow(clippy::too_many_arguments)]
 pub async fn insert_provisioned_credential_tx(
@@ -384,6 +330,10 @@ pub async fn insert_audit_log_tx(
         reason: Some("agent credential provisioned"),
         prev_hash,
         timestamp: &timestamp,
+        request_id: None,
+        operation_id: None,
+        target_id: Some(&credential_id.to_string()),
+        metadata: Some("credential_provisioned"),
     });
 
     sqlx::query(

@@ -36,6 +36,7 @@ impl AuditRepository for PgAuditRepository {
         let algorithm_str = format!("{:?}", log.algorithm);
         let status_str = format!("{:?}", log.status);
 
+        let safe_reason = AuditLog::sanitize_reason(log.reason.as_deref());
         let hash_hex = compute_audit_hash(&AuditHashInput {
             id: &log.id.to_string(),
             caller_service: &log.caller_service.0,
@@ -43,21 +44,24 @@ impl AuditRepository for PgAuditRepository {
             action: &action_str,
             algorithm: &algorithm_str,
             status: &status_str,
-            reason: log.reason.as_deref(),
+            reason: safe_reason.as_deref(),
             prev_hash: &prev_hash,
             timestamp: &log.timestamp,
+            request_id: log.request_id.as_deref(),
+            operation_id: log.operation_id.as_deref(),
+            target_id: log.target_id.as_deref(),
+            metadata: log.metadata.as_deref(),
         });
 
-        // Optionally sign the hash with vHSM here. For now we leave signature NULL (to be filled by vHSM flow).
         let signature: Option<Vec<u8>> = None;
 
         sqlx::query(
             r#"
             INSERT INTO audit_logs (
-                id, caller_service, target_service, action, algorithm, 
-                status, reason, prev_hash, hash, signature, created_at
+                id, caller_service, target_service, action, algorithm,
+                status, reason, prev_hash, hash, signature, request_id, operation_id, target_id, metadata, created_at
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
             )
             "#,
         )
@@ -67,10 +71,14 @@ impl AuditRepository for PgAuditRepository {
         .bind(action_str)
         .bind(algorithm_str)
         .bind(status_str)
-        .bind(log.reason)
+        .bind(safe_reason)
         .bind(prev_hash)
         .bind(hash_hex)
         .bind(signature)
+        .bind(log.request_id)
+        .bind(log.operation_id)
+        .bind(log.target_id)
+        .bind(log.metadata)
         .bind(log.timestamp)
         .execute(&self.pool)
         .await

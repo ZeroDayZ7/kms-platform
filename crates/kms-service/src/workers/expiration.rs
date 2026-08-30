@@ -60,7 +60,13 @@ where
             action: AuditAction::KeyExpired,
             algorithm: key.algorithm,
             status: AuditStatus::Success,
-            reason: Some("Deprecated period expired; key expired automatically".to_string()),
+            reason: AuditLog::sanitize_reason(Some(
+                "Deprecated period expired; key expired automatically",
+            )),
+            request_id: None,
+            operation_id: None,
+            target_id: Some(key.id.to_string()),
+            metadata: Some("key_expired".to_string()),
             timestamp: Utc::now(),
         };
 
