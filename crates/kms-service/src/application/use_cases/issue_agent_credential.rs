@@ -110,6 +110,20 @@ impl IssueAgentCredentialUseCase {
 
         // 4. Rozpoczęcie transakcji SQL w KMS
         let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
+        // 4.1 Unieważnienie starych, aktywnych poświadczeń dla tego caller
+        sqlx::query(
+            r#"
+            UPDATE provisioned_credentials
+            SET revoked = true
+            WHERE service_id = $1 
+              AND target_id = $2 
+              AND revoked = false
+            "#,
+        )
+        .bind(&input.caller_service)
+        .bind(target_id)
+        .execute(&mut *tx)
+        .await?;
 
         // 5. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
         let provider = state.provider_factory.get(&target_type_clean)?;
