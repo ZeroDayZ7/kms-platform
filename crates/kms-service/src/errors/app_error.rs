@@ -10,6 +10,9 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AppError {
+    #[error("Nie znaleziono klucza: {0}")]
+    KeyNotFound(String),
+
     #[error("Autoryzacja nie powiodła się")]
     Unauthorized,
 
@@ -89,6 +92,7 @@ impl AppError {
     //#region error_code
     fn error_code(&self) -> &'static str {
         match self {
+            Self::KeyNotFound(_) => "KEY_NOT_FOUND",
             Self::Unauthorized => "UNAUTHORIZED",
             Self::Forbidden => "FORBIDDEN",
             Self::NotFound(_) => "RESOURCE_NOT_FOUND",
@@ -110,6 +114,7 @@ impl AppError {
     //#region public_message
     fn public_message(&self) -> Cow<'static, str> {
         match self {
+            Self::KeyNotFound(_) => "Key not found".into(),
             Self::Unauthorized => "Authentication failed".into(),
             Self::Forbidden => "Forbidden".into(),
             Self::NotFound(_) => "Resource not found".into(),
@@ -136,6 +141,7 @@ impl IntoResponse for AppError {
         let public_message = self.public_message();
 
         let status = match &self {
+            Self::KeyNotFound(_) => StatusCode::NOT_FOUND,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
             Self::NotFound(_) => StatusCode::NOT_FOUND,

@@ -204,6 +204,10 @@ pub async fn import_bootstrap(
         reason: Some(&format!("imported {} credentials", inserted)),
         prev_hash,
         timestamp: &now,
+        request_id: None,
+        operation_id: None,
+        target_id: None,
+        metadata: Some("bootstrap_import"),
     });
 
     sqlx::query(

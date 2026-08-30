@@ -64,11 +64,12 @@ impl IssueAgentCredentialUseCase {
         }
 
         // 2. Generowanie poświadczeń
-        let kek_id = fetch_latest_kek_id(&state.db, &input.caller_service).await?;
+        // let kek_id = fetch_latest_kek_id(&state.db, "kms-system").await?;
+        let kek_id = fetch_latest_kek_id(&state.db, &input.target_service).await?;
         let username = build_generic_username(&input.caller_service, &input.target_service);
         let generated = generate_secure_credential(
             &state.crypto_service,
-            kek_id,
+            Some(kek_id),
             &username,
             DEFAULT_PASSWORD_LEN,
         )
@@ -119,7 +120,7 @@ impl IssueAgentCredentialUseCase {
             &input.caller_service,
             &input.target_service,
             &generated,
-            kek_id,
+            Some(kek_id),
             created_at,
         )
         .await?;
@@ -214,17 +215,28 @@ pub fn build_generic_username(caller_service: &str, target_service: &str) -> Str
     format!("kms_{}_{}", caller_service, target_service)
 }
 
-pub async fn fetch_latest_kek_id(
-    db: &sqlx::PgPool,
-    caller_service: &str,
-) -> AppResult<Option<Uuid>> {
-    let row: Option<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM keys WHERE service_id = $1 AND is_active = true ORDER BY version DESC LIMIT 1"
+pub async fn fetch_latest_kek_id(db: &sqlx::PgPool, target_service_id: &str) -> AppResult<Uuid> {
+    let kek_id = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT id FROM keys 
+        WHERE service_id = $1 
+          AND is_active = true 
+          AND algorithm = 'AES256GCM'
+        ORDER BY version DESC 
+        LIMIT 1
+        "#,
     )
-    .bind(caller_service)
+    .bind(target_service_id)
     .fetch_optional(db)
-    .await?;
-    Ok(row)
+    .await?
+    .ok_or_else(|| {
+        AppError::KeyNotFound(format!(
+            "No active AES256GCM KEK found for {}",
+            target_service_id
+        ))
+    })?;
+
+    Ok(kek_id)
 }
 
 pub async fn generate_secure_credential(
@@ -384,6 +396,10 @@ pub async fn insert_audit_log_tx(
         reason: Some("agent credential provisioned"),
         prev_hash,
         timestamp: &timestamp,
+        request_id: None,
+        operation_id: None,
+        target_id: Some(&credential_id.to_string()),
+        metadata: Some("credential_provisioned"),
     });
 
     sqlx::query(
