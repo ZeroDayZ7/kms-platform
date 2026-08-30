@@ -18,15 +18,15 @@ clippy:
 test:
 	cargo test --workspace --all-targets --all-features
 
+docker-down:
+	docker compose down -v
+
 docker-up:
 	docker compose up -d
 
 docker-rebuild:
 	docker compose down -v
 	docker compose up -d --build --force-recreate
-
-docker-down:
-	docker compose down -v
 
 profile:
 	docker compose --profile tools build --no-cache kms-ceremony-cli
