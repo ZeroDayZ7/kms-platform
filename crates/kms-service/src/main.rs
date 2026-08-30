@@ -1,8 +1,17 @@
 use anyhow::Context;
+use chrono::Utc;
 use clap::{Parser, Subcommand};
 use kms_service::application::use_cases::rewrap_keys::{RewrapKeysInput, rewrap_keys};
 use kms_service::bootstrap::{bootstrap_keys, wait_for_vhsm_unsealed};
 use kms_service::config;
+use kms_service::domain::{
+    audit::{
+        AuditRepository,
+        models::{AuditAction, AuditLog, AuditStatus},
+    },
+    keys::models::{KeyAlgorithm, ServiceId},
+};
+use kms_service::infrastructure::postgres::PgAuditRepository;
 use kms_service::server::{self, state::AppState};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -54,6 +63,25 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
             let state = AppState::new(settings.clone(), shutdown_token.clone())
                 .await
                 .context("Krytyczny błąd inicjalizacji AppState")?;
+
+            let startup_audit = PgAuditRepository::new(state.db.clone());
+            startup_audit
+                .record(AuditLog {
+                    id: uuid::Uuid::now_v7(),
+                    caller_service: ServiceId("kms-service".to_string()),
+                    target_service: ServiceId("kms-service".to_string()),
+                    action: AuditAction::SystemStarted,
+                    algorithm: KeyAlgorithm::AES256GCM,
+                    status: AuditStatus::Success,
+                    reason: Some("service startup initialized".to_string()),
+                    request_id: Some(uuid::Uuid::new_v4().to_string()),
+                    operation_id: Some(uuid::Uuid::new_v4().to_string()),
+                    target_id: Some("instance".to_string()),
+                    metadata: Some("service_startup".to_string()),
+                    timestamp: Utc::now(),
+                })
+                .await
+                .context("Failed to record startup audit event")?;
 
             info!("🧠 Application state initialized");
 

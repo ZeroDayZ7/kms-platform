@@ -21,21 +21,28 @@ test:
 docker-up:
 	docker compose up -d
 
+docker-rebuild:
+	docker compose down -v
+	docker compose up -d --build --force-recreate
+
 docker-down:
 	docker compose down -v
+
+profile:
+	docker compose --profile tools build --no-cache kms-ceremony-cli
 
 clean:
 	cargo clean
 
 rebuild:
 	@echo "===> Czyszczenie starych kontenerów i wolumenów..."
-	docker compose down -v --remove-orphans
+	docker compose --profile tools down -v --remove-orphans
 	@echo "===> Formatowanie kodu (cargo fmt)..."
 	cargo fmt
-	@echo "===> Budowanie obrazów bez cache..."
-	docker compose build --no-cache
+	@echo "===> Budowanie wszystkich obrazów (w tym tools) bez cache..."
+	docker compose --profile tools build --no-cache
 	@echo "===> Uruchamianie środowiska..."
-	docker compose up -d
+	docker compose --profile tools up -d
 	@echo "===> Śledzenie logów migratora..."
 	docker compose logs -f kms-migrate
 

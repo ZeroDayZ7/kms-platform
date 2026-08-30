@@ -22,11 +22,12 @@ use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
-pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService>;
-pub type ConcreteDecryptDataUseCase = DecryptDataUseCase<VhsmCryptoService>;
+pub type ConcreteEncryptDataUseCase = EncryptDataUseCase<VhsmCryptoService, PgAuditRepository>;
+pub type ConcreteDecryptDataUseCase = DecryptDataUseCase<VhsmCryptoService, PgAuditRepository>;
 pub type ConcreteGenerateDataKeyUseCase = GenerateDataKeyUseCase<PgAuditRepository>;
-pub type ConcreteGenerateKeyPairUseCase = GenerateKeyPairUseCase<PgKeyRepository>;
-pub type ConcreteGetPublicKeyUseCase = GetPublicKeyUseCase<PgKeyRepository>;
+pub type ConcreteGenerateKeyPairUseCase =
+    GenerateKeyPairUseCase<PgKeyRepository, PgAuditRepository>;
+pub type ConcreteGetPublicKeyUseCase = GetPublicKeyUseCase<PgKeyRepository, PgAuditRepository>;
 pub type ConcreteGetPrivateKeyUseCase = GetPrivateKeyUseCase<PgKeyRepository, PgAuditRepository>;
 pub type ConcreteGetSymmetricKeyUseCase =
     GetSymmetricKeyUseCase<PgKeyRepository, PgAuditRepository>;
@@ -234,8 +235,14 @@ impl AppState {
             }),
         );
 
-        let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(crypto_service.clone()));
-        let decrypt_data_use_case = Arc::new(DecryptDataUseCase::new(crypto_service.clone()));
+        let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(
+            crypto_service.clone(),
+            audit_repo.clone(),
+        ));
+        let decrypt_data_use_case = Arc::new(DecryptDataUseCase::new(
+            crypto_service.clone(),
+            audit_repo.clone(),
+        ));
 
         let generate_data_key_use_case = Arc::new(GenerateDataKeyUseCase::new(
             audit_repo.clone(),
@@ -244,10 +251,14 @@ impl AppState {
         ));
         let generate_key_pair_use_case = Arc::new(GenerateKeyPairUseCase::new(
             key_repo.clone(),
+            audit_repo.clone(),
             crypto_service.clone(),
             compiled_acl.clone(),
         ));
-        let get_public_key_use_case = Arc::new(GetPublicKeyUseCase::new(key_repo.clone()));
+        let get_public_key_use_case = Arc::new(GetPublicKeyUseCase::new(
+            key_repo.clone(),
+            audit_repo.clone(),
+        ));
 
         let get_private_key_use_case = Arc::new(GetPrivateKeyUseCase::new(
             key_repo.clone(),

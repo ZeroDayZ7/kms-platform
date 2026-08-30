@@ -82,7 +82,11 @@ where
                     action: AuditAction::GetPrivateKey,
                     algorithm: input.algorithm,
                     status: AuditStatus::AccessDenied,
-                    reason: Some("ACL Policy Violation".to_string()),
+                    reason: AuditLog::sanitize_reason(Some("ACL Policy Violation")),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: None,
+                    metadata: Some("acl_policy_violation".to_string()),
                     timestamp: Utc::now(),
                 })
                 .await?;
@@ -103,7 +107,11 @@ where
                     action: AuditAction::GetPrivateKey,
                     algorithm: input.algorithm,
                     status: AuditStatus::Success,
-                    reason: Some("cache_hit".to_string()),
+                    reason: AuditLog::sanitize_reason(Some("cache_hit")),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: None,
+                    metadata: Some("cache_hit".to_string()),
                     timestamp: Utc::now(),
                 })
                 .await?;
@@ -133,7 +141,11 @@ where
                         action: AuditAction::GetPrivateKey,
                         algorithm: input.algorithm,
                         status: AuditStatus::NotFound,
-                        reason: Some("Key does not exist".to_string()),
+                        reason: AuditLog::sanitize_reason(Some("Key does not exist")),
+                        request_id: None,
+                        operation_id: None,
+                        target_id: None,
+                        metadata: Some("key_missing".to_string()),
                         timestamp: Utc::now(),
                     })
                     .await?;
@@ -170,6 +182,10 @@ where
                 algorithm: input.algorithm,
                 status: AuditStatus::Success,
                 reason: None,
+                request_id: None,
+                operation_id: None,
+                target_id: None,
+                metadata: Some("private_key_retrieved".to_string()),
                 timestamp: Utc::now(),
             })
             .await?;

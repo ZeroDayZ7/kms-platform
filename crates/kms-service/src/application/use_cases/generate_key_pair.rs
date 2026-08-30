@@ -1,9 +1,14 @@
 use chrono::Utc;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use crate::{
     config::acl::{CompiledAcl, ControlAction, authorize_control_action},
     domain::{
+        audit::{
+            models::{AuditAction, AuditLog, AuditStatus},
+            repository::AuditRepository,
+        },
         crypto::KmsCryptoService,
         keys::{
             models::{KeyAlgorithm, KeyPairEntity, KeyPurpose, ServiceId},
@@ -20,24 +25,28 @@ pub struct GenerateKeyPairInput {
     pub purpose: KeyPurpose,
 }
 
-pub struct GenerateKeyPairUseCase<R> {
+pub struct GenerateKeyPairUseCase<R, A> {
     key_repo: Arc<R>,
+    audit_repo: Arc<A>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     acl_policy: Arc<CompiledAcl>,
 }
 
-impl<R> GenerateKeyPairUseCase<R>
+impl<R, A> GenerateKeyPairUseCase<R, A>
 where
     R: KeyRepository,
+    A: AuditRepository,
 {
     //#region new
     pub fn new(
         key_repo: Arc<R>,
+        audit_repo: Arc<A>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
+            audit_repo,
             crypto_service,
             acl_policy,
         }
@@ -59,6 +68,22 @@ where
         );
 
         if !has_generate_permission {
+            self.audit_repo
+                .record(AuditLog {
+                    id: Uuid::now_v7(),
+                    caller_service: input.caller_service.clone(),
+                    target_service: input.service_id.clone(),
+                    action: AuditAction::GenerateKey,
+                    algorithm: input.algorithm,
+                    status: AuditStatus::AccessDenied,
+                    reason: AuditLog::sanitize_reason(Some("ACL Policy Violation for GenerateKey")),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: Some(input.service_id.0.clone()),
+                    metadata: Some("acl_policy_violation".to_string()),
+                    timestamp: Utc::now(),
+                })
+                .await?;
             return Err(AppError::Unauthorized);
         }
 
@@ -93,9 +118,10 @@ where
             .encrypt_private_key(generated_pair.private_key_bytes.as_bytes())
             .await?;
 
+        let target_service = input.service_id.clone();
         let entity = KeyPairEntity {
             id: uuid::Uuid::now_v7(),
-            service_id: input.service_id,
+            service_id: target_service.clone(),
             algorithm: input.algorithm,
             purpose: input.purpose,
             public_key_pem,
@@ -107,6 +133,22 @@ where
         };
 
         self.key_repo.save_key(&entity).await?;
+        self.audit_repo
+            .record(AuditLog {
+                id: Uuid::now_v7(),
+                caller_service: input.caller_service,
+                target_service: target_service.clone(),
+                action: AuditAction::GenerateKey,
+                algorithm: input.algorithm,
+                status: AuditStatus::Success,
+                reason: None,
+                request_id: None,
+                operation_id: None,
+                target_id: Some(entity.id.to_string()),
+                metadata: Some("key_generated".to_string()),
+                timestamp: Utc::now(),
+            })
+            .await?;
 
         Ok(entity)
     }

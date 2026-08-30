@@ -74,7 +74,13 @@ where
                     action: AuditAction::GenerateDataKey,
                     algorithm: input.algorithm,
                     status: AuditStatus::AccessDenied,
-                    reason: Some("ACL Policy Violation for GenerateDataKey".to_string()),
+                    reason: AuditLog::sanitize_reason(Some(
+                        "ACL Policy Violation for GenerateDataKey",
+                    )),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: None,
+                    metadata: Some("acl_policy_violation".to_string()),
                     timestamp: Utc::now(),
                 })
                 .await?;
@@ -90,8 +96,12 @@ where
                     target_service: target_service.clone(),
                     action: AuditAction::GenerateDataKey,
                     algorithm: input.algorithm,
-                    status: AuditStatus::Error("Unsupported algorithm".to_string()),
-                    reason: Some("Only AES256GCM is supported".to_string()),
+                    status: AuditStatus::ValidationFailure,
+                    reason: AuditLog::sanitize_reason(Some("Only AES256GCM is supported")),
+                    request_id: None,
+                    operation_id: None,
+                    target_id: None,
+                    metadata: Some("unsupported_algorithm".to_string()),
                     timestamp: Utc::now(),
                 })
                 .await?;
@@ -115,6 +125,10 @@ where
                 algorithm: input.algorithm,
                 status: AuditStatus::Success,
                 reason: None,
+                request_id: None,
+                operation_id: None,
+                target_id: None,
+                metadata: Some("data_key_generated".to_string()),
                 timestamp: Utc::now(),
             })
             .await?;

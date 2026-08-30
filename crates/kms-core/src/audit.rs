@@ -15,6 +15,10 @@ pub struct AuditHashInput<'a> {
     pub reason: Option<&'a str>,
     pub prev_hash: &'a str,
     pub timestamp: &'a DateTime<Utc>,
+    pub request_id: Option<&'a str>,
+    pub operation_id: Option<&'a str>,
+    pub target_id: Option<&'a str>,
+    pub metadata: Option<&'a str>,
 }
 
 pub fn compute_audit_hash(input: &AuditHashInput<'_>) -> String {
@@ -54,6 +58,34 @@ pub fn compute_audit_hash(input: &AuditHashInput<'_>) -> String {
     record.insert(
         "timestamp".to_string(),
         Value::String(input.timestamp.to_rfc3339()),
+    );
+    record.insert(
+        "request_id".to_string(),
+        match input.request_id {
+            Some(value) => Value::String(value.to_string()),
+            None => Value::Null,
+        },
+    );
+    record.insert(
+        "operation_id".to_string(),
+        match input.operation_id {
+            Some(value) => Value::String(value.to_string()),
+            None => Value::Null,
+        },
+    );
+    record.insert(
+        "target_id".to_string(),
+        match input.target_id {
+            Some(value) => Value::String(value.to_string()),
+            None => Value::Null,
+        },
+    );
+    record.insert(
+        "metadata".to_string(),
+        match input.metadata {
+            Some(value) => Value::String(value.to_string()),
+            None => Value::Null,
+        },
     );
 
     let payload = Value::Object(Map::from_iter(record));

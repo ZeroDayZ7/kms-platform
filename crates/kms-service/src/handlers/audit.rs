@@ -34,6 +34,10 @@ pub struct AuditLogRow {
     pub prev_hash: String,
     pub hash: String,
     pub signature: Option<Vec<u8>>,
+    pub request_id: Option<String>,
+    pub operation_id: Option<String>,
+    pub target_id: Option<String>,
+    pub metadata: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -57,13 +61,13 @@ pub async fn verify_audit_handler(
     // Fetch rows using native sqlx queries
     let rows: Vec<AuditLogRow> = if full {
         sqlx::query_as::<_, AuditLogRow>(
-            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
+            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, request_id, operation_id, target_id, metadata, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
         )
         .fetch_all(&state.db)
         .await?
     } else {
         let mut fetched = sqlx::query_as::<_, AuditLogRow>(
-            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT $1"
+            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, request_id, operation_id, target_id, metadata, created_at FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT $1"
         )
         .bind((limit + 1) as i64)
         .fetch_all(&state.db)
@@ -128,6 +132,10 @@ pub async fn verify_audit_handler(
             reason: rec.reason.as_deref(),
             prev_hash: &rec.prev_hash,
             timestamp: &rec.created_at,
+            request_id: rec.request_id.as_deref(),
+            operation_id: rec.operation_id.as_deref(),
+            target_id: rec.target_id.as_deref(),
+            metadata: rec.metadata.as_deref(),
         });
 
         if computed != rec.hash {
@@ -214,7 +222,7 @@ pub async fn audit_logs_handler(
     }
 
     let rows: Vec<AuditLogRow> = sqlx::query_as::<_, AuditLogRow>(
-        "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
+        "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, request_id, operation_id, target_id, metadata, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
     )
     .fetch_all(&state.db)
     .await?;

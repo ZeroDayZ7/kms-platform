@@ -151,7 +151,14 @@ where
             action: AuditAction::KeyRotated,
             algorithm: input.algorithm,
             status: AuditStatus::Success,
-            reason: Some(format!("{:?}; actor={}", input.reason, input.actor_id)),
+            reason: AuditLog::sanitize_reason(Some(&format!(
+                "{:?}; actor={}",
+                input.reason, input.actor_id
+            ))),
+            request_id: None,
+            operation_id: None,
+            target_id: Some(input.service_id.0.clone()),
+            metadata: Some("key_rotation".to_string()),
             timestamp: Utc::now(),
         };
 

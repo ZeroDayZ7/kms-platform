@@ -39,6 +39,9 @@ pub async fn rewrap_keys_handler(
 #[derive(Debug, serde::Deserialize)]
 pub struct ImportBootstrapRequest {
     pub version: u32,
+    #[serde(default)]
+    pub target_resources: Vec<serde_json::Value>,
+    #[serde(default)]
     pub credentials: Vec<serde_json::Value>,
 }
 
@@ -47,9 +50,9 @@ pub async fn import_bootstrap_handler(
     AuthenticatedService(caller): AuthenticatedService,
     Json(payload): Json<ImportBootstrapRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Map incoming JSON values into domain input (use serde::from_value in use-case)
     let input = ImportBootstrapInput {
         version: payload.version,
+        target_resources: payload.target_resources,
         credentials: payload.credentials,
     };
 
