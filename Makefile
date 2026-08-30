@@ -21,6 +21,10 @@ test:
 docker-up:
 	docker compose up -d
 
+docker-rebuild:
+	docker compose down -v
+	docker compose up -d --build --force-recreate
+
 docker-down:
 	docker compose down -v
 

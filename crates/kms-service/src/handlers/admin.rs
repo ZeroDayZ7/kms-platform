@@ -2,7 +2,9 @@ use axum::{Json, extract::State};
 use serde::Deserialize;
 
 use crate::{
-    application::use_cases::import_bootstrap::{ImportBootstrapInput, import_bootstrap},
+    application::use_cases::import_bootstrap::{
+        ImportBootstrapInput, TargetResourceRecord, import_bootstrap,
+    },
     application::use_cases::rewrap_keys::{RewrapKeysInput, rewrap_keys},
     errors::AppResult,
     server::{extractors::authenticated_service::AuthenticatedService, state::AppState},
@@ -39,6 +41,9 @@ pub async fn rewrap_keys_handler(
 #[derive(Debug, serde::Deserialize)]
 pub struct ImportBootstrapRequest {
     pub version: u32,
+    #[serde(default)]
+    pub target_resources: Vec<TargetResourceRecord>,
+    #[serde(default)]
     pub credentials: Vec<serde_json::Value>,
 }
 
@@ -47,9 +52,9 @@ pub async fn import_bootstrap_handler(
     AuthenticatedService(caller): AuthenticatedService,
     Json(payload): Json<ImportBootstrapRequest>,
 ) -> AppResult<Json<serde_json::Value>> {
-    // Map incoming JSON values into domain input (use serde::from_value in use-case)
     let input = ImportBootstrapInput {
         version: payload.version,
+        target_resources: payload.target_resources,
         credentials: payload.credentials,
     };
 
