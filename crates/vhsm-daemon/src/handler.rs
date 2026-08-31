@@ -15,6 +15,7 @@ use zeroize::Zeroizing;
 
 #[cfg(unix)]
 use crate::crypto;
+use crate::pki;
 
 #[cfg(unix)]
 use crate::state::VhsmState;
@@ -346,6 +347,52 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     code: 500,
                     message: msg,
                 },
+            }
+        }
+
+        HsmRequest::GenerateRootCA { common_name } => {
+            // require unsealed/initialized
+            let mut guard = state.write().await;
+            if !guard.initialized {
+                return HsmResponse::Error {
+                    code: 403,
+                    message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                };
+            }
+
+            // Do not allow regeneration if CA already exists
+            if guard.pki.ca_certificate.is_some() {
+                return HsmResponse::Error {
+                    code: 409,
+                    message: "Root CA already exists".to_string(),
+                };
+            }
+
+            match pki::generate_root_ca(&mut guard, &common_name) {
+                Ok(ca_cert) => HsmResponse::RootCAGenerated { ca_certificate: ca_cert },
+                Err(msg) => HsmResponse::Error { code: 500, message: msg },
+            }
+        }
+
+        HsmRequest::SignCertificate {
+            public_key_der,
+            common_name,
+            is_server,
+        } => {
+            let guard = state.read().await;
+            if !guard.initialized {
+                return HsmResponse::Error {
+                    code: 403,
+                    message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                };
+            }
+
+            match pki::sign_public_key(&guard, &public_key_der, &common_name, is_server) {
+                Ok(cert) => HsmResponse::CertificateSigned {
+                    certificate: cert,
+                    ca_certificate: guard.pki.ca_certificate.clone().unwrap_or_default(),
+                },
+                Err(msg) => HsmResponse::Error { code: 500, message: msg },
             }
         }
 
@@ -721,5 +768,101 @@ mod tests {
         let logs = buf.lock().unwrap();
         let logs_str = String::from_utf8_lossy(&logs);
         assert!(!logs_str.contains(&pwd_b64));
+    }
+
+    #[tokio::test]
+    async fn generate_root_ca_and_sign() {
+        use rcgen::KeyPair;
+
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 1;
+            guard.master_key = Some(Zeroizing::new(vec![1u8; 32]));
+        }
+
+        // Generate Root CA
+        let resp = handle_request(
+            HsmRequest::GenerateRootCA {
+                common_name: "Test CA".to_string(),
+            },
+            state.clone(),
+        )
+        .await;
+
+        let ca_cert = match resp {
+            HsmResponse::RootCAGenerated { ca_certificate } => ca_certificate,
+            other => panic!("unexpected: {other:?}"),
+        };
+
+        assert!(!ca_cert.is_empty());
+
+        // Attempt second generation should be rejected
+        let resp2 = handle_request(
+            HsmRequest::GenerateRootCA {
+                common_name: "Test CA".to_string(),
+            },
+            state.clone(),
+        )
+        .await;
+
+        match resp2 {
+            HsmResponse::Error { code, .. } => assert_eq!(code, 409),
+            other => panic!("unexpected: {other:?}"),
+        }
+
+        // Generate a temporary keypair and sign its public key
+        let kp = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256).expect("keypair");
+        let pub_der = kp.public_key_der();
+
+        let sign_resp = handle_request(
+            HsmRequest::SignCertificate {
+                public_key_der: pub_der,
+                common_name: "agent.local".to_string(),
+                is_server: false,
+            },
+            state.clone(),
+        )
+        .await;
+
+        match sign_resp {
+            HsmResponse::CertificateSigned { certificate, ca_certificate } => {
+                assert!(!certificate.is_empty());
+                assert!(!ca_certificate.is_empty());
+            }
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn pki_operations_rejected_when_locked() {
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+
+        let resp = handle_request(
+            HsmRequest::GenerateRootCA { common_name: "X".to_string() },
+            state.clone(),
+        )
+        .await;
+
+        match resp {
+            HsmResponse::Error { code, .. } => assert_eq!(code, 403),
+            other => panic!("unexpected: {other:?}"),
+        }
+
+        let resp2 = handle_request(
+            HsmRequest::SignCertificate {
+                public_key_der: vec![],
+                common_name: "x".to_string(),
+                is_server: false,
+            },
+            state,
+        )
+        .await;
+
+        match resp2 {
+            HsmResponse::Error { code, .. } => assert_eq!(code, 403),
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 }

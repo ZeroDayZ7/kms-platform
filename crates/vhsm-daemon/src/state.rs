@@ -6,6 +6,12 @@ pub struct VhsmState {
     pub active_key_version: u32,
     pub master_key: Option<Zeroizing<Vec<u8>>>,
     pub unseal_started_at: Option<Instant>,
+    pub pki: VhsmPkiState,
+}
+
+pub struct VhsmPkiState {
+    pub ca_private_key: Option<Zeroizing<Vec<u8>>>,
+    pub ca_certificate: Option<Vec<u8>>,
 }
 
 impl VhsmState {
@@ -16,6 +22,10 @@ impl VhsmState {
             active_key_version: 0,
             master_key: None,
             unseal_started_at: None,
+            pki: VhsmPkiState {
+                ca_private_key: None,
+                ca_certificate: None,
+            },
         }
     }
 
@@ -40,6 +50,10 @@ impl VhsmState {
     pub fn zeroize_key(&mut self) {
         if let Some(mut key) = self.master_key.take() {
             key.zeroize();
+        }
+        // zeroize PKI private key if present
+        if let Some(mut cakey) = self.pki.ca_private_key.take() {
+            cakey.zeroize();
         }
         self.initialized = false;
         self.active_key_version = 0;

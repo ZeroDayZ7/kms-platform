@@ -38,6 +38,16 @@ pub enum HsmRequest {
         key_version: Option<u32>,
         ciphertext: Vec<u8>,
     },
+    /// Generate a Root CA and return the CA certificate (DER)
+    GenerateRootCA {
+        common_name: String,
+    },
+    /// Sign a provided SubjectPublicKeyInfo (DER) and return signed certificate
+    SignCertificate {
+        public_key_der: Vec<u8>,
+        common_name: String,
+        is_server: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -80,6 +90,13 @@ pub enum HsmResponse {
         password: String,
         wrapped_password: Vec<u8>,
         key_version: u32,
+    },
+    RootCAGenerated {
+        ca_certificate: Vec<u8>,
+    },
+    CertificateSigned {
+        certificate: Vec<u8>,
+        ca_certificate: Vec<u8>,
     },
     Error {
         code: u16,
