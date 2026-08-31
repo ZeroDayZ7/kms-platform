@@ -47,6 +47,11 @@ pub enum HsmRequest {
         csr: Vec<u8>,
         is_server: bool,
     },
+    /// Bootstrap full PKI: generate CA, server cert/key and admin cert/key
+    BootstrapPki {
+        admin_cn: String,
+        server_domain: String,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -96,6 +101,13 @@ pub enum HsmResponse {
     CertificateSigned {
         certificate: Vec<u8>,
         ca_certificate: Vec<u8>,
+    },
+    BootstrapPkiResult {
+        ca_pem: Vec<u8>,
+        server_cert_pem: Vec<u8>,
+        server_key_pem: Vec<u8>,
+        admin_cert_pem: Vec<u8>,
+        admin_key_pem: Vec<u8>,
     },
     Error {
         code: u16,

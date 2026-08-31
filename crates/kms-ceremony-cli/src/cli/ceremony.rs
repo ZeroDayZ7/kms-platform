@@ -16,6 +16,8 @@ pub async fn handle_interactive_ceremony(
     shares_count: u8,
     threshold: u8,
     output_dir: PathBuf,
+    admin_cn: String,
+    server_domain: String,
 ) -> Result<()> {
     if shares_count == 0 || threshold == 0 {
         bail!("Liczba udziałów i próg muszą być większe od zera.");
@@ -93,5 +95,44 @@ pub async fn handle_interactive_ceremony(
     }
 
     println!("\n[SUCCESS] Ceremonia zakończona! vHSM jest gotowy do pracy.");
+
+    // Bootstrap PKI: ask vHSM to generate CA and issue server/admin certs
+    println!("[PKI] Requesting PKI bootstrap from vHSM...");
+    let req = HsmRequest::BootstrapPki { admin_cn: admin_cn.clone(), server_domain: server_domain.clone() };
+    let resp = send_hsm_request(&socket_path, &req, None).await.context("Failed to request BootstrapPki from vHSM")?;
+
+    match resp {
+        HsmResponse::BootstrapPkiResult { ca_pem, server_cert_pem, server_key_pem, admin_cert_pem, admin_key_pem } => {
+            let pki_dir = output_dir.join("pki");
+            fs::create_dir_all(&pki_dir).await?;
+
+            let ca_path = pki_dir.join("ca.crt");
+            let admin_crt_path = pki_dir.join("admin.crt");
+            let admin_key_path = pki_dir.join("admin.key");
+            let server_crt_path = pki_dir.join("server.crt");
+            let server_key_path = pki_dir.join("server.key");
+
+            fs::write(&ca_path, ca_pem).await?;
+            fs::write(&admin_crt_path, admin_cert_pem).await?;
+            fs::write(&admin_key_path, admin_key_pem).await?;
+            fs::write(&server_crt_path, server_cert_pem).await?;
+            fs::write(&server_key_path, server_key_pem).await?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = fs::metadata(&admin_key_path).await?.permissions();
+                perms.set_mode(0o600);
+                fs::set_permissions(&admin_key_path, perms).await?;
+            }
+
+            println!("[PKI] Bootstrap PKI artifacts written to {}", pki_dir.display());
+        }
+        HsmResponse::Error { code, message } => bail!("vHSM error during BootstrapPki [{code}]: {message}"),
+        other => bail!("Unexpected vHSM response to BootstrapPki: {other:?}"),
+    }
+
+    println!("\n[SUCCESS] PKI bootstrap completed. Please keep admin.key secure.");
+
     Ok(())
 }

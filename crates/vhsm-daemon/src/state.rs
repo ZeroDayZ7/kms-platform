@@ -12,6 +12,7 @@ pub struct VhsmState {
 pub struct VhsmPkiState {
     pub ca_private_key: Option<Zeroizing<Vec<u8>>>,
     pub ca_certificate: Option<Vec<u8>>,
+    pub ca_subject_cn: Option<String>,
 }
 
 impl VhsmState {
@@ -25,6 +26,7 @@ impl VhsmState {
             pki: VhsmPkiState {
                 ca_private_key: None,
                 ca_certificate: None,
+                ca_subject_cn: None,
             },
         }
     }

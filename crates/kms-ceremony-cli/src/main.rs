@@ -17,8 +17,10 @@ async fn main() -> Result<()> {
             shares,
             threshold,
             output_dir,
+            admin_cn,
+            server_domain,
         } => {
-            handle_interactive_ceremony(socket_path, shares, threshold, output_dir).await?;
+            handle_interactive_ceremony(socket_path, shares, threshold, output_dir, admin_cn, server_domain).await?;
         }
 
         Commands::Unseal {

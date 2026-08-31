@@ -49,6 +49,18 @@ pub enum Commands {
             help = "Katalog wyjściowy na pliki udziałów"
         )]
         output_dir: PathBuf,
+        #[arg(
+            long,
+            default_value = "admin.local",
+            help = "Common Name for generated SuperAdmin client cert"
+        )]
+        admin_cn: String,
+        #[arg(
+            long,
+            default_value = "server.local",
+            help = "Domain name for server TLS certificate"
+        )]
+        server_domain: String,
     },
 
     /// Odblokowuje (Unseal) HSM, wczytując udziały z katalogu lub wprowadzając je interaktywnie
