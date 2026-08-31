@@ -1,3 +1,4 @@
+// crates/kms-ceremony-cli/src/cli/ceremony.rs
 use anyhow::{Context, Result, bail};
 use dialoguer::Password;
 use std::path::PathBuf;

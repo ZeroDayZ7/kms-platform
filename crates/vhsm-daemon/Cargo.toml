@@ -15,3 +15,7 @@ tracing-subscriber = "0.3"
 zeroize = "1.8"
 kms-core = { path = "../kms-core" }
 rcgen = "0.9"
+x509-parser = "0.14"
+ring = "0.17"
+yasna = "0.5"
+chrono = { version = "0.4", features = ["serde"] }

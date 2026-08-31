@@ -369,16 +369,17 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
 
             match pki::generate_root_ca(&mut guard, &common_name) {
-                Ok(ca_cert) => HsmResponse::RootCAGenerated { ca_certificate: ca_cert },
-                Err(msg) => HsmResponse::Error { code: 500, message: msg },
+                Ok(ca_cert) => HsmResponse::RootCAGenerated {
+                    ca_certificate: ca_cert,
+                },
+                Err(msg) => HsmResponse::Error {
+                    code: 500,
+                    message: msg,
+                },
             }
         }
 
-        HsmRequest::SignCertificate {
-            public_key_der,
-            common_name,
-            is_server,
-        } => {
+        HsmRequest::SignCertificate { csr, is_server } => {
             let guard = state.read().await;
             if !guard.initialized {
                 return HsmResponse::Error {
@@ -387,12 +388,15 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            match pki::sign_public_key(&guard, &public_key_der, &common_name, is_server) {
+            match pki::sign_csr(&guard, &csr, is_server) {
                 Ok(cert) => HsmResponse::CertificateSigned {
                     certificate: cert,
                     ca_certificate: guard.pki.ca_certificate.clone().unwrap_or_default(),
                 },
-                Err(msg) => HsmResponse::Error { code: 500, message: msg },
+                Err(msg) => HsmResponse::Error {
+                    code: 500,
+                    message: msg,
+                },
             }
         }
 
@@ -812,14 +816,15 @@ mod tests {
             other => panic!("unexpected: {other:?}"),
         }
 
-        // Generate a temporary keypair and sign its public key
-        let kp = KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256).expect("keypair");
-        let pub_der = kp.public_key_der();
+        // Create a PKCS#10 CSR for signing
+        let mut params = rcgen::CertificateParams::new(vec!["agent.local".to_string()]);
+        params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
+        let cert_req = rcgen::Certificate::from_params(params).expect("cert params");
+        let csr_der = cert_req.serialize_request_der().expect("csr der");
 
         let sign_resp = handle_request(
             HsmRequest::SignCertificate {
-                public_key_der: pub_der,
-                common_name: "agent.local".to_string(),
+                csr: csr_der,
                 is_server: false,
             },
             state.clone(),
@@ -827,7 +832,10 @@ mod tests {
         .await;
 
         match sign_resp {
-            HsmResponse::CertificateSigned { certificate, ca_certificate } => {
+            HsmResponse::CertificateSigned {
+                certificate,
+                ca_certificate,
+            } => {
                 assert!(!certificate.is_empty());
                 assert!(!ca_certificate.is_empty());
             }
@@ -840,7 +848,9 @@ mod tests {
         let state = Arc::new(RwLock::new(VhsmState::new()));
 
         let resp = handle_request(
-            HsmRequest::GenerateRootCA { common_name: "X".to_string() },
+            HsmRequest::GenerateRootCA {
+                common_name: "X".to_string(),
+            },
             state.clone(),
         )
         .await;
@@ -852,8 +862,7 @@ mod tests {
 
         let resp2 = handle_request(
             HsmRequest::SignCertificate {
-                public_key_der: vec![],
-                common_name: "x".to_string(),
+                csr: vec![],
                 is_server: false,
             },
             state,

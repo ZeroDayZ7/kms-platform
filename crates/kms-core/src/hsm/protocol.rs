@@ -44,8 +44,7 @@ pub enum HsmRequest {
     },
     /// Sign a provided SubjectPublicKeyInfo (DER) and return signed certificate
     SignCertificate {
-        public_key_der: Vec<u8>,
-        common_name: String,
+        csr: Vec<u8>,
         is_server: bool,
     },
 }
