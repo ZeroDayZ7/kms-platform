@@ -113,6 +113,8 @@ pub async fn handle_interactive_ceremony(
             server_key_pem,
             admin_cert_pem,
             admin_key_pem,
+            encrypted_ca_key,
+            system_ca_kek_wrapped,
         } => {
             let pki_dir = output_dir.join("pki");
             fs::create_dir_all(&pki_dir).await?;
@@ -122,12 +124,16 @@ pub async fn handle_interactive_ceremony(
             let admin_key_path = pki_dir.join("admin.key");
             let server_crt_path = pki_dir.join("server.crt");
             let server_key_path = pki_dir.join("server.key");
+            let encrypted_ca_path = pki_dir.join("encrypted_ca.key.blob");
+            let wrapped_kek_path = pki_dir.join("system_ca_kek.wrapped");
 
             fs::write(&ca_path, ca_pem.clone()).await?;
             fs::write(&admin_crt_path, admin_cert_pem.clone()).await?;
             fs::write(&admin_key_path, admin_key_pem.clone()).await?;
             fs::write(&server_crt_path, server_cert_pem.clone()).await?;
             fs::write(&server_key_path, server_key_pem.clone()).await?;
+            fs::write(&encrypted_ca_path, encrypted_ca_key.clone()).await?;
+            fs::write(&wrapped_kek_path, system_ca_kek_wrapped.clone()).await?;
 
             #[cfg(unix)]
             {

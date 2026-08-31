@@ -134,7 +134,10 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let mut guard = state.write().await;
             if !guard.initialized { return HsmResponse::Error { code: 403, message: "vHSM is locked. Master key must be initialized first.".to_string() } }
             if guard.pki.ca_certificate.is_some() { return HsmResponse::Error { code: 409, message: "Root CA already exists".to_string() } }
-            match pki::generate_root_ca(&mut guard, &common_name) { Ok(ca_cert) => HsmResponse::RootCAGenerated { ca_certificate: ca_cert }, Err(msg) => HsmResponse::Error { code: 500, message: msg } }
+            match pki::generate_root_ca(&mut guard, &common_name) {
+                Ok((ca_cert, _ca_key_der, encrypted_ca, wrapped_kek)) => HsmResponse::RootCAGenerated { ca_certificate: ca_cert, encrypted_ca_key: encrypted_ca, system_ca_kek_wrapped: wrapped_kek },
+                Err(msg) => HsmResponse::Error { code: 500, message: msg },
+            }
         }
 
         HsmRequest::SignCertificate { csr, is_server } => {
@@ -147,7 +150,10 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let mut guard = state.write().await;
             if !guard.initialized { return HsmResponse::Error { code: 403, message: "vHSM is locked. Master key must be initialized first.".to_string() } }
             if guard.pki.ca_certificate.is_some() { return HsmResponse::Error { code: 409, message: "Root CA already exists".to_string() } }
-            match pki::bootstrap_pki(&mut guard, &admin_cn, &server_domain) { Ok((ca_pem, server_cert_pem, server_key_pem, admin_cert_pem, admin_key_pem)) => HsmResponse::BootstrapPkiResult { ca_pem, server_cert_pem, server_key_pem, admin_cert_pem, admin_key_pem }, Err(msg) => HsmResponse::Error { code: 500, message: msg } }
+            match pki::bootstrap_pki(&mut guard, &admin_cn, &server_domain) {
+                Ok((ca_pem, server_cert_pem, server_key_pem, admin_cert_pem, admin_key_pem, encrypted_ca, wrapped_kek)) => HsmResponse::BootstrapPkiResult { ca_pem, server_cert_pem, server_key_pem, admin_cert_pem, admin_key_pem, encrypted_ca_key: encrypted_ca, system_ca_kek_wrapped: wrapped_kek },
+                Err(msg) => HsmResponse::Error { code: 500, message: msg },
+            }
         }
     }
 }

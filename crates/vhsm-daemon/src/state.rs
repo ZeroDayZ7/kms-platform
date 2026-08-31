@@ -10,12 +10,8 @@ pub struct VhsmState {
 }
 
 pub struct VhsmPkiState {
-    pub ca_private_key: Option<Zeroizing<Vec<u8>>>,
     pub ca_certificate: Option<Vec<u8>>,
     pub ca_subject_cn: Option<String>,
-    // Envelope-encrypted CA key and wrapped KEK
-    pub encrypted_ca_key: Option<Vec<u8>>,
-    pub system_ca_kek_wrapped: Option<Vec<u8>>,
 }
 
 impl VhsmState {
@@ -27,11 +23,8 @@ impl VhsmState {
             master_key: None,
             unseal_started_at: None,
             pki: VhsmPkiState {
-                ca_private_key: None,
                 ca_certificate: None,
                 ca_subject_cn: None,
-                encrypted_ca_key: None,
-                system_ca_kek_wrapped: None,
             },
         }
     }
@@ -57,10 +50,6 @@ impl VhsmState {
     pub fn zeroize_key(&mut self) {
         if let Some(mut key) = self.master_key.take() {
             key.zeroize();
-        }
-        // zeroize PKI private key if present
-        if let Some(mut cakey) = self.pki.ca_private_key.take() {
-            cakey.zeroize();
         }
         self.initialized = false;
         self.active_key_version = 0;

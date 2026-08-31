@@ -97,6 +97,8 @@ pub enum HsmResponse {
     },
     RootCAGenerated {
         ca_certificate: Vec<u8>,
+        encrypted_ca_key: Vec<u8>,
+        system_ca_kek_wrapped: Vec<u8>,
     },
     CertificateSigned {
         certificate: Vec<u8>,
@@ -108,6 +110,8 @@ pub enum HsmResponse {
         server_key_pem: Vec<u8>,
         admin_cert_pem: Vec<u8>,
         admin_key_pem: Vec<u8>,
+        encrypted_ca_key: Vec<u8>,
+        system_ca_kek_wrapped: Vec<u8>,
     },
     Error {
         code: u16,
