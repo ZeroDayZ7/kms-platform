@@ -145,14 +145,23 @@ pub async fn handle_interactive_ceremony(
             // Optionally register admin cert in kms-service if KMS_SERVICE_URL env provided
             if let Ok(service_url) = std::env::var("KMS_SERVICE_URL") {
                 let client = reqwest::Client::new();
-                let url = format!("{}/api/v1/admin/identities", service_url.trim_end_matches('/'));
+                let url = format!(
+                    "{}/api/v1/admin/identities",
+                    service_url.trim_end_matches('/')
+                );
                 let body = serde_json::json!({"cert_pem": String::from_utf8_lossy(&admin_cert_pem), "role": "SUPER_ADMIN"});
                 match client.post(&url).json(&body).send().await {
                     Ok(resp) => {
                         if resp.status().is_success() {
-                            println!("[PKI] Admin identity registered with kms-service at {}", url);
+                            println!(
+                                "[PKI] Admin identity registered with kms-service at {}",
+                                url
+                            );
                         } else {
-                            println!("[PKI] Failed to register admin identity: HTTP {}", resp.status());
+                            println!(
+                                "[PKI] Failed to register admin identity: HTTP {}",
+                                resp.status()
+                            );
                         }
                     }
                     Err(err) => println!("[PKI] Error contacting kms-service: {}", err),

@@ -1,8 +1,8 @@
 // crates/vhsm-daemon/src/pki.rs
+use rand::RngCore;
 use rcgen::{BasicConstraints, Certificate, CertificateParams, IsCa, KeyPair};
 use tracing::info;
 use zeroize::Zeroizing;
-use rand::RngCore;
 
 use crate::state::VhsmState;
 
@@ -24,7 +24,6 @@ pub fn generate_root_ca(state: &mut VhsmState, common_name: &str) -> Result<Vec<
     params.key_pair = Some(kp);
 
     let cert = Certificate::from_params(params).map_err(|e| e.to_string())?;
-
 
     // serialize cert PEM and private key DER
     let cert_pem = cert.serialize_pem().map_err(|e| e.to_string())?;
@@ -69,10 +68,10 @@ pub fn sign_csr(_state: &VhsmState, _csr_der: &[u8], _is_server: bool) -> Result
 
     // Try to derive a subject CN from the CSR by hashing its bytes (fallback).
     // A robust CSR parsing implementation can be added later.
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
     let digest = Sha256::digest(_csr_der);
     let short = &hex::encode(digest)[..16];
-    let subject_cn = format!("csr-{}",(short));
+    let subject_cn = format!("csr-{}", (short));
 
     // Build a certificate signed by CA using rcgen (new keypair)
     let ca_key = _state
@@ -103,7 +102,8 @@ pub fn sign_csr(_state: &VhsmState, _csr_der: &[u8], _is_server: bool) -> Result
     let mut params = CertificateParams::new(vec![subject_cn]);
     params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
     // generate new keypair for this cert (fallback)
-    params.key_pair = Some(KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| e.to_string())?);
+    params.key_pair =
+        Some(KeyPair::generate(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| e.to_string())?);
     if _is_server {
         params.extended_key_usages = vec![rcgen::ExtendedKeyUsagePurpose::ServerAuth];
     } else {
@@ -111,7 +111,9 @@ pub fn sign_csr(_state: &VhsmState, _csr_der: &[u8], _is_server: bool) -> Result
     }
 
     let cert = Certificate::from_params(params).map_err(|e| e.to_string())?;
-    let cert_pem = cert.serialize_pem_with_signer(&ca_cert).map_err(|e| e.to_string())?;
+    let cert_pem = cert
+        .serialize_pem_with_signer(&ca_cert)
+        .map_err(|e| e.to_string())?;
 
     Ok(cert_pem.into_bytes())
 }
