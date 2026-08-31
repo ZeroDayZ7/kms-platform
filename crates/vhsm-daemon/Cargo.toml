@@ -19,3 +19,4 @@ x509-parser = "0.14"
 ring = "0.17"
 yasna = "0.5"
 chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"

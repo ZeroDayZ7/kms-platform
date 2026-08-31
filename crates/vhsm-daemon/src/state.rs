@@ -13,6 +13,9 @@ pub struct VhsmPkiState {
     pub ca_private_key: Option<Zeroizing<Vec<u8>>>,
     pub ca_certificate: Option<Vec<u8>>,
     pub ca_subject_cn: Option<String>,
+    // Envelope-encrypted CA key and wrapped KEK
+    pub encrypted_ca_key: Option<Vec<u8>>,
+    pub system_ca_kek_wrapped: Option<Vec<u8>>,
 }
 
 impl VhsmState {
@@ -27,6 +30,8 @@ impl VhsmState {
                 ca_private_key: None,
                 ca_certificate: None,
                 ca_subject_cn: None,
+                encrypted_ca_key: None,
+                system_ca_kek_wrapped: None,
             },
         }
     }

@@ -98,11 +98,22 @@ pub async fn handle_interactive_ceremony(
 
     // Bootstrap PKI: ask vHSM to generate CA and issue server/admin certs
     println!("[PKI] Requesting PKI bootstrap from vHSM...");
-    let req = HsmRequest::BootstrapPki { admin_cn: admin_cn.clone(), server_domain: server_domain.clone() };
-    let resp = send_hsm_request(&socket_path, &req, None).await.context("Failed to request BootstrapPki from vHSM")?;
+    let req = HsmRequest::BootstrapPki {
+        admin_cn: admin_cn.clone(),
+        server_domain: server_domain.clone(),
+    };
+    let resp = send_hsm_request(&socket_path, &req, None)
+        .await
+        .context("Failed to request BootstrapPki from vHSM")?;
 
     match resp {
-        HsmResponse::BootstrapPkiResult { ca_pem, server_cert_pem, server_key_pem, admin_cert_pem, admin_key_pem } => {
+        HsmResponse::BootstrapPkiResult {
+            ca_pem,
+            server_cert_pem,
+            server_key_pem,
+            admin_cert_pem,
+            admin_key_pem,
+        } => {
             let pki_dir = output_dir.join("pki");
             fs::create_dir_all(&pki_dir).await?;
 
@@ -112,11 +123,11 @@ pub async fn handle_interactive_ceremony(
             let server_crt_path = pki_dir.join("server.crt");
             let server_key_path = pki_dir.join("server.key");
 
-            fs::write(&ca_path, ca_pem).await?;
-            fs::write(&admin_crt_path, admin_cert_pem).await?;
-            fs::write(&admin_key_path, admin_key_pem).await?;
-            fs::write(&server_crt_path, server_cert_pem).await?;
-            fs::write(&server_key_path, server_key_pem).await?;
+            fs::write(&ca_path, ca_pem.clone()).await?;
+            fs::write(&admin_crt_path, admin_cert_pem.clone()).await?;
+            fs::write(&admin_key_path, admin_key_pem.clone()).await?;
+            fs::write(&server_crt_path, server_cert_pem.clone()).await?;
+            fs::write(&server_key_path, server_key_pem.clone()).await?;
 
             #[cfg(unix)]
             {
@@ -126,9 +137,31 @@ pub async fn handle_interactive_ceremony(
                 fs::set_permissions(&admin_key_path, perms).await?;
             }
 
-            println!("[PKI] Bootstrap PKI artifacts written to {}", pki_dir.display());
+            println!(
+                "[PKI] Bootstrap PKI artifacts written to {}",
+                pki_dir.display()
+            );
+
+            // Optionally register admin cert in kms-service if KMS_SERVICE_URL env provided
+            if let Ok(service_url) = std::env::var("KMS_SERVICE_URL") {
+                let client = reqwest::Client::new();
+                let url = format!("{}/api/v1/admin/identities", service_url.trim_end_matches('/'));
+                let body = serde_json::json!({"cert_pem": String::from_utf8_lossy(&admin_cert_pem), "role": "SUPER_ADMIN"});
+                match client.post(&url).json(&body).send().await {
+                    Ok(resp) => {
+                        if resp.status().is_success() {
+                            println!("[PKI] Admin identity registered with kms-service at {}", url);
+                        } else {
+                            println!("[PKI] Failed to register admin identity: HTTP {}", resp.status());
+                        }
+                    }
+                    Err(err) => println!("[PKI] Error contacting kms-service: {}", err),
+                }
+            }
         }
-        HsmResponse::Error { code, message } => bail!("vHSM error during BootstrapPki [{code}]: {message}"),
+        HsmResponse::Error { code, message } => {
+            bail!("vHSM error during BootstrapPki [{code}]: {message}")
+        }
         other => bail!("Unexpected vHSM response to BootstrapPki: {other:?}"),
     }
 
