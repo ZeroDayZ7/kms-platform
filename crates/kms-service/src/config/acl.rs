@@ -34,6 +34,7 @@ pub struct AccessRule {
 
 #[derive(Debug, Deserialize)]
 pub struct ServiceConfig {
+    #[serde(alias = "service-id")]
     pub service_id: ServiceId,
     #[serde(deserialize_with = "deserialize_secret")]
     pub secret: SecretBytes,

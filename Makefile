@@ -83,9 +83,6 @@ audit-verify:
 audit-logs:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli audit-logs
 
-run:
-	cargo run -p kms-service --bin kms-service -- serve
-
 db-reset:
 	docker compose stop postgres kms-service vhsm-daemon
 	docker compose rm -f postgres
@@ -105,9 +102,13 @@ check-targets:
 check-creds:
 	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, service_id, target_type, target_db, username, status FROM db_credentials;"
 
-# Uruchomienie deweloperskie z hot-reloadem
-dev:
+# Uruchomienie z przebudowaniem obrazów (gdy zmieniasz zależności/Dockerfile)
+dev-build:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+# Szybkie uruchomienie (wykorzystuje istniejące kontenery i wolumeny do hot-reloadu)
+dev:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 # Zatrzymanie deweloperskie
 dev-down:
