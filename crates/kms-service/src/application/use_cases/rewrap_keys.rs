@@ -105,6 +105,12 @@ mod tests {
             async { Ok(vec![]) }
         }
 
+        fn get_all_active_keys(
+            &self,
+        ) -> impl std::future::Future<Output = AppResult<Vec<KeyPairEntity>>> + Send {
+            async { Ok(vec![]) }
+        }
+
         fn deactivate_keys_for_service(
             &self,
             _service_id: &ServiceId,

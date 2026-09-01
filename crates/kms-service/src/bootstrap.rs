@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -68,13 +69,24 @@ where
 {
     info!("Rozpoczynanie weryfikacji i bootstrapu kluczy z konfiguracji ACL...");
 
+    // Pobierz wszystkie aktywne klucze jednorazowo, aby uniknąć zapytań N+1
+    let active_keys = key_repo.get_all_active_keys().await?;
+    let mut key_map: HashMap<
+        (crate::domain::keys::models::ServiceId, KeyAlgorithm),
+        KeyPairEntity,
+    > = HashMap::new();
+
+    for k in active_keys.into_iter() {
+        key_map.insert((k.service_id.clone(), k.algorithm), k);
+    }
+
     for service_cfg in acl_settings.services.values() {
         for rule in &service_cfg.allowed_access {
             let target_service = rule.target_service.clone();
             let algorithm = rule.algorithm;
 
-            // 1. Sprawdź lub utwórz w PostgreSQL (Zawsze!)
-            let existing_key = key_repo.get_active_key(&target_service, algorithm).await?;
+            // 1. Sprawdź lub utwórz w PostgreSQL (Zawsze!) — użyj lokalnej mapy zamiast N+1 zapytań
+            let existing_key = key_map.get(&(target_service.clone(), algorithm)).cloned();
             let active_key = match existing_key {
                 Some(key) => key,
                 None => {
@@ -121,6 +133,8 @@ where
                     };
 
                     key_repo.save_key(&new_key).await?;
+                    // dodaj do lokalnej mapy, żeby kolejne iteracje widziały nowy klucz
+                    key_map.insert((target_service.clone(), algorithm), new_key.clone());
                     info!(
                         service = %target_service.0,
                         alg = ?algorithm,
