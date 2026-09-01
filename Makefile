@@ -1,6 +1,6 @@
 export LANG = pl_PL.UTF-8
 
-.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean init bootstrap setup-all
+.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean init bootstrap setup-all dev dev-down prod unlock-dev bootstrap-dev migrate migrate-dev
 
 all: fmt check clippy test
 
@@ -49,11 +49,28 @@ rebuild:
 init:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
 
+# --- PRODUKCJA ---
 unlock:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
 
 bootstrap:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli import-bootstrap --file ./out/bootstrap-secrets.json.enc --service-url http://kms-service:8080
+
+# --- DEV  ---
+unlock-dev:
+	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -it vhsm-daemon cargo run -p kms-ceremony-cli -- unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
+
+bootstrap-dev:
+	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- import-bootstrap --file ./out/bootstrap-secrets.json.enc --service-url 'http://kms-service:8080'
+
+# --- PRODUKCJA (używa profilu tools i zbudowanego obrazu) ---
+migrate:
+	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-migrate
+
+# --- DEV (używa kompilacji w locie cargo run) ---
+migrate-dev:
+	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm kms-migrate cargo run -p kms-migrate -- run
+	
 
 tools:
 	docker compose --profile tools build kms-ceremony-cli
@@ -87,3 +104,15 @@ check-targets:
 # Komenda do sprawdzenia zaimplementowanych poświadczeń
 check-creds:
 	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, service_id, target_type, target_db, username, status FROM db_credentials;"
+
+# Uruchomienie deweloperskie z hot-reloadem
+dev:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+# Zatrzymanie deweloperskie
+dev-down:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+
+# Standardowe uruchomienie produkcyjne (stary Dockerfile)
+prod:
+	docker compose up --build

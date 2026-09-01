@@ -1,0 +1,15 @@
+FROM rust:1-slim
+
+# Instalacja zależności systemowych wymaganych przez biblioteki (np. OpenSSL, pkg-config)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instalacja cargo-watch do automatycznej rekompilacji przy zmianach w kodzie
+RUN cargo install cargo-watch
+
+WORKDIR /app
+
+# Domyślnie brak ENTRYPOINT/CMD – polecenia zdefiniujemy w docker-compose

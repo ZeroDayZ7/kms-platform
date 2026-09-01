@@ -114,7 +114,10 @@ fn default_command() -> Commands {
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let command = cli.command.unwrap_or_else(default_command);
-    let migration_dir = Path::new("migrations");
+
+    let migration_dir_env = std::env::var("MIGRATIONS_DIR")
+        .unwrap_or_else(|_| "crates/kms-migrate/migrations".to_string());
+    let migration_dir = Path::new(&migration_dir_env);
 
     let db_config = DatabaseConfig::from_env()
         .context("Failed to load database configuration from environment")?;
