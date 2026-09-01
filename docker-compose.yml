@@ -125,8 +125,10 @@ services:
       dockerfile: Dockerfile
       target: kms-migrate
     container_name: kms_migrate
+    profiles:
+      - tools
     command: ["run"]
-    restart: on-failure
+    restart: no
     environment:
       - DATABASE__HOST=postgres
       - DATABASE__PORT=5432
@@ -150,6 +152,7 @@ services:
     container_name: kms_ceremony_cli
     profiles:
       - tools
+    restart: no
     entrypoint: ["/app/kms-ceremony-cli"]
     networks:
       - kms-internal-net
