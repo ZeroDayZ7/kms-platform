@@ -45,10 +45,10 @@ impl TargetResourceProvider for PostgresTargetProvider {
             Err(_) => BASE64.encode(password_bytes),
         };
 
-        // 1. Wygenerowanie i wyliczenie gotowego TIMESTAMP-u dla CREATE USER
+        // 1. Wygenerowanie i wyliczenie DDL z uwzględnieniem klauzuli INHERIT
         let create_user_builder = r#"
             SELECT format(
-                'CREATE USER %I WITH PASSWORD %L VALID UNTIL %L;',
+                'CREATE USER %I WITH PASSWORD %L VALID UNTIL %L INHERIT;',
                 $1,
                 $2,
                 to_char(NOW() + ($3 * INTERVAL '1 second'), 'YYYY-MM-DD HH24:MI:SS.USOF')
@@ -67,14 +67,13 @@ impl TargetResourceProvider for PostgresTargetProvider {
 
         let create_user_ddl = create_row.0;
 
-        // DBG: Wypisujemy dokładny SQL wygenerowany dla CREATE USER
         println!(
             "[DEBUG-DDL] Wygenerowany CREATE USER SQL: {}",
             create_user_ddl
         );
         tracing::info!(sql = %create_user_ddl, "Wykonuję DDL tworzenia użytkownika PG");
 
-        // Execute CREATE USER
+        // Wykonanie CREATE USER
         if let Err(err) = sqlx::query(&create_user_ddl).execute(&pool).await {
             password_str.zeroize();
             return Err(AppError::Internal(format!(
@@ -105,7 +104,6 @@ impl TargetResourceProvider for PostgresTargetProvider {
 
             let grant_ddl = grant_row.0;
 
-            // DBG: Wypisujemy dokładny SQL dla GRANT
             println!("[DEBUG-DDL] Wygenerowany GRANT SQL: {}", grant_ddl);
             tracing::info!(sql = %grant_ddl, "Wykonuję DDL nadawania uprawnień PG");
 
@@ -116,6 +114,9 @@ impl TargetResourceProvider for PostgresTargetProvider {
                     grant_ddl, err
                 )));
             }
+        } else {
+            tracing::warn!("Parametr 'role' jest pusty - pomijam krok GRANT!");
+            println!("[WARN] Parametr 'role' jest pusty - pominięto GRANT!");
         }
 
         Ok(GeneratedCredential {
