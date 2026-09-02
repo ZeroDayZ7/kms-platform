@@ -25,7 +25,7 @@ pub fn init_logging(config: &LogConfig) {
 
         // Kompaktowy log konsolowy z czasem HH:MM:SS i bez odstępów
         LogFormat::Compact | LogFormat::Pretty => tracing_subscriber::fmt::layer()
-            .compact()
+            .pretty()
             .with_writer(std::io::stdout)
             .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new(
                 "%H:%M:%S".to_string(),
