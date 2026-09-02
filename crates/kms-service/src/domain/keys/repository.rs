@@ -31,6 +31,10 @@ pub trait KeyRepository: Send + Sync {
     fn get_all_active_public_keys(
         &self,
     ) -> impl std::future::Future<Output = AppResult<Vec<KeyPairEntity>>> + Send;
+    //#region get_all_active_keys
+    fn get_all_active_keys(
+        &self,
+    ) -> impl std::future::Future<Output = AppResult<Vec<KeyPairEntity>>> + Send;
     //#region deactivate_keys_for_service
     fn deactivate_keys_for_service(
         &self,

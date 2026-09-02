@@ -1,3 +1,4 @@
+use crate::domain::keys::models::ServiceId; // Import na górze pliku
 use crate::domain::keys::repository::KeyRepository;
 use crate::server::state::KeyCache;
 use chrono::Utc;
@@ -8,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 pub async fn run_cache_cleanup<K>(
     key_cache: Arc<KeyCache>,
     key_repo: Arc<K>,
-    _grace_minutes: i64,
+    cleanup_interval: Duration,
     shutdown: CancellationToken,
 ) where
     K: KeyRepository + Send + Sync + 'static,
@@ -16,22 +17,26 @@ pub async fn run_cache_cleanup<K>(
     tokio::spawn(async move {
         loop {
             tokio::select! {
-                _ = shutdown.cancelled() => break,
+                _ = shutdown.cancelled() => {
+                    tracing::info!("Wygaszanie zadania run_cache_cleanup");
+                    break;
+                }
                 _ = async {
-                    // Iterate keys and validate against repository state
-                    // For simplicity, we remove any key that no longer has an active or valid deprecated key
-                    // Note: This may be optimized to check timestamps instead.
-                    // Acquire a snapshot of keys
                     let keys = key_cache.keys_snapshot();
+                    let now = Utc::now();
+
                     for k in keys {
-                        let service = crate::domain::keys::models::ServiceId(k.target_service.clone());
+                        // Czysto i czytelnie dzięki importowi ServiceId na górze
+                        let service = ServiceId(k.target_service.clone());
                         let algo = k.algorithm;
-                        let now = Utc::now();
+
                         if let Ok(None) = key_repo.get_active_or_valid_deprecated_key(&service, algo, now).await {
                             key_cache.remove_all_for_service(&service);
                         }
                     }
-                    sleep(Duration::from_secs(60)).await;
+
+                    // Dynamiczny czas oczekiwania przekazany z konfiguracji
+                    sleep(cleanup_interval).await;
                 } => {}
             }
         }

@@ -2,6 +2,7 @@
 name = "vhsm-daemon"
 version = "0.1.0"
 edition = "2024"
+default-run = "vhsm-daemon"
 
 [dependencies]
 tokio = { version = "1.38", features = ["full"] }

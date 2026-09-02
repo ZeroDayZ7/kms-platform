@@ -90,12 +90,6 @@ services:
       target: kms-service
     container_name: kms_service
     command: ["serve"]
-    networks:
-      - kms-internal-net
-      - sec-net
-      - target-admin-net
-    ports:
-      - "8081:8080"
     environment:
       - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.toml
       - RUST_LOG=${RUST_LOG:-info,kms_service=debug}
@@ -106,12 +100,18 @@ services:
       - DATABASE__NAME=${DATABASE__NAME}
       - DATABASE__USER=${DATABASE__USER:-kms_app_user}
       - DATABASE__PASSWORD_FILE=/run/secrets/kms_app_db_pass
+    ports:
+      - "8081:8080"
     secrets:
       - kms_app_db_pass
     volumes:
       - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - kms_ceremony_data:/app/ceremony:ro
       - vhsm_sockets:/run/vhsm
+    networks:
+      - kms-internal-net
+      - sec-net
+      - target-admin-net
     depends_on:
       postgres:
         condition: service_healthy
@@ -125,16 +125,18 @@ services:
       dockerfile: Dockerfile
       target: kms-migrate
     container_name: kms_migrate
+    profiles:
+      - tools
     command: ["run"]
-    restart: on-failure
-    networks:
-      - kms-internal-net
+    restart: no
     environment:
       - DATABASE__HOST=postgres
       - DATABASE__PORT=5432
       - DATABASE__NAME=${DATABASE__NAME:-kms_db}
       - DATABASE__USER=${DATABASE__MIGRATOR_USER:-kms_migrator}
       - DATABASE__PASSWORD_FILE=/run/secrets/kms_migrator_db_pass
+    networks:
+      - kms-internal-net
     secrets:
       - kms_migrator_db_pass
     depends_on:
@@ -150,6 +152,7 @@ services:
     container_name: kms_ceremony_cli
     profiles:
       - tools
+    restart: no
     entrypoint: ["/app/kms-ceremony-cli"]
     networks:
       - kms-internal-net
@@ -158,7 +161,7 @@ services:
       - CRYPTO__HSM_SOCKET_PATH=/run/vhsm/vhsm.sock
       - KMS_CLI__SERVICE_ID=kms-cli
       - KMS_CLI__SECRET=${ACL__SERVICES__KMS_CLI__SECRET:-super-long-random-secret-for-kms-cli-hmac-64-bytes}
-      - KMS_CLI__SERVICE_URL=http://kms-service:808
+      - KMS_CLI__SERVICE_URL=http://kms-service:8080
     volumes:
       - kms_ceremony_data:/app/ceremony
       - vhsm_sockets:/run/vhsm

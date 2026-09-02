@@ -77,6 +77,12 @@ fn match_pattern(pattern: &str, candidate: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix('*') {
         return candidate.starts_with(prefix);
     }
+    if let Some(suffix) = candidate.strip_prefix(pattern) {
+        return suffix.starts_with(':') || suffix.is_empty();
+    }
+    if let Some(prefix) = candidate.strip_suffix('*') {
+        return pattern.starts_with(prefix);
+    }
     false
 }
 

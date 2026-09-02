@@ -4,10 +4,13 @@ use tracing_subscriber::{EnvFilter, Layer};
 
 use crate::config::{LogConfig, LogFormat};
 
-//#region init_logging
 pub fn init_logging(config: &LogConfig) {
+    let default_filter = format!(
+        "{},hyper=warn,reqwest=warn,h2=warn,tower_http=warn,axum=warn",
+        config.level.as_ref()
+    );
     let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(config.level.as_ref()));
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
 
     let console_layer = match config.format {
         LogFormat::Json => tracing_subscriber::fmt::layer()
@@ -17,19 +20,17 @@ pub fn init_logging(config: &LogConfig) {
             .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
             .with_target(false)
             .boxed(),
-        LogFormat::Compact => tracing_subscriber::fmt::layer()
+
+        LogFormat::Compact | LogFormat::Pretty => tracing_subscriber::fmt::layer()
             .compact()
             .with_writer(std::io::stdout)
-            .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+            .with_timer(tracing_subscriber::fmt::time::ChronoLocal::new(
+                "%H:%M:%S".to_string(),
+            ))
             .with_ansi(true)
             .with_target(false)
-            .boxed(),
-        LogFormat::Pretty => tracing_subscriber::fmt::layer()
-            .pretty()
-            .with_writer(std::io::stdout)
-            .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
-            .with_ansi(true)
-            .with_target(false)
+            .with_file(false)
+            .with_line_number(false)
             .boxed(),
     };
 

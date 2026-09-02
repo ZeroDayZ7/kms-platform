@@ -10,6 +10,7 @@ use crate::domain::keys::repository::KeyRepository;
 pub async fn run_expiration_worker<K, A>(
     key_repo: Arc<K>,
     audit_repo: Arc<A>,
+    check_interval: Duration,
     shutdown_token: CancellationToken,
 ) where
     K: KeyRepository + Send + Sync + 'static,
@@ -26,7 +27,7 @@ pub async fn run_expiration_worker<K, A>(
                     if let Err(e) = process_expirations(Arc::clone(&key_repo), Arc::clone(&audit_repo)).await {
                         tracing::error!("Expiration worker error: {:?}", e);
                     }
-                    sleep(Duration::from_secs(300)).await;
+                    sleep(check_interval).await;
                 } => {}
             }
         }

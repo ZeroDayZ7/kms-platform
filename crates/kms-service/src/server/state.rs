@@ -211,6 +211,7 @@ impl AppState {
         let _ = crate::workers::expiration::run_expiration_worker(
             key_repo.clone(),
             audit_repo.clone(),
+            settings.crypto.expiration_check_duration(),
             shutdown_token.clone(),
         )
         .await;
@@ -219,7 +220,7 @@ impl AppState {
         let _ = crate::workers::cache_cleanup::run_cache_cleanup(
             key_cache.clone(),
             key_repo.clone(),
-            settings.crypto.grace_period_minutes.0,
+            settings.crypto.cache_cleanup_duration(),
             shutdown_token.clone(),
         )
         .await;

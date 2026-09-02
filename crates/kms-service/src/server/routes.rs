@@ -33,6 +33,10 @@ pub fn router(state: AppState) -> Router {
             post(agent::issue_dynamic_credentials_handler).layer(rate_limits.auth.clone()),
         )
         .route(
+            "/api/v1/agent/credentials/issue-batch",
+            post(agent::issue_batch_credentials_handler).layer(rate_limits.auth.clone()),
+        )
+        .route(
             "/api/v1/keys/generate",
             post(keys::generate_key_handler).layer(rate_limits.auth.clone()),
         )
@@ -91,6 +95,6 @@ pub fn router(state: AppState) -> Router {
         .layer(redis_mw)
         .layer(security)
         .layer(cors)
-        .layer(middleware::http_trace_layer())
+        // .layer(middleware::http_trace_layer())
         .with_state(state)
 }

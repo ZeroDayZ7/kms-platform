@@ -40,28 +40,72 @@ pub struct IssueAgentCredentialOutput {
 
 pub struct IssueAgentCredentialUseCase;
 
+pub fn build_resource_arn(target_type: &str, resource: &str) -> String {
+    let target_type_clean = target_type.trim();
+    let resource_trimmed = resource.trim();
+
+    if resource_trimmed.starts_with("arn:") {
+        return resource_trimmed.to_string();
+    }
+
+    format!(
+        "arn:kms:{}:{}",
+        target_type_clean.to_lowercase(),
+        resource_trimmed
+    )
+}
+
+pub fn validate_agent_credential_acl(
+    policy: &crate::config::iam_json::IamCredentialPolicy,
+    caller_service: &str,
+    target_type: &str,
+    resource: &str,
+) -> AppResult<()> {
+    let target_type_clean = target_type.trim().to_lowercase();
+    let action = format!("kms:credentials:provision:{target_type_clean}");
+    let resource_arn = build_resource_arn(target_type, resource);
+
+    if !policy.is_action_allowed(caller_service, &action, &resource_arn) {
+        tracing::warn!(
+            caller = %caller_service,
+            action = %action,
+            resource = %resource_arn,
+            "IAM Policy access denied for agent request"
+        );
+        return Err(AppError::Forbidden);
+    }
+
+    Ok(())
+}
+
 impl IssueAgentCredentialUseCase {
+    pub fn validate_acl(state: &AppState, input: &IssueAgentCredentialInput) -> AppResult<()> {
+        validate_agent_credential_acl(
+            &state.iam_policy,
+            &input.caller_service,
+            &input.target_type,
+            &input.resource,
+        )
+    }
+
+    pub fn validate_batch_acl(
+        state: &AppState,
+        inputs: &[IssueAgentCredentialInput],
+    ) -> AppResult<()> {
+        for input in inputs {
+            Self::validate_acl(state, input)?;
+        }
+        Ok(())
+    }
+
     pub async fn execute(
         state: &AppState,
         input: IssueAgentCredentialInput,
     ) -> AppResult<IssueAgentCredentialOutput> {
         let target_type_clean = input.target_type.to_lowercase();
         let action = format!("kms:credentials:provision:{target_type_clean}");
-        let resource_arn = format!("arn:kms:{target_type_clean}:{}", input.resource);
 
-        // 1. Walidacja IAM Policy
-        if !state
-            .iam_policy
-            .is_action_allowed(&input.caller_service, &action, &resource_arn)
-        {
-            tracing::warn!(
-                caller = %input.caller_service,
-                action = %action,
-                resource = %resource_arn,
-                "IAM Policy access denied for agent request"
-            );
-            return Err(AppError::Forbidden);
-        }
+        Self::validate_acl(state, &input)?;
 
         // 2. Generowanie poświadczeń przez vHSM
         let kek_id = fetch_latest_kek_id(&state.db, "kms-system").await?;
@@ -359,4 +403,31 @@ pub async fn insert_audit_log_tx(
     .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_batch_acl_fails_fast_for_unauthorized_item() {
+        let policy = crate::config::iam_json::IamCredentialPolicy {
+            version: "test".to_string(),
+            statements: vec![crate::config::iam_json::IamStatement {
+                sid: "allow-db-auth".to_string(),
+                effect: "Allow".to_string(),
+                roles: vec!["auth-service".to_string()],
+                actions: vec!["kms:credentials:provision:database".to_string()],
+                resources: vec!["arn:kms:database:auth_db".to_string()],
+            }],
+        };
+
+        let valid_result =
+            validate_agent_credential_acl(&policy, "auth-service", "database", "auth_db");
+        assert!(valid_result.is_ok());
+
+        let unauthorized_result =
+            validate_agent_credential_acl(&policy, "auth-service", "database", "other_db");
+        assert!(matches!(unauthorized_result, Err(AppError::Forbidden)));
+    }
 }

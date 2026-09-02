@@ -132,6 +132,17 @@ impl KeyRepository for PgKeyRepository {
         rows.into_iter().map(map_key_row).collect()
     }
 
+    async fn get_all_active_keys(&self) -> AppResult<Vec<KeyPairEntity>> {
+        let rows = sqlx::query_as::<_, KeyRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE is_active = true ORDER BY service_id, algorithm, version DESC"
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(AppError::from)?;
+
+        rows.into_iter().map(map_key_row).collect()
+    }
+
     async fn deactivate_keys_for_service(
         &self,
         service_id: &ServiceId,
