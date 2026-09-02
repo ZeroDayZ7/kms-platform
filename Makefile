@@ -117,3 +117,6 @@ dev-down:
 # Standardowe uruchomienie produkcyjne (stary Dockerfile)
 prod:
 	docker compose up --build
+
+dev-recreate:
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate kms-service

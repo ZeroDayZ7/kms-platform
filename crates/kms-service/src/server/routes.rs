@@ -95,6 +95,6 @@ pub fn router(state: AppState) -> Router {
         .layer(redis_mw)
         .layer(security)
         .layer(cors)
-        .layer(middleware::http_trace_layer())
+        // .layer(middleware::http_trace_layer())
         .with_state(state)
 }
