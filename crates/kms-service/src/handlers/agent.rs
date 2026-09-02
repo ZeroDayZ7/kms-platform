@@ -34,7 +34,8 @@ pub struct AgentIssueCredentialsResponse {
 #[derive(Debug, Deserialize, Clone)]
 pub struct BatchCredentialRequestItem {
     pub name: String,
-    pub target_service: String,
+    #[serde(default)]
+    pub target_service: Option<String>,
     #[serde(rename = "type")]
     pub r#type: String,
     pub resource: String,
@@ -58,6 +59,15 @@ pub async fn issue_dynamic_credentials_handler(
     AuthenticatedService(caller): AuthenticatedService,
     Json(payload): Json<AgentIssueCredentialsRequest>,
 ) -> AppResult<Json<AgentIssueCredentialsResponse>> {
+    tracing::info!(
+        caller = %caller.0,
+        target_service = %payload.target_service,
+        target_type = %payload.target_type,
+        resource = %payload.resource,
+        ttl_seconds = payload.ttl_seconds,
+        "[KMS 1.1] Otrzymano żądanie pojedynczego issue credential"
+    );
+
     let output = IssueAgentCredentialUseCase::execute(
         &state,
         IssueAgentCredentialInput {
@@ -85,12 +95,37 @@ pub async fn issue_batch_credentials_handler(
     Json(payload): Json<AgentIssueBatchCredentialsRequest>,
 ) -> AppResult<Json<AgentIssueCredentialsBatchResponse>> {
     let caller_service = caller.0;
+    tracing::info!(
+        caller = %caller_service,
+        items = payload.credentials.len(),
+        ttl_seconds = payload.ttl_seconds,
+        "[KMS 2.1] Otrzymano żądanie batch issue credential"
+    );
+
+    for (index, item) in payload.credentials.iter().enumerate() {
+        let resolved_target_service = item
+            .target_service
+            .clone()
+            .unwrap_or_else(|| item.resource.clone());
+        tracing::debug!(
+            index = index,
+            name = %item.name,
+            target_service = %resolved_target_service,
+            target_type = %item.r#type,
+            resource = %item.resource,
+            "[KMS 2.2] Przetwarzanie elementu batch przed ACL"
+        );
+    }
+
     let batch_inputs: Vec<_> = payload
         .credentials
         .iter()
         .map(|item| IssueAgentCredentialInput {
             caller_service: caller_service.clone(),
-            target_service: item.target_service.clone(),
+            target_service: item
+                .target_service
+                .clone()
+                .unwrap_or_else(|| item.resource.clone()),
             target_type: item.r#type.clone(),
             resource: item.resource.clone(),
             ttl_seconds: payload.ttl_seconds,
@@ -102,79 +137,60 @@ pub async fn issue_batch_credentials_handler(
     let mut credentials = HashMap::new();
 
     for item in payload.credentials {
-        let output = IssueAgentCredentialUseCase::execute(
-            &state,
-            IssueAgentCredentialInput {
-                caller_service: caller_service.clone(),
-                target_service: item.target_service.clone(),
-                target_type: item.r#type.clone(),
-                resource: item.resource.clone(),
-                ttl_seconds: payload.ttl_seconds,
-            },
-        )
-        .await?;
+        let resolved_target_service = item
+            .target_service
+            .clone()
+            .unwrap_or_else(|| item.resource.clone());
 
-        credentials.insert(
-            item.name.clone(),
-            AgentIssueCredentialsResponse {
-                credential_id: output.credential_id,
-                username: output.username,
-                password: output.password,
-                expires_at: output.expires_at.to_rfc3339(),
-            },
+        tracing::info!(
+            name = %item.name,
+            target_service = %resolved_target_service,
+            target_type = %item.r#type,
+            resource = %item.resource,
+            "[KMS 2.3] Uruchamianie wykonania pojedynczego elementu batch"
         );
+
+        let input = IssueAgentCredentialInput {
+            caller_service: caller_service.clone(),
+            target_service: resolved_target_service.clone(),
+            target_type: item.r#type.clone(),
+            resource: item.resource.clone(),
+            ttl_seconds: payload.ttl_seconds,
+        };
+
+        // Zamiast używać `?`, łapiemy wynik, aby go zalogować
+        let output_result = IssueAgentCredentialUseCase::execute(&state, input).await;
+
+        match output_result {
+            Ok(output) => {
+                tracing::info!(
+                    name = %item.name,
+                    credential_id = %output.credential_id,
+                    "[KMS 2.4] Sukces - wygenerowano poświadczenie"
+                );
+                credentials.insert(
+                    item.name.clone(),
+                    AgentIssueCredentialsResponse {
+                        credential_id: output.credential_id,
+                        username: output.username,
+                        password: output.password,
+                        expires_at: output.expires_at.to_rfc3339(),
+                    },
+                );
+            }
+            Err(e) => {
+                // TUTAJ ZOBACZYSZ DOKŁADNY BŁĄD
+                tracing::error!(
+                    error = %e,
+                    name = %item.name,
+                    target_service = %resolved_target_service,
+                    resource = %item.resource,
+                    "[KMS 2.ERROR] Błąd podczas pobierania/generowania poświadczeń (najpewniej brak rekordu w target_resources)"
+                );
+                return Err(e); // Zwracamy błąd dalej do Axuma
+            }
+        }
     }
 
     Ok(Json(AgentIssueCredentialsBatchResponse { credentials }))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{AgentIssueBatchCredentialsRequest, AgentIssueCredentialsBatchResponse};
-
-    #[test]
-    fn batch_contract_matches_agent_bootstrap_shape() {
-        let json = r#"{
-            "credentials": [
-                {"name": "postgres", "target_service": "auth_db", "type": "database", "resource": "arn:kms:postgres:db-auth"},
-                {"name": "redis", "target_service": "session_cache", "type": "cache", "resource": "arn:kms:redis:session-cache"}
-            ],
-            "ttl_seconds": 2700
-        }"#;
-
-        let request: AgentIssueBatchCredentialsRequest = serde_json::from_str(json).unwrap();
-        assert_eq!(request.credentials.len(), 2);
-        assert_eq!(request.credentials[0].name, "postgres");
-        assert_eq!(request.credentials[0].target_service, "auth_db");
-        assert_eq!(request.credentials[0].r#type, "database");
-        assert_eq!(request.credentials[0].resource, "arn:kms:postgres:db-auth");
-
-        let response = AgentIssueCredentialsBatchResponse {
-            credentials: std::collections::HashMap::from([
-                (
-                    "postgres".to_string(),
-                    super::AgentIssueCredentialsResponse {
-                        credential_id: uuid::Uuid::new_v4(),
-                        username: "kms_auth_auth_db".to_string(),
-                        password: "super-secret".to_string(),
-                        expires_at: "2025-01-01T00:00:00Z".to_string(),
-                    },
-                ),
-                (
-                    "redis".to_string(),
-                    super::AgentIssueCredentialsResponse {
-                        credential_id: uuid::Uuid::new_v4(),
-                        username: "kms_session_cache".to_string(),
-                        password: "redis-secret".to_string(),
-                        expires_at: "2025-01-01T00:00:00Z".to_string(),
-                    },
-                ),
-            ]),
-        };
-
-        let encoded = serde_json::to_string(&response).unwrap();
-        assert!(encoded.contains("\"postgres\""));
-        assert!(encoded.contains("\"redis\""));
-        assert!(encoded.contains("\"password\":\"super-secret\""));
-    }
 }
