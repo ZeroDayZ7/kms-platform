@@ -34,6 +34,7 @@ pub struct AgentIssueCredentialsResponse {
 #[derive(Debug, Deserialize, Clone)]
 pub struct BatchCredentialRequestItem {
     pub name: String,
+    pub target_service: String,
     #[serde(rename = "type")]
     pub r#type: String,
     pub resource: String,
@@ -84,6 +85,20 @@ pub async fn issue_batch_credentials_handler(
     Json(payload): Json<AgentIssueBatchCredentialsRequest>,
 ) -> AppResult<Json<AgentIssueCredentialsBatchResponse>> {
     let caller_service = caller.0;
+    let batch_inputs: Vec<_> = payload
+        .credentials
+        .iter()
+        .map(|item| IssueAgentCredentialInput {
+            caller_service: caller_service.clone(),
+            target_service: item.target_service.clone(),
+            target_type: item.r#type.clone(),
+            resource: item.resource.clone(),
+            ttl_seconds: payload.ttl_seconds,
+        })
+        .collect();
+
+    IssueAgentCredentialUseCase::validate_batch_acl(&state, &batch_inputs)?;
+
     let mut credentials = HashMap::new();
 
     for item in payload.credentials {
@@ -91,7 +106,7 @@ pub async fn issue_batch_credentials_handler(
             &state,
             IssueAgentCredentialInput {
                 caller_service: caller_service.clone(),
-                target_service: item.resource.clone(),
+                target_service: item.target_service.clone(),
                 target_type: item.r#type.clone(),
                 resource: item.resource.clone(),
                 ttl_seconds: payload.ttl_seconds,
@@ -121,8 +136,8 @@ mod tests {
     fn batch_contract_matches_agent_bootstrap_shape() {
         let json = r#"{
             "credentials": [
-                {"name": "postgres", "type": "database", "resource": "auth_db"},
-                {"name": "redis", "type": "cache", "resource": "session_cache"}
+                {"name": "postgres", "target_service": "auth_db", "type": "database", "resource": "arn:kms:postgres:db-auth"},
+                {"name": "redis", "target_service": "session_cache", "type": "cache", "resource": "arn:kms:redis:session-cache"}
             ],
             "ttl_seconds": 2700
         }"#;
@@ -130,8 +145,9 @@ mod tests {
         let request: AgentIssueBatchCredentialsRequest = serde_json::from_str(json).unwrap();
         assert_eq!(request.credentials.len(), 2);
         assert_eq!(request.credentials[0].name, "postgres");
+        assert_eq!(request.credentials[0].target_service, "auth_db");
         assert_eq!(request.credentials[0].r#type, "database");
-        assert_eq!(request.credentials[0].resource, "auth_db");
+        assert_eq!(request.credentials[0].resource, "arn:kms:postgres:db-auth");
 
         let response = AgentIssueCredentialsBatchResponse {
             credentials: std::collections::HashMap::from([
