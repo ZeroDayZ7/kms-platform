@@ -52,7 +52,7 @@ pub async fn handle_interactive_ceremony(
 
     for (index, raw_share_str) in raw_shares {
         println!("--------------------------------------------------");
-        println!("Oficerzie nr {index}, podejmij swój udział.");
+        println!("Oficerze nr {index}, podejmij swój udział.");
 
         let password = Zeroizing::new(
             Password::new()
