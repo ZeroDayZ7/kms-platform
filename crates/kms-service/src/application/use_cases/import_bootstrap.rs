@@ -1,6 +1,6 @@
 use crate::config::acl::ControlAction;
-use crate::domain::crypto::KmsCryptoService;
-use crate::domain::keys::models::ServiceId;
+use crate::domain::crypto::{KmsCryptoService, SecretString};
+use crate::domain::keys::models::{CredentialId, ServiceId, TargetId};
 use crate::errors::{AppError, AppResult};
 use crate::server::state::AppState;
 use chrono::Utc;
@@ -30,12 +30,14 @@ pub struct TargetResourceRecord {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct BootstrapCredentialRecord {
-    service_id: String,
+    service_id: ServiceId,
+    target_id: Option<TargetId>,
+    credential_id: Option<CredentialId>,
     target_type: String,
     target_db: String,
     resource: Option<String>,
     username: String,
-    password: String,
+    password: SecretString,
     ttl_seconds: Option<u64>,
 }
 
@@ -88,11 +90,9 @@ pub async fn import_bootstrap(
     }
 
     // 3. Rozpoczęcie ATOMOWEJ transakcji w bazie
-    let mut tx: Transaction<'_, Postgres> = state
-        .db
-        .begin()
-        .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+    let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
     let mut inserted_total = 0usize;
     let now = Utc::now();
 
@@ -133,7 +133,10 @@ pub async fn import_bootstrap(
             .encrypt_private_key(url_zero.as_ref())
             .await
             .map_err(|e| {
-                AppError::CryptoError(format!("Failed to encrypt connection_url: {}", e))
+                AppError::crypto_error_with_source(
+                    format!("Failed to encrypt connection_url: {}", e),
+                    e,
+                )
             })?;
 
         BootstrapQueries::insert_target_resource(
@@ -145,7 +148,9 @@ pub async fn import_bootstrap(
             now,
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         inserted_total += 1;
     }
@@ -164,13 +169,15 @@ pub async fn import_bootstrap(
 
         let exists: Option<Uuid> = BootstrapQueries::active_credential_exists(
             &mut tx,
-            &rec.service_id,
+            &rec.service_id.0,
             &rec.target_type,
             &rec.target_db,
             &rec.username,
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         if exists.is_some() {
             let _ = tx.rollback().await;
@@ -180,9 +187,14 @@ pub async fn import_bootstrap(
             )));
         }
 
-        let kek_row: Option<Uuid> = BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id)
+        let kek_row: Option<Uuid> = BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id.0)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         let kek_id = match kek_row {
             Some(id) => id,
@@ -195,24 +207,29 @@ pub async fn import_bootstrap(
             }
         };
 
-        let pwd_bytes = rec.password.as_bytes().to_vec();
+        let pwd_bytes = rec.password.as_str().as_bytes().to_vec();
         let pwd_zero = Zeroizing::new(pwd_bytes);
         let encrypted = state
             .crypto_service
             .encrypt_private_key(pwd_zero.as_ref())
             .await
-            .map_err(|e| AppError::CryptoError(format!("Failed to encrypt credential: {}", e)))?;
+            .map_err(|e| {
+                AppError::crypto_error_with_source(
+                    format!("Failed to encrypt credential: {}", e),
+                    e,
+                )
+            })?;
 
         if encrypted.ciphertext.len() < 12 {
             let _ = tx.rollback().await;
-            return Err(AppError::CryptoError("Encrypted payload too short".into()));
+            return Err(AppError::crypto_error("Encrypted payload too short"));
         }
         let nonce = encrypted.ciphertext[..12].to_vec();
 
         BootstrapQueries::insert_db_credential(
             &mut tx,
             Uuid::new_v4(),
-            &rec.service_id,
+            &rec.service_id.0,
             &rec.target_type,
             &rec.target_db,
             rec.resource.as_deref().unwrap_or(""),
@@ -223,7 +240,9 @@ pub async fn import_bootstrap(
             now,
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         inserted_total += 1;
     }
@@ -232,9 +251,10 @@ pub async fn import_bootstrap(
     // KROK C: REJESTRACJA W AUDIT LOG
     // ==========================================
     let action = "bootstrap:import";
-    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(&mut tx)
-        .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+    let prev_hash_row: Option<String> =
+        AuditQueries::latest_hash_tx(&mut tx).await.map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
     let hash = kms_core::audit::compute_audit_hash(&kms_core::audit::AuditHashInput {
         id: &Uuid::new_v4().to_string(),
@@ -276,11 +296,13 @@ pub async fn import_bootstrap(
         },
     )
     .await
-    .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+    .map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
-    tx.commit()
-        .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+    tx.commit().await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     info!(
         total = inserted_total,

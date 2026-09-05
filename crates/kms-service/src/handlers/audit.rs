@@ -61,7 +61,9 @@ pub async fn verify_audit_handler(
     // Fetch rows using native sqlx queries
     let rows: Vec<AuditLogRow> = AuditQueries::list_recent(&state.db, Some(limit), full)
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?
         .into_iter()
         .map(|row| AuditLogRow {
             id: row.id,
@@ -106,7 +108,9 @@ pub async fn verify_audit_handler(
 
     let signing_keys: Vec<String> = AuditQueries::active_signing_public_keys(&state.db)
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
     let mut pubkeys: Vec<ed25519_dalek::VerifyingKey> = Vec::new();
     for pem in signing_keys.iter() {
@@ -225,7 +229,9 @@ pub async fn audit_logs_handler(
 
     let rows: Vec<AuditLogRow> = AuditQueries::list_recent(&state.db, None, true)
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?
         .into_iter()
         .map(|row| AuditLogRow {
             id: row.id,
@@ -248,7 +254,9 @@ pub async fn audit_logs_handler(
 
     let signing_keys: Vec<String> = AuditQueries::active_signing_public_keys(&state.db)
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
     let logs: Vec<serde_json::Value> = rows
         .into_iter()

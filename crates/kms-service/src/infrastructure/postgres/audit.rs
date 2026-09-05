@@ -24,9 +24,9 @@ impl PgAuditRepository {
 #[async_trait]
 impl AuditRepository for PgAuditRepository {
     async fn record(&self, log: AuditLog) -> AppResult<()> {
-        let prev_hash_opt = AuditQueries::latest_hash(&self.pool)
-            .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        let prev_hash_opt = AuditQueries::latest_hash(&self.pool).await.map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         let prev_hash = prev_hash_opt.unwrap_or_else(|| {
             "0000000000000000000000000000000000000000000000000000000000000000".to_string()
@@ -74,7 +74,9 @@ impl AuditRepository for PgAuditRepository {
             },
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         Ok(())
     }

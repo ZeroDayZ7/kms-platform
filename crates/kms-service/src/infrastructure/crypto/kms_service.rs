@@ -50,7 +50,10 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         let public_key_pem = verifying_key
             .to_public_key_pem(LineEnding::LF)
             .map_err(|e| {
-                AppError::CryptoError(format!("Failed to encode Ed25519 public key to PEM: {e}"))
+                AppError::crypto_error_with_source(
+                    format!("Failed to encode Ed25519 public key to PEM: {e}"),
+                    e,
+                )
             })?;
 
         Ok(RawKeyPair {
@@ -82,7 +85,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         let mut rng = OsRng;
 
         rng.try_fill_bytes(&mut key_bytes)
-            .map_err(|e| AppError::CryptoError(format!("RNG error: {e}")))?;
+            .map_err(|e| AppError::crypto_error_with_source(format!("RNG error: {e}"), e))?;
 
         Ok(RawKeyPair {
             public_key_pem: String::new(),
@@ -100,7 +103,7 @@ impl KmsCryptoServiceTrait for VhsmCryptoService {
         let mut key_bytes = [0u8; 32];
         let mut rng = OsRng;
         rng.try_fill_bytes(&mut key_bytes)
-            .map_err(|e| AppError::CryptoError(format!("RNG error: {e}")))?;
+            .map_err(|e| AppError::crypto_error_with_source(format!("RNG error: {e}"), e))?;
 
         let plaintext = SecretBytes::new(key_bytes.to_vec());
         let wrapped = self.client.encrypt(plaintext.as_bytes()).await?;

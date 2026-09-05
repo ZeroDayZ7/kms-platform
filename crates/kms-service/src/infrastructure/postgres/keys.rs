@@ -46,7 +46,9 @@ impl KeyRepository for PgKeyRepository {
             is_active,
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         Ok(())
     }
@@ -58,7 +60,12 @@ impl KeyRepository for PgKeyRepository {
     ) -> AppResult<Option<KeyPairEntity>> {
         let row = KeyQueries::get_active_key(&self.pool, &service_id.0, &format!("{:?}", algo))
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         match row {
             Some(r) => Ok(Some(map_key_row(r)?)),
@@ -79,7 +86,9 @@ impl KeyRepository for PgKeyRepository {
             version,
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         match row {
             Some(r) => Ok(Some(map_key_row(r)?)),
@@ -90,7 +99,12 @@ impl KeyRepository for PgKeyRepository {
     async fn get_all_active_public_keys(&self) -> AppResult<Vec<KeyPairEntity>> {
         let rows = KeyQueries::get_all_active_public_keys(&self.pool)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         rows.into_iter().map(map_key_row).collect()
     }
@@ -98,7 +112,12 @@ impl KeyRepository for PgKeyRepository {
     async fn get_all_active_keys(&self) -> AppResult<Vec<KeyPairEntity>> {
         let rows = KeyQueries::get_all_active_keys(&self.pool)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         rows.into_iter().map(map_key_row).collect()
     }
@@ -110,7 +129,12 @@ impl KeyRepository for PgKeyRepository {
     ) -> AppResult<()> {
         KeyQueries::deactivate_keys_for_service(&self.pool, &service_id.0, &format!("{:?}", algo))
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
         Ok(())
     }
 
@@ -132,7 +156,12 @@ impl KeyRepository for PgKeyRepository {
 
         KeyQueries::update_key_status(&self.pool, *key_id, status_str, is_active)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         Ok(())
     }
@@ -145,7 +174,12 @@ impl KeyRepository for PgKeyRepository {
         let _ = deprecated_until;
         KeyQueries::compare_and_set_active_to_deprecated(&self.pool, *key_id)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })
     }
 
     async fn rotate_active_key(
@@ -173,7 +207,9 @@ impl KeyRepository for PgKeyRepository {
             &format!("{:?}", new_key.purpose),
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })
     }
 
     async fn get_deprecated_keys_expired(
@@ -182,7 +218,12 @@ impl KeyRepository for PgKeyRepository {
     ) -> AppResult<Vec<KeyPairEntity>> {
         let rows = KeyQueries::get_deprecated_keys_expired(&self.pool)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         let mut out = Vec::new();
         for row in rows {
@@ -203,7 +244,12 @@ impl KeyRepository for PgKeyRepository {
     ) -> AppResult<Option<KeyPairEntity>> {
         let rows = KeyQueries::get_active_or_valid_deprecated_key(&self.pool)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         for row in rows {
             let entity = map_key_row(row)?;
@@ -220,9 +266,9 @@ impl KeyRepository for PgKeyRepository {
     }
 
     async fn get_all_keys(&self) -> AppResult<Vec<KeyPairEntity>> {
-        let rows = KeyQueries::get_all_keys(&self.pool)
-            .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        let rows = KeyQueries::get_all_keys(&self.pool).await.map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         rows.into_iter().map(map_key_row).collect()
     }
@@ -234,7 +280,12 @@ impl KeyRepository for PgKeyRepository {
     ) -> AppResult<()> {
         KeyQueries::update_encrypted_key(&self.pool, *key_id, &encrypted.ciphertext)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         Ok(())
     }
@@ -247,7 +298,12 @@ impl KeyRepository for PgKeyRepository {
         let _ = current_master_version;
         let rows = KeyQueries::get_keys_needing_rewrap(&self.pool)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
         let mut out = Vec::new();
         for row in rows.into_iter().take(batch_size) {
@@ -267,7 +323,12 @@ impl KeyRepository for PgKeyRepository {
 
         KeyQueries::update_encrypted_keys_batch(&self.pool, batch)
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })
     }
 }
 

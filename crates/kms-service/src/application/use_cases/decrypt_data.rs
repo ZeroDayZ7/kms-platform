@@ -59,7 +59,7 @@ where
                 self.audit_service
                     .record_failure(ctx, AuditAction::DecryptData, err.to_string())
                     .await?;
-                Err(crate::errors::AppError::CryptoError(err.to_string()))
+                Err(crate::errors::AppError::crypto_error(err.to_string()))
             }
         }
     }

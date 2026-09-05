@@ -113,7 +113,12 @@ impl IssueAgentCredentialUseCase {
         // 2. Generowanie poświadczeń przez vHSM
         let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
             .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
         let username = build_generic_username(&input.caller_service, &input.target_service);
         let generated = generate_secure_credential(
             &state.crypto_service,
@@ -128,7 +133,10 @@ impl IssueAgentCredentialUseCase {
             CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
                 .await
                 .map_err(|err| {
-                    AppError::DatabaseError(format!("Database operation failed: {err}"))
+                    AppError::database_error_with_source(
+                        format!("Database operation failed: {err}"),
+                        err,
+                    )
                 })?;
 
         let (target_id, conn_encrypted) = match target_row {
@@ -146,22 +154,22 @@ impl IssueAgentCredentialUseCase {
             .decrypt_bytes(&conn_encrypted)
             .await
             .map_err(|e| {
-                AppError::CryptoError(format!("Failed to decrypt target connection string: {e}"))
+                AppError::crypto_error_with_source(
+                    format!("Failed to decrypt target connection string: {e}"),
+                    e,
+                )
             })?;
         let admin_conn = String::from_utf8(admin_conn_bytes).map_err(|_| {
-            AppError::CryptoError(
-                "Decrypted target connection string is not valid UTF-8".to_string(),
-            )
+            AppError::crypto_error("Decrypted target connection string is not valid UTF-8")
         })?;
 
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
         // 4. Rozpoczęcie transakcji SQL w KMS
-        let mut tx: Transaction<'_, Postgres> =
-            state.db.begin().await.map_err(|err| {
-                AppError::DatabaseError(format!("Database operation failed: {err}"))
-            })?;
+        let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
         // 4.1 Unieważnienie starych, aktywnych poświadczeń dla tego caller
         CredentialQueries::revoke_active_credentials_for_target(
             &mut tx,
@@ -169,7 +177,9 @@ impl IssueAgentCredentialUseCase {
             target_id,
         )
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         // 5. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
         let provider = state.provider_factory.get(&target_type_clean)?;
@@ -253,7 +263,9 @@ pub fn build_generic_username(caller_service: &str, target_service: &str) -> Str
 pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -> AppResult<Uuid> {
     let kek_id = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
         .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?
         .ok_or_else(|| {
             AppError::KeyNotFound(format!(
                 "No active AES256GCM KEK found for {}",
@@ -277,26 +289,28 @@ pub async fn generate_secure_credential(
         .generate_credential(length)
         .await
         .map_err(|e| {
-            AppError::CryptoError(format!("Failed to generate credential via vHSM: {e}"))
+            AppError::crypto_error_with_source(
+                format!("Failed to generate credential via vHSM: {e}"),
+                e,
+            )
         })?;
 
     if wrapped_password.len() < 12 {
-        return Err(AppError::CryptoError(
-            "Wrapped password payload too short (missing nonce)".to_string(),
+        return Err(AppError::crypto_error(
+            "Wrapped password payload too short (missing nonce)",
         ));
     }
     let nonce = wrapped_password[..12].to_vec();
 
     let id_bytes = hex::decode(&credential_id)
-        .map_err(|_| AppError::CryptoError("Invalid credential id format from vHSM".to_string()))?;
+        .map_err(|_| AppError::crypto_error("Invalid credential id format from vHSM"))?;
     if id_bytes.len() != 16 {
-        return Err(AppError::CryptoError(
-            "Credential id from vHSM has invalid length".to_string(),
+        return Err(AppError::crypto_error(
+            "Credential id from vHSM has invalid length",
         ));
     }
-    let uuid = Uuid::from_slice(&id_bytes).map_err(|_| {
-        AppError::CryptoError("Failed to parse credential id into UUID".to_string())
-    })?;
+    let uuid = Uuid::from_slice(&id_bytes)
+        .map_err(|_| AppError::crypto_error("Failed to parse credential id into UUID"))?;
 
     Ok(GeneratedCredentialBlob {
         credential_id: uuid,
@@ -331,7 +345,9 @@ pub async fn insert_provisioned_credential_tx(
         expires_at,
     )
     .await
-    .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+    .map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     Ok(())
 }
@@ -344,9 +360,9 @@ pub async fn insert_audit_log_tx(
     credential_id: &Uuid,
     timestamp: DateTime<Utc>,
 ) -> AppResult<()> {
-    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx)
-        .await
-        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx).await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
     let hash = compute_audit_hash(&AuditHashInput {
@@ -386,7 +402,9 @@ pub async fn insert_audit_log_tx(
         },
     )
     .await
-    .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+    .map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     Ok(())
 }

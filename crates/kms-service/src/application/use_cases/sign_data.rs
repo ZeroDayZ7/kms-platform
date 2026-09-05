@@ -179,9 +179,7 @@ where
                 )
                 .await?;
 
-            return Err(AppError::CryptoError(
-                "Invalid Ed25519 private key length".to_string(),
-            ));
+            return Err(AppError::crypto_error("Invalid Ed25519 private key length"));
         }
 
         let mut private_key_array = [0u8; 32];

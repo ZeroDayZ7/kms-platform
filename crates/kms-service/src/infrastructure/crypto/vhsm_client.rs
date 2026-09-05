@@ -105,12 +105,10 @@ impl VhsmClient {
             HsmResponse::StatusInfo {
                 active_key_version, ..
             } => Ok(active_key_version),
-            HsmResponse::Error { message, .. } => Err(AppError::CryptoError(format!(
-                "vHSM status error: {message}"
-            ))),
-            _ => Err(AppError::CryptoError(
-                "Nieoczekiwana odpowiedź vHSM dla status".into(),
-            )),
+            HsmResponse::Error { message, .. } => {
+                Err(AppError::crypto_error(format!("vHSM status error: {message}")))
+            }
+            _ => Err(AppError::crypto_error("Nieoczekiwana odpowiedź vHSM dla status")),
         }
     }
 
@@ -135,9 +133,9 @@ impl VhsmClient {
                 key_version: _,
             } => Ok(ciphertext),
             HsmResponse::Error { message, .. } => {
-                Err(AppError::CryptoError(format!("vHSM błąd: {message}")))
+                Err(AppError::crypto_error(format!("vHSM błąd: {message}")))
             }
-            _ => Err(AppError::CryptoError("Nieoczekiwana odpowiedź vHSM".into())),
+            _ => Err(AppError::crypto_error("Nieoczekiwana odpowiedź vHSM")),
         }
     }
 
@@ -154,9 +152,9 @@ impl VhsmClient {
                 key_version: _,
             } => Ok(plaintext),
             HsmResponse::Error { message, .. } => {
-                Err(AppError::CryptoError(format!("vHSM błąd: {message}")))
+                Err(AppError::crypto_error(format!("vHSM błąd: {message}")))
             }
-            _ => Err(AppError::CryptoError("Nieoczekiwana odpowiedź vHSM".into())),
+            _ => Err(AppError::crypto_error("Nieoczekiwana odpowiedź vHSM")),
         }
     }
 
@@ -174,9 +172,9 @@ impl VhsmClient {
                 key_version,
             } => Ok((credential_id, password, wrapped_password, key_version)),
             HsmResponse::Error { message, .. } => {
-                Err(AppError::CryptoError(format!("vHSM błąd: {message}")))
+                Err(AppError::crypto_error(format!("vHSM błąd: {message}")))
             }
-            _ => Err(AppError::CryptoError("Nieoczekiwana odpowiedź vHSM".into())),
+            _ => Err(AppError::crypto_error("Nieoczekiwana odpowiedź vHSM")),
         }
     }
 }
