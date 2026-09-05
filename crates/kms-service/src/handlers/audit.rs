@@ -104,12 +104,7 @@ pub async fn verify_audit_handler(
     let mut last_hash = anchor_hash;
     let mut ok_count = 0usize;
 
-    // Fetch active signing keys using native sqlx query
-    let signing_keys: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT public_key_pem FROM keys WHERE purpose = 'Signing' AND is_active = TRUE",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let signing_keys: Vec<String> = AuditQueries::active_signing_public_keys(&state.db).await?;
 
     let mut pubkeys: Vec<ed25519_dalek::VerifyingKey> = Vec::new();
     for pem in signing_keys.iter() {

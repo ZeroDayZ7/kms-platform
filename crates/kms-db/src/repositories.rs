@@ -363,6 +363,285 @@ impl BootstrapQueries {
     }
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct KeyDbRow {
+    pub id: Uuid,
+    pub service_id: String,
+    pub algorithm: String,
+    pub version: i32,
+    pub encrypted_key_data: Vec<u8>,
+    pub public_key_pem: String,
+    pub purpose: String,
+    pub status: String,
+    pub is_active: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+pub struct KeyQueries;
+
+impl KeyQueries {
+    #[allow(clippy::too_many_arguments)]
+    pub async fn save_key(
+        pool: &PgPool,
+        id: Uuid,
+        service_id: &str,
+        algorithm: &str,
+        version: u32,
+        encrypted_key_data: &[u8],
+        public_key_pem: &str,
+        purpose: &str,
+        status: &str,
+        is_active: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO keys (
+                id, service_id, algorithm, version, encrypted_key_data,
+                public_key_pem, purpose, status, is_active, created_at
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, NOW()
+            )
+            ON CONFLICT (service_id, algorithm, version)
+            DO UPDATE SET
+                encrypted_key_data = EXCLUDED.encrypted_key_data,
+                public_key_pem = EXCLUDED.public_key_pem,
+                purpose = EXCLUDED.purpose,
+                status = EXCLUDED.status,
+                is_active = EXCLUDED.is_active,
+                created_at = NOW()
+            "#,
+        )
+        .bind(id)
+        .bind(service_id)
+        .bind(algorithm)
+        .bind(version as i32)
+        .bind(encrypted_key_data)
+        .bind(public_key_pem)
+        .bind(purpose)
+        .bind(status)
+        .bind(is_active)
+        .execute(pool)
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn get_active_key(
+        pool: &PgPool,
+        service_id: &str,
+        algorithm: &str,
+    ) -> Result<Option<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE service_id = $1 AND algorithm = $2 AND is_active = true LIMIT 1",
+        )
+        .bind(service_id)
+        .bind(algorithm)
+        .fetch_optional(pool)
+        .await
+    }
+
+    pub async fn get_key_by_version(
+        pool: &PgPool,
+        service_id: &str,
+        algorithm: &str,
+        version: u32,
+    ) -> Result<Option<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE service_id = $1 AND algorithm = $2 AND version = $3 LIMIT 1",
+        )
+        .bind(service_id)
+        .bind(algorithm)
+        .bind(version as i32)
+        .fetch_optional(pool)
+        .await
+    }
+
+    pub async fn get_all_active_public_keys(pool: &PgPool) -> Result<Vec<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE is_active = true ORDER BY service_id, algorithm, version DESC",
+        )
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn get_all_active_keys(pool: &PgPool) -> Result<Vec<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE is_active = true ORDER BY service_id, algorithm, version DESC",
+        )
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn deactivate_keys_for_service(
+        pool: &PgPool,
+        service_id: &str,
+        algorithm: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE keys SET status = 'Revoked', is_active = false WHERE service_id = $1 AND algorithm = $2 AND is_active = true",
+        )
+        .bind(service_id)
+        .bind(algorithm)
+        .execute(pool)
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn update_key_status(
+        pool: &PgPool,
+        key_id: Uuid,
+        status: &str,
+        is_active: bool,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE keys SET status = $2, is_active = $3 WHERE id = $1")
+            .bind(key_id)
+            .bind(status)
+            .bind(is_active)
+            .execute(pool)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn compare_and_set_active_to_deprecated(
+        pool: &PgPool,
+        key_id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            "UPDATE keys SET status = 'Deprecated', is_active = false WHERE id = $1 AND status = 'Active'",
+        )
+        .bind(key_id)
+        .execute(pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn rotate_active_key(
+        pool: &PgPool,
+        service_id: &str,
+        algorithm: &str,
+        old_status: &str,
+        new_key_id: Uuid,
+        new_key_version: u32,
+        encrypted_key_data: &[u8],
+        public_key_pem: &str,
+        purpose: &str,
+    ) -> Result<bool, sqlx::Error> {
+        let rows = sqlx::query(
+            r#"
+            WITH retired AS (
+                UPDATE keys
+                SET status = $3,
+                    is_active = FALSE,
+                    created_at = NOW()
+                WHERE service_id = $1
+                  AND algorithm = $2
+                  AND is_active = TRUE
+                RETURNING id
+            )
+            INSERT INTO keys (
+                id, service_id, algorithm, version, encrypted_key_data,
+                public_key_pem, purpose, status, is_active, created_at
+            )
+            VALUES (
+                $4, $1, $2, $5, $6, $7, $8, 'Active', TRUE, NOW()
+            )
+            ON CONFLICT (service_id, algorithm, version)
+            DO UPDATE SET
+                encrypted_key_data = EXCLUDED.encrypted_key_data,
+                public_key_pem = EXCLUDED.public_key_pem,
+                purpose = EXCLUDED.purpose,
+                status = EXCLUDED.status,
+                is_active = EXCLUDED.is_active,
+                created_at = NOW();
+            "#,
+        )
+        .bind(service_id)
+        .bind(algorithm)
+        .bind(old_status)
+        .bind(new_key_id)
+        .bind(new_key_version as i32)
+        .bind(encrypted_key_data)
+        .bind(public_key_pem)
+        .bind(purpose)
+        .execute(pool)
+        .await?;
+
+        Ok(rows.rows_affected() == 1)
+    }
+
+    pub async fn get_deprecated_keys_expired(pool: &PgPool) -> Result<Vec<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE status = 'Deprecated' ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn get_active_or_valid_deprecated_key(
+        pool: &PgPool,
+    ) -> Result<Vec<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys WHERE is_active = true ORDER BY service_id, algorithm, version DESC",
+        )
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn get_all_keys(pool: &PgPool) -> Result<Vec<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn update_encrypted_key(
+        pool: &PgPool,
+        key_id: Uuid,
+        encrypted_key_data: &[u8],
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE keys SET encrypted_key_data = $2 WHERE id = $1")
+            .bind(key_id)
+            .bind(encrypted_key_data)
+            .execute(pool)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn get_keys_needing_rewrap(pool: &PgPool) -> Result<Vec<KeyDbRow>, sqlx::Error> {
+        sqlx::query_as::<_, KeyDbRow>(
+            "SELECT id, service_id, algorithm, version, encrypted_key_data, public_key_pem, purpose, status, is_active, created_at FROM keys ORDER BY created_at DESC",
+        )
+        .fetch_all(pool)
+        .await
+    }
+
+    pub async fn update_encrypted_keys_batch(
+        pool: &PgPool,
+        updates: Vec<(Uuid, Vec<u8>)>,
+    ) -> Result<usize, sqlx::Error> {
+        let mut tx = pool.begin().await?;
+        let mut updated = 0usize;
+
+        for (key_id, encrypted) in updates {
+            let res = sqlx::query("UPDATE keys SET encrypted_key_data = $2 WHERE id = $1")
+                .bind(key_id)
+                .bind(encrypted)
+                .execute(&mut *tx)
+                .await;
+
+            if let Err(err) = res {
+                tx.rollback().await?;
+                return Err(err);
+            }
+            updated += 1;
+        }
+
+        tx.commit().await?;
+        Ok(updated)
+    }
+}
+
 pub struct DatabaseHealth;
 
 impl DatabaseHealth {
