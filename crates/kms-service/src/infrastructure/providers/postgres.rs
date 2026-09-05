@@ -9,6 +9,17 @@ use zeroize::Zeroize;
 use super::{GeneratedCredential, TargetResourceProvider};
 use crate::errors::AppError;
 
+fn postgres_ddl_error(operation: &str, username: &str) -> AppError {
+    tracing::error!(
+        target: "infra::db",
+        operation,
+        username,
+        status = "failed",
+        "PostgreSQL DDL operation failed"
+    );
+    AppError::Internal(format!("PostgreSQL {} operation failed", operation))
+}
+
 pub struct PostgresTargetProvider;
 
 #[async_trait]
@@ -61,25 +72,20 @@ impl TargetResourceProvider for PostgresTargetProvider {
             .bind(ttl_seconds)
             .fetch_one(&pool)
             .await
-            .map_err(|e| {
-                AppError::Internal(format!("Failed to build CREATE USER DDL statement: {}", e))
-            })?;
+            .map_err(|_| postgres_ddl_error("create_user", &username))?;
 
         let create_user_ddl = create_row.0;
-
-        println!(
-            "[DEBUG-DDL] Wygenerowany CREATE USER SQL: {}",
-            create_user_ddl
+        tracing::info!(
+            operation = "create_user",
+            username = %username,
+            target = "postgres",
+            "Executing PostgreSQL DDL"
         );
-        tracing::info!(sql = %create_user_ddl, "Wykonuję DDL tworzenia użytkownika PG");
 
         // Wykonanie CREATE USER
-        if let Err(err) = sqlx::query(&create_user_ddl).execute(&pool).await {
+        if sqlx::query(&create_user_ddl).execute(&pool).await.is_err() {
             password_str.zeroize();
-            return Err(AppError::Internal(format!(
-                "Failed to execute CREATE USER PG DDL (SQL: [{}]): {}",
-                create_user_ddl, err
-            )));
+            return Err(postgres_ddl_error("create_user", &username));
         }
 
         // 2. Nadanie roli (GRANT), o ile jest podana
@@ -97,26 +103,30 @@ impl TargetResourceProvider for PostgresTargetProvider {
                 .bind(&username)
                 .fetch_one(&pool)
                 .await
-                .map_err(|e| {
+                .map_err(|_| {
                     password_str.zeroize();
-                    AppError::Internal(format!("Failed to build GRANT DDL statement: {}", e))
+                    postgres_ddl_error("grant_role", &username)
                 })?;
 
             let grant_ddl = grant_row.0;
+            tracing::info!(
+                operation = "grant_role",
+                username = %username,
+                target = "postgres",
+                "Executing PostgreSQL DDL"
+            );
 
-            println!("[DEBUG-DDL] Wygenerowany GRANT SQL: {}", grant_ddl);
-            tracing::info!(sql = %grant_ddl, "Wykonuję DDL nadawania uprawnień PG");
-
-            if let Err(err) = sqlx::query(&grant_ddl).execute(&pool).await {
+            if sqlx::query(&grant_ddl).execute(&pool).await.is_err() {
                 password_str.zeroize();
-                return Err(AppError::Internal(format!(
-                    "Failed to execute GRANT PG DDL (SQL: [{}]): {}",
-                    grant_ddl, err
-                )));
+                return Err(postgres_ddl_error("grant_role", &username));
             }
         } else {
-            tracing::warn!("Parametr 'role' jest pusty - pomijam krok GRANT!");
-            println!("[WARN] Parametr 'role' jest pusty - pominięto GRANT!");
+            tracing::warn!(
+                operation = "grant_role",
+                username = %username,
+                target = "postgres",
+                "Role parameter is empty; skipping GRANT"
+            );
         }
 
         Ok(GeneratedCredential {
@@ -146,17 +156,20 @@ impl TargetResourceProvider for PostgresTargetProvider {
             .bind(username)
             .fetch_one(&pool)
             .await
-            .map_err(|e| {
-                AppError::Internal(format!("Failed to build DROP USER statement: {}", e))
-            })?;
+            .map_err(|_| postgres_ddl_error("drop_user", username))?;
 
         let drop_sql = drop_row.0;
-        println!("[DEBUG-DDL] Wygenerowany REVOKE/DROP SQL: {}", drop_sql);
+        tracing::info!(
+            operation = "drop_user",
+            username = %username,
+            target = "postgres",
+            "Executing PostgreSQL DDL"
+        );
 
         sqlx::query(&drop_sql)
             .execute(&pool)
             .await
-            .map_err(|e| AppError::Internal(format!("Failed to drop PG user: {}", e)))?;
+            .map_err(|_| postgres_ddl_error("drop_user", username))?;
 
         Ok(())
     }
