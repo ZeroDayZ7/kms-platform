@@ -236,13 +236,14 @@ impl CredentialQueries {
         password_encrypted: &[u8],
         granted_role: &str,
         expires_at: DateTime<Utc>,
+        status: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO provisioned_credentials
-                (id, service_id, target_id, username, password_encrypted, granted_role, expires_at, revoked, created_at)
+                (id, service_id, target_id, username, password_encrypted, granted_role, expires_at, revoked, status, created_at)
             VALUES
-                ($1, $2, $3, $4, $5, $6, $7, false, $8)
+                ($1, $2, $3, $4, $5, $6, $7, false, $8, $9)
             "#,
         )
         .bind(id)
@@ -252,7 +253,27 @@ impl CredentialQueries {
         .bind(password_encrypted)
         .bind(granted_role)
         .bind(expires_at)
+        .bind(status)
         .bind(Utc::now())
+        .execute(&mut **tx)
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn update_provisioned_credential_status(
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+        status: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            UPDATE provisioned_credentials
+            SET status = $1
+            WHERE id = $2
+            "#,
+        )
+        .bind(status)
+        .bind(id)
         .execute(&mut **tx)
         .await
         .map(|_| ())

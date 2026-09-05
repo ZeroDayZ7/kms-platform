@@ -33,6 +33,38 @@ pub struct IssueAgentCredentialInput {
     pub ttl_seconds: u64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProvisioningStatus {
+    Pending,
+    Provisioning,
+    Active,
+    Failed,
+    Revoking,
+}
+
+impl ProvisioningStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::Provisioning => "PROVISIONING",
+            Self::Active => "ACTIVE",
+            Self::Failed => "FAILED",
+            Self::Revoking => "REVOKING",
+        }
+    }
+
+    pub fn can_transition_to(self, next: Self) -> bool {
+        match (self, next) {
+            (Self::Pending, Self::Provisioning) => true,
+            (Self::Provisioning, Self::Active) => true,
+            (Self::Provisioning, Self::Failed) => true,
+            (Self::Active, Self::Revoking) => true,
+            (Self::Failed, Self::Revoking) => true,
+            _ => false,
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub struct IssueAgentCredentialOutput {
     pub credential_id: Uuid,
@@ -181,7 +213,21 @@ impl IssueAgentCredentialUseCase {
             AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
         })?;
 
-        // 5. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
+        // 5. Zapis pośredniego rekordu lifecycle do KMS przed utworzeniem konta zewnętrznego
+        insert_provisioned_credential_tx(
+            &mut tx,
+            generated.credential_id,
+            &input.caller_service,
+            target_id,
+            &username,
+            &generated.encrypted_password,
+            &username,
+            expires_at,
+            ProvisioningStatus::Provisioning.as_str(),
+        )
+        .await?;
+
+        // 6. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
         let provider = state.provider_factory.get(&target_type_clean)?;
 
         let secret_bytes = BASE64
@@ -205,25 +251,26 @@ impl IssueAgentCredentialUseCase {
         let provider_credential = match provider_result {
             Ok(c) => c,
             Err(e) => {
+                let _ = update_provisioned_credential_status_tx(
+                    &mut tx,
+                    generated.credential_id,
+                    ProvisioningStatus::Failed.as_str(),
+                )
+                .await;
                 let _ = tx.rollback().await;
                 return Err(e);
             }
         };
 
-        // 6. Zapis dynamicznych poświadczeń wyłącznie w tabeli provisioned_credentials
-        insert_provisioned_credential_tx(
+        // 7. Zaaktualizowanie statusu po uzyskaniu aktywnego konta w target providera
+        update_provisioned_credential_status_tx(
             &mut tx,
             generated.credential_id,
-            &input.caller_service,
-            target_id,
-            &provider_credential.username,
-            &generated.encrypted_password,
-            &username,
-            expires_at,
+            ProvisioningStatus::Active.as_str(),
         )
         .await?;
 
-        // 7. Zapis wpisu audytowego
+        // 8. Zapis wpisu audytowego
         insert_audit_log_tx(
             &mut tx,
             &input.caller_service,
@@ -234,12 +281,11 @@ impl IssueAgentCredentialUseCase {
         )
         .await?;
 
-        // 8. Zatwierdzenie transakcji
+        // 9. Zatwierdzenie transakcji
         if let Err(commit_err) = tx.commit().await {
             let _ = provider
-                .revoke_user(&input.target_service, &provider_credential.username)
+                .revoke_user(&admin_conn, &provider_credential.username)
                 .await;
-
             return Err(AppError::Internal(format!(
                 "DB commit failed: {commit_err}"
             )));
@@ -333,6 +379,7 @@ pub async fn insert_provisioned_credential_tx(
     password_encrypted: &[u8],
     granted_role: &str,
     expires_at: DateTime<Utc>,
+    status: &str,
 ) -> AppResult<()> {
     CredentialQueries::insert_provisioned_credential(
         tx,
@@ -343,11 +390,26 @@ pub async fn insert_provisioned_credential_tx(
         password_encrypted,
         granted_role,
         expires_at,
+        status,
     )
     .await
     .map_err(|err| {
         AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
     })?;
+
+    Ok(())
+}
+
+pub async fn update_provisioned_credential_status_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+    status: &str,
+) -> AppResult<()> {
+    CredentialQueries::update_provisioned_credential_status(tx, id, status)
+        .await
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
     Ok(())
 }
@@ -412,6 +474,20 @@ pub async fn insert_audit_log_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provisioning_status_transitions_are_explicit_and_safe() {
+        assert_eq!(ProvisioningStatus::Pending.as_str(), "PENDING");
+        assert_eq!(ProvisioningStatus::Provisioning.as_str(), "PROVISIONING");
+        assert_eq!(ProvisioningStatus::Active.as_str(), "ACTIVE");
+        assert_eq!(ProvisioningStatus::Failed.as_str(), "FAILED");
+        assert_eq!(ProvisioningStatus::Revoking.as_str(), "REVOKING");
+
+        assert!(ProvisioningStatus::Pending.can_transition_to(ProvisioningStatus::Provisioning));
+        assert!(ProvisioningStatus::Provisioning.can_transition_to(ProvisioningStatus::Active));
+        assert!(ProvisioningStatus::Active.can_transition_to(ProvisioningStatus::Revoking));
+        assert!(!ProvisioningStatus::Active.can_transition_to(ProvisioningStatus::Provisioning));
+    }
 
     #[test]
     fn validate_batch_acl_fails_fast_for_unauthorized_item() {

@@ -18,8 +18,11 @@ CREATE TABLE provisioned_credentials (
     granted_role VARCHAR(64) NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked BOOLEAN NOT NULL DEFAULT false,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    status VARCHAR(32) NOT NULL DEFAULT 'PENDING',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT chk_provisioned_credentials_status CHECK (status IN ('PENDING', 'PROVISIONING', 'ACTIVE', 'FAILED', 'REVOKING'))
 );
 
 CREATE INDEX idx_provisioned_credentials_service ON provisioned_credentials(service_id);
+CREATE INDEX idx_provisioned_credentials_status ON provisioned_credentials(status);
 CREATE INDEX idx_provisioned_credentials_expires ON provisioned_credentials(expires_at) WHERE revoked = false;

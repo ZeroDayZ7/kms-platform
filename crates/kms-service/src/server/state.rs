@@ -235,6 +235,13 @@ impl AppState {
         )
         .await;
 
+        let _ = crate::workers::reconciliation::run_reconciliation_worker(
+            pg_pool.clone(),
+            settings.crypto.expiration_check_duration(),
+            shutdown_token.clone(),
+        )
+        .await;
+
         let iam_policy_path = IamCredentialPolicy::default_policy_path();
         let iam_policy = Arc::new(
             IamCredentialPolicy::load_from_file(&iam_policy_path).unwrap_or_else(|err| {
