@@ -2004,6 +2004,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tokio",
+ "uuid",
  "zeroize",
 ]
 

@@ -7,7 +7,9 @@ use crate::application::use_cases::{
 use crate::config::Settings;
 use crate::config::iam_json::IamCredentialPolicy;
 use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
-use crate::domain::rate_limiter::{InMemoryRateLimiter, RateLimiter};
+use crate::domain::rate_limiter::{
+    InMemoryNonceStore, InMemoryRateLimiter, NonceStore, RateLimiter, RedisNonceStore,
+};
 use crate::errors::AppResult;
 use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
 use crate::infrastructure::crypto::vhsm_client::VhsmClient;
@@ -168,6 +170,7 @@ pub struct AppState {
     pub settings: Arc<Settings>,
     pub use_cases: Arc<UseCases>,
     pub rate_limiter: Arc<dyn RateLimiter>,
+    pub nonce_store: Arc<dyn NonceStore>,
     pub db: PgPool,
     pub redis_manager: Option<Arc<RedisManager>>,
     pub key_repo: Arc<PgKeyRepository>,
@@ -193,6 +196,11 @@ impl AppState {
         let rate_limiter: Arc<dyn RateLimiter> = match redis_manager.as_ref() {
             Some(redis) => Arc::new(RedisRateLimiter::new(redis.clone()).await),
             None => Arc::new(InMemoryRateLimiter::new()),
+        };
+
+        let nonce_store: Arc<dyn NonceStore> = match redis_manager.as_ref() {
+            Some(redis) => Arc::new(RedisNonceStore::new(redis.clone())),
+            None => Arc::new(InMemoryNonceStore::new()),
         };
 
         let key_repo = Arc::new(PgKeyRepository::new(pg_pool.clone()));
@@ -308,6 +316,7 @@ impl AppState {
                 sign_data: sign_data_use_case,
             }),
             rate_limiter,
+            nonce_store,
             db: pg_pool,
             redis_manager,
             key_repo,
