@@ -5,9 +5,8 @@ use crate::errors::{AppError, AppResult};
 use crate::server::state::AppState;
 use chrono::Utc;
 use kms_db::repositories::{AuditQueries, BootstrapQueries};
+use kms_db::{Postgres, Transaction};
 use serde::Deserialize;
-use sqlx::Postgres;
-use sqlx::Transaction;
 use tracing::{error, info};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -89,7 +88,11 @@ pub async fn import_bootstrap(
     }
 
     // 3. Rozpoczęcie ATOMOWEJ transakcji w bazie
-    let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
+    let mut tx: Transaction<'_, Postgres> = state
+        .db
+        .begin()
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
     let mut inserted_total = 0usize;
     let now = Utc::now();
 
@@ -141,7 +144,8 @@ pub async fn import_bootstrap(
             &encrypted.ciphertext,
             now,
         )
-        .await?;
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         inserted_total += 1;
     }
@@ -165,7 +169,8 @@ pub async fn import_bootstrap(
             &rec.target_db,
             &rec.username,
         )
-        .await?;
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         if exists.is_some() {
             let _ = tx.rollback().await;
@@ -176,7 +181,9 @@ pub async fn import_bootstrap(
         }
 
         let kek_row: Option<Uuid> =
-            BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id).await?;
+            BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id)
+                .await
+                .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         let kek_id = match kek_row {
             Some(id) => id,
@@ -216,7 +223,8 @@ pub async fn import_bootstrap(
             kek_id,
             now,
         )
-        .await?;
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         inserted_total += 1;
     }
@@ -225,7 +233,9 @@ pub async fn import_bootstrap(
     // KROK C: REJESTRACJA W AUDIT LOG
     // ==========================================
     let action = "bootstrap:import";
-    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(&mut tx).await?;
+    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(&mut tx)
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
     let hash = kms_core::audit::compute_audit_hash(&kms_core::audit::AuditHashInput {
         id: &Uuid::new_v4().to_string(),
@@ -266,9 +276,12 @@ pub async fn import_bootstrap(
             created_at: now,
         },
     )
-    .await?;
+    .await
+    .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
-    tx.commit().await?;
+    tx.commit()
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
     info!(
         total = inserted_total,

@@ -1,4 +1,4 @@
-use sqlx::PgPool;
+use kms_db::PgPool;
 
 pub struct PostgresClient {
     pub pool: PgPool,

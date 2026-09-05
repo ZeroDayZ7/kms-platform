@@ -10,3 +10,5 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.24", features = ["v4", "v7", "serde"] }
 tracing = "0.1"
 zeroize = { version = "1.8", features = ["zeroize_derive", "serde"] }
+base64 = "0.22"
+rand = "0.8"

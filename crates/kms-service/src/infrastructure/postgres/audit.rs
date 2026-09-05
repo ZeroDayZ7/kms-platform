@@ -1,7 +1,6 @@
 use async_trait::async_trait;
 use kms_core::audit::{AuditHashInput, compute_audit_hash};
-use kms_db::repositories::{AuditInsert, AuditQueries};
-use sqlx::PgPool;
+use kms_db::{PgPool, repositories::{AuditInsert, AuditQueries}};
 
 use crate::{
     domain::audit::{models::AuditLog, repository::AuditRepository},
@@ -22,7 +21,9 @@ impl PgAuditRepository {
 #[async_trait]
 impl AuditRepository for PgAuditRepository {
     async fn record(&self, log: AuditLog) -> AppResult<()> {
-        let prev_hash_opt = AuditQueries::latest_hash(&self.pool).await?;
+        let prev_hash_opt = AuditQueries::latest_hash(&self.pool)
+            .await
+            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         let prev_hash = prev_hash_opt.unwrap_or_else(|| {
             "0000000000000000000000000000000000000000000000000000000000000000".to_string()
@@ -70,7 +71,7 @@ impl AuditRepository for PgAuditRepository {
             },
         )
         .await
-        .map_err(AppError::from)?;
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         Ok(())
     }

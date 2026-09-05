@@ -19,7 +19,7 @@ use crate::infrastructure::providers::ProviderFactory;
 use crate::infrastructure::redis::client::RedisManager;
 use crate::infrastructure::redis::rate_limiter::RedisRateLimiter;
 
-use sqlx::PgPool;
+use kms_db::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tokio_util::sync::CancellationToken;

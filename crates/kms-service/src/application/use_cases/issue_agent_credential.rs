@@ -1,8 +1,7 @@
 use chrono::{DateTime, Utc};
 use kms_core::audit::{AuditHashInput, compute_audit_hash};
-use kms_db::repositories::{AuditQueries, CredentialQueries};
+use kms_db::{Postgres, Transaction, repositories::{AuditQueries, CredentialQueries}};
 use serde::{Deserialize, Serialize};
-use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -109,7 +108,9 @@ impl IssueAgentCredentialUseCase {
         Self::validate_acl(state, &input)?;
 
         // 2. Generowanie poświadczeń przez vHSM
-        let kek_id = fetch_latest_kek_id(&state.db, "kms-system").await?;
+        let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
+            .await
+            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
         let username = build_generic_username(&input.caller_service, &input.target_service);
         let generated = generate_secure_credential(
             &state.crypto_service,
@@ -120,8 +121,9 @@ impl IssueAgentCredentialUseCase {
         .await?;
 
         // 3. Pobranie connection string admina dla docelowej bazy
-        let target_row: Option<(Uuid, Vec<u8>)> =
-            CredentialQueries::fetch_target_resource(&state.db, &input.target_service).await?;
+        let target_row: Option<(Uuid, Vec<u8>)> = CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
+            .await
+            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         let (target_id, conn_encrypted) = match target_row {
             Some(v) => v,
@@ -150,14 +152,19 @@ impl IssueAgentCredentialUseCase {
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
         // 4. Rozpoczęcie transakcji SQL w KMS
-        let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
+        let mut tx: Transaction<'_, Postgres> = state
+            .db
+            .begin()
+            .await
+            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
         // 4.1 Unieważnienie starych, aktywnych poświadczeń dla tego caller
         CredentialQueries::revoke_active_credentials_for_target(
             &mut tx,
             &input.caller_service,
             target_id,
         )
-        .await?;
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         // 5. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
         let provider = state.provider_factory.get(&target_type_clean)?;
@@ -238,9 +245,10 @@ pub fn build_generic_username(caller_service: &str, target_service: &str) -> Str
     format!("kms_{}_{}", caller_service, target_service)
 }
 
-pub async fn fetch_latest_kek_id(db: &sqlx::PgPool, target_service_id: &str) -> AppResult<Uuid> {
+pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -> AppResult<Uuid> {
     let kek_id = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
-        .await?
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?
         .ok_or_else(|| {
             AppError::KeyNotFound(format!(
                 "No active AES256GCM KEK found for {}",
@@ -317,7 +325,8 @@ pub async fn insert_provisioned_credential_tx(
         granted_role,
         expires_at,
     )
-    .await?;
+    .await
+    .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
     Ok(())
 }
@@ -330,7 +339,9 @@ pub async fn insert_audit_log_tx(
     credential_id: &Uuid,
     timestamp: DateTime<Utc>,
 ) -> AppResult<()> {
-    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx).await?;
+    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx)
+        .await
+        .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
     let hash = compute_audit_hash(&AuditHashInput {
@@ -369,7 +380,8 @@ pub async fn insert_audit_log_tx(
             created_at: timestamp,
         },
     )
-    .await?;
+    .await
+    .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
     Ok(())
 }

@@ -73,13 +73,6 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
-impl From<sqlx::Error> for AppError {
-    //#region from
-    fn from(_: sqlx::Error) -> Self {
-        Self::DatabaseError("Database operation failed".into())
-    }
-}
-
 #[derive(Serialize)]
 struct ErrorResponse {
     code: &'static str,
