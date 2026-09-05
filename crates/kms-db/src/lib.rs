@@ -1,4 +1,6 @@
 // crates/kms-db/src/lib.rs
+pub mod repositories;
+
 use serde::Deserialize;
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::error::Error;

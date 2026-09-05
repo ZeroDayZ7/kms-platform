@@ -4,6 +4,7 @@ use crate::domain::keys::models::ServiceId;
 use crate::errors::{AppError, AppResult};
 use crate::server::state::AppState;
 use chrono::Utc;
+use kms_db::repositories::{AuditQueries, BootstrapQueries};
 use serde::Deserialize;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -132,23 +133,14 @@ pub async fn import_bootstrap(
                 AppError::CryptoError(format!("Failed to encrypt connection_url: {}", e))
             })?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO target_resources (id, target_name, target_type, connection_url_encrypted, active, created_at)
-            VALUES ($1, $2, $3, $4, true, $5)
-            ON CONFLICT (target_name) 
-            DO UPDATE SET 
-                target_type = EXCLUDED.target_type,
-                connection_url_encrypted = EXCLUDED.connection_url_encrypted,
-                active = true
-            "#,
+        BootstrapQueries::insert_target_resource(
+            &mut tx,
+            Uuid::new_v4(),
+            &target.target_name,
+            &target.target_type,
+            &encrypted.ciphertext,
+            now,
         )
-        .bind(Uuid::new_v4())
-        .bind(&target.target_name)
-        .bind(&target.target_type)
-        .bind(&encrypted.ciphertext)
-        .bind(now)
-        .execute(&mut *tx)
         .await?;
 
         inserted_total += 1;
@@ -166,18 +158,13 @@ pub async fn import_bootstrap(
             "Inserting static credential record into PostgreSQL"
         );
 
-        let exists: Option<Uuid> = sqlx::query_scalar(
-            r#"
-            SELECT id FROM db_credentials 
-            WHERE service_id = $1 AND target_type = $2 AND target_db = $3 AND username = $4 AND status = 'ACTIVE' 
-            LIMIT 1
-            "#,
+        let exists: Option<Uuid> = BootstrapQueries::active_credential_exists(
+            &mut tx,
+            &rec.service_id,
+            &rec.target_type,
+            &rec.target_db,
+            &rec.username,
         )
-        .bind(&rec.service_id)
-        .bind(&rec.target_type)
-        .bind(&rec.target_db)
-        .bind(&rec.username)
-        .fetch_optional(&mut *tx)
         .await?;
 
         if exists.is_some() {
@@ -188,12 +175,8 @@ pub async fn import_bootstrap(
             )));
         }
 
-        let kek_row: Option<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM keys WHERE service_id = $1 AND is_active = true ORDER BY version DESC LIMIT 1",
-        )
-        .bind(&rec.service_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let kek_row: Option<Uuid> =
+            BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id).await?;
 
         let kek_id = match kek_row {
             Some(id) => id,
@@ -220,25 +203,19 @@ pub async fn import_bootstrap(
         }
         let nonce = encrypted.ciphertext[..12].to_vec();
 
-        sqlx::query(
-            r#"
-            INSERT INTO db_credentials 
-                (id, service_id, target_type, target_db, resource, username, encrypted_password, nonce, kek_id, status, created_at)
-            VALUES 
-                ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10)
-            "#,
+        BootstrapQueries::insert_db_credential(
+            &mut tx,
+            Uuid::new_v4(),
+            &rec.service_id,
+            &rec.target_type,
+            &rec.target_db,
+            rec.resource.as_deref().unwrap_or(""),
+            &rec.username,
+            &encrypted.ciphertext,
+            &nonce,
+            kek_id,
+            now,
         )
-        .bind(Uuid::new_v4())
-        .bind(&rec.service_id)
-        .bind(&rec.target_type)
-        .bind(&rec.target_db)
-        .bind(rec.resource.as_deref().unwrap_or(""))
-        .bind(&rec.username)
-        .bind(&encrypted.ciphertext)
-        .bind(&nonce)
-        .bind(kek_id)
-        .bind(now)
-        .execute(&mut *tx)
         .await?;
 
         inserted_total += 1;
@@ -248,10 +225,7 @@ pub async fn import_bootstrap(
     // KROK C: REJESTRACJA W AUDIT LOG
     // ==========================================
     let action = "bootstrap:import";
-    let prev_hash_row: Option<String> =
-        sqlx::query_scalar("SELECT hash FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1")
-            .fetch_optional(&mut *tx)
-            .await?;
+    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(&mut tx).await?;
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
     let hash = kms_core::audit::compute_audit_hash(&kms_core::audit::AuditHashInput {
         id: &Uuid::new_v4().to_string(),
@@ -272,24 +246,26 @@ pub async fn import_bootstrap(
         metadata: Some("bootstrap_import_v2"),
     });
 
-    sqlx::query(
-        r#"
-        INSERT INTO audit_logs (id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        "#,
+    AuditQueries::insert_tx(
+        &mut tx,
+        kms_db::repositories::AuditInsert {
+            id: Uuid::new_v4(),
+            caller_service: caller_service.clone(),
+            target_service: "bootstrap".to_string(),
+            action: action.to_string(),
+            algorithm: "bootstrap-import".to_string(),
+            status: "Success".to_string(),
+            reason: Some(format!("imported {} total records", inserted_total)),
+            prev_hash: prev_hash.to_string(),
+            hash,
+            signature: Some(Vec::<u8>::new()),
+            request_id: None,
+            operation_id: None,
+            target_id: None,
+            metadata: Some("bootstrap_import_v2".to_string()),
+            created_at: now,
+        },
     )
-    .bind(Uuid::new_v4())
-    .bind(caller_service)
-    .bind("bootstrap")
-    .bind(action)
-    .bind("bootstrap-import")
-    .bind("Success")
-    .bind(format!("imported {} total records", inserted_total))
-    .bind(prev_hash)
-    .bind(hash)
-    .bind(Vec::<u8>::new())
-    .bind(now)
-    .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use kms_core::audit::{AuditHashInput, compute_audit_hash};
+use kms_db::repositories::{AuditQueries, CredentialQueries};
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
@@ -119,12 +120,8 @@ impl IssueAgentCredentialUseCase {
         .await?;
 
         // 3. Pobranie connection string admina dla docelowej bazy
-        let target_row: Option<(Uuid, Vec<u8>)> = sqlx::query_as(
-            "SELECT id, connection_url_encrypted FROM target_resources WHERE target_name = $1 AND active = true LIMIT 1",
-        )
-        .bind(&input.target_service)
-        .fetch_optional(&state.db)
-        .await?;
+        let target_row: Option<(Uuid, Vec<u8>)> =
+            CredentialQueries::fetch_target_resource(&state.db, &input.target_service).await?;
 
         let (target_id, conn_encrypted) = match target_row {
             Some(v) => v,
@@ -155,18 +152,11 @@ impl IssueAgentCredentialUseCase {
         // 4. Rozpoczęcie transakcji SQL w KMS
         let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
         // 4.1 Unieważnienie starych, aktywnych poświadczeń dla tego caller
-        sqlx::query(
-            r#"
-            UPDATE provisioned_credentials
-            SET revoked = true
-            WHERE service_id = $1 
-              AND target_id = $2 
-              AND revoked = false
-            "#,
+        CredentialQueries::revoke_active_credentials_for_target(
+            &mut tx,
+            &input.caller_service,
+            target_id,
         )
-        .bind(&input.caller_service)
-        .bind(target_id)
-        .execute(&mut *tx)
         .await?;
 
         // 5. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
@@ -249,25 +239,14 @@ pub fn build_generic_username(caller_service: &str, target_service: &str) -> Str
 }
 
 pub async fn fetch_latest_kek_id(db: &sqlx::PgPool, target_service_id: &str) -> AppResult<Uuid> {
-    let kek_id = sqlx::query_scalar::<_, Uuid>(
-        r#"
-        SELECT id FROM keys 
-        WHERE service_id = $1 
-          AND is_active = true 
-          AND algorithm = 'AES256GCM'
-        ORDER BY version DESC 
-        LIMIT 1
-        "#,
-    )
-    .bind(target_service_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| {
-        AppError::KeyNotFound(format!(
-            "No active AES256GCM KEK found for {}",
-            target_service_id
-        ))
-    })?;
+    let kek_id = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::KeyNotFound(format!(
+                "No active AES256GCM KEK found for {}",
+                target_service_id
+            ))
+        })?;
 
     Ok(kek_id)
 }
@@ -328,23 +307,16 @@ pub async fn insert_provisioned_credential_tx(
     granted_role: &str,
     expires_at: DateTime<Utc>,
 ) -> AppResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO provisioned_credentials
-            (id, service_id, target_id, username, password_encrypted, granted_role, expires_at, revoked, created_at)
-        VALUES
-            ($1, $2, $3, $4, $5, $6, $7, false, $8)
-        "#,
+    CredentialQueries::insert_provisioned_credential(
+        tx,
+        id,
+        service_id,
+        target_id,
+        username,
+        password_encrypted,
+        granted_role,
+        expires_at,
     )
-    .bind(id)
-    .bind(service_id)
-    .bind(target_id)
-    .bind(username)
-    .bind(password_encrypted)
-    .bind(granted_role)
-    .bind(expires_at)
-    .bind(Utc::now())
-    .execute(&mut **tx)
     .await?;
 
     Ok(())
@@ -358,10 +330,7 @@ pub async fn insert_audit_log_tx(
     credential_id: &Uuid,
     timestamp: DateTime<Utc>,
 ) -> AppResult<()> {
-    let prev_hash_row: Option<String> =
-        sqlx::query_scalar("SELECT hash FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1")
-            .fetch_optional(&mut **tx)
-            .await?;
+    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx).await?;
 
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
     let hash = compute_audit_hash(&AuditHashInput {
@@ -380,26 +349,26 @@ pub async fn insert_audit_log_tx(
         metadata: Some("credential_provisioned"),
     });
 
-    sqlx::query(
-        r#"
-        INSERT INTO audit_logs 
-            (id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at) 
-        VALUES 
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        "#,
+    AuditQueries::insert_tx(
+        tx,
+        kms_db::repositories::AuditInsert {
+            id: Uuid::new_v4(),
+            caller_service: caller_service.to_string(),
+            target_service: target_service.to_string(),
+            action: action.to_string(),
+            algorithm: "db-credentials".to_string(),
+            status: "Success".to_string(),
+            reason: Some("agent credential provisioned".to_string()),
+            prev_hash: prev_hash.to_string(),
+            hash,
+            signature: Some(Vec::<u8>::new()),
+            request_id: None,
+            operation_id: None,
+            target_id: Some(credential_id.to_string()),
+            metadata: Some("credential_provisioned".to_string()),
+            created_at: timestamp,
+        },
     )
-    .bind(Uuid::new_v4())
-    .bind(caller_service)
-    .bind(target_service)
-    .bind(action)
-    .bind("db-credentials")
-    .bind("Success")
-    .bind("agent credential provisioned")
-    .bind(prev_hash)
-    .bind(hash)
-    .bind(Vec::<u8>::new())
-    .bind(timestamp)
-    .execute(&mut **tx)
     .await?;
 
     Ok(())

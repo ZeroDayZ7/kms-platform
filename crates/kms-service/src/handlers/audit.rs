@@ -4,6 +4,7 @@ use crate::server::{extractors::authenticated_service::AuthenticatedService, sta
 use axum::{Json, extract::State};
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use kms_db::repositories::AuditQueries;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use uuid::Uuid;
@@ -59,23 +60,27 @@ pub async fn verify_audit_handler(
     let full = q.full.unwrap_or(false);
 
     // Fetch rows using native sqlx queries
-    let rows: Vec<AuditLogRow> = if full {
-        sqlx::query_as::<_, AuditLogRow>(
-            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, request_id, operation_id, target_id, metadata, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
-        )
-        .fetch_all(&state.db)
+    let rows: Vec<AuditLogRow> = AuditQueries::list_recent(&state.db, Some(limit), full)
         .await?
-    } else {
-        let mut fetched = sqlx::query_as::<_, AuditLogRow>(
-            "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, request_id, operation_id, target_id, metadata, created_at FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT $1"
-        )
-        .bind((limit + 1) as i64)
-        .fetch_all(&state.db)
-        .await?;
-
-        fetched.reverse();
-        fetched
-    };
+        .into_iter()
+        .map(|row| AuditLogRow {
+            id: row.id,
+            caller_service: row.caller_service,
+            target_service: row.target_service,
+            action: row.action,
+            algorithm: row.algorithm,
+            status: row.status,
+            reason: row.reason,
+            prev_hash: row.prev_hash,
+            hash: row.hash,
+            signature: row.signature,
+            request_id: row.request_id,
+            operation_id: row.operation_id,
+            target_id: row.target_id,
+            metadata: row.metadata,
+            created_at: row.created_at,
+        })
+        .collect();
 
     if rows.is_empty() {
         return Ok(Json(VerifyReport {
@@ -221,17 +226,29 @@ pub async fn audit_logs_handler(
         return Err(AppError::Forbidden);
     }
 
-    let rows: Vec<AuditLogRow> = sqlx::query_as::<_, AuditLogRow>(
-        "SELECT id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, request_id, operation_id, target_id, metadata, created_at FROM audit_logs ORDER BY created_at ASC, id ASC"
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let rows: Vec<AuditLogRow> = AuditQueries::list_recent(&state.db, None, true)
+        .await?
+        .into_iter()
+        .map(|row| AuditLogRow {
+            id: row.id,
+            caller_service: row.caller_service,
+            target_service: row.target_service,
+            action: row.action,
+            algorithm: row.algorithm,
+            status: row.status,
+            reason: row.reason,
+            prev_hash: row.prev_hash,
+            hash: row.hash,
+            signature: row.signature,
+            request_id: row.request_id,
+            operation_id: row.operation_id,
+            target_id: row.target_id,
+            metadata: row.metadata,
+            created_at: row.created_at,
+        })
+        .collect();
 
-    let signing_keys: Vec<String> = sqlx::query_scalar::<_, String>(
-        "SELECT public_key_pem FROM keys WHERE purpose = 'Signing' AND is_active = TRUE",
-    )
-    .fetch_all(&state.db)
-    .await?;
+    let signing_keys: Vec<String> = AuditQueries::active_signing_public_keys(&state.db).await?;
 
     let logs: Vec<serde_json::Value> = rows
         .into_iter()
