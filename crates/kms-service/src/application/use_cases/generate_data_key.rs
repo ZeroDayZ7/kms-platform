@@ -1,13 +1,13 @@
-use chrono::Utc;
 use std::sync::Arc;
-use uuid::Uuid;
+
+use serde_json::json;
 
 use crate::{
     config::acl::{CompiledAcl, KeyAccessLevel, authorize_key_access},
     domain::{
         audit::{
-            models::{AuditAction, AuditLog, AuditStatus},
-            repository::AuditRepository,
+            models::{AuditAction, RequestContext},
+            service::AuditService,
         },
         crypto::{KeyAlgorithm, KmsCryptoService, SecretBytes},
         keys::models::ServiceId,
@@ -32,30 +32,34 @@ pub struct GenerateDataKeyOutput {
 
 pub struct GenerateDataKeyUseCase<A>
 where
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
-    audit_repo: Arc<A>,
+    audit_service: Arc<AuditService<A>>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     acl_policy: Arc<CompiledAcl>,
 }
 
 impl<A> GenerateDataKeyUseCase<A>
 where
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
     pub fn new(
-        audit_repo: Arc<A>,
+        audit_service: Arc<AuditService<A>>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
-            audit_repo,
+            audit_service,
             crypto_service,
             acl_policy,
         }
     }
 
-    pub async fn execute(&self, input: GenerateDataKeyInput) -> AppResult<GenerateDataKeyOutput> {
+    pub async fn execute(
+        &self,
+        ctx: &RequestContext,
+        input: GenerateDataKeyInput,
+    ) -> AppResult<GenerateDataKeyOutput> {
         let target_service = input.caller_service.clone();
         let is_allowed = authorize_key_access(
             &self.acl_policy,
@@ -66,44 +70,24 @@ where
         );
 
         if !is_allowed {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: target_service.clone(),
-                    action: AuditAction::GenerateDataKey,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::AccessDenied,
-                    reason: AuditLog::sanitize_reason(Some(
-                        "ACL Policy Violation for GenerateDataKey",
-                    )),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("acl_policy_violation".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_access_denied(
+                    ctx,
+                    AuditAction::GenerateDataKey,
+                    "ACL Policy Violation for GenerateDataKey",
+                )
                 .await?;
 
             return Err(AppError::Unauthorized);
         }
 
         if input.algorithm != KeyAlgorithm::AES256GCM {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: target_service.clone(),
-                    action: AuditAction::GenerateDataKey,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::ValidationFailure,
-                    reason: AuditLog::sanitize_reason(Some("Only AES256GCM is supported")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("unsupported_algorithm".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_validation_failure(
+                    ctx,
+                    AuditAction::GenerateDataKey,
+                    "Only AES256GCM is supported",
+                )
                 .await?;
 
             return Err(AppError::ValidationError(
@@ -116,21 +100,17 @@ where
             .generate_data_key(input.algorithm)
             .await?;
 
-        self.audit_repo
-            .record(AuditLog {
-                id: Uuid::now_v7(),
-                caller_service: input.caller_service.clone(),
-                target_service: target_service.clone(),
-                action: AuditAction::GenerateDataKey,
-                algorithm: input.algorithm,
-                status: AuditStatus::Success,
-                reason: None,
-                request_id: None,
-                operation_id: None,
-                target_id: None,
-                metadata: Some("data_key_generated".to_string()),
-                timestamp: Utc::now(),
-            })
+        self.audit_service
+            .record_success(
+                ctx,
+                AuditAction::GenerateDataKey,
+                Some(json!({
+                    "target_service": target_service.0,
+                    "algorithm": input.algorithm,
+                    "master_key_version": generated.master_key_version,
+                    "wrapped_len": generated.wrapped.len()
+                })),
+            )
             .await?;
 
         Ok(GenerateDataKeyOutput {

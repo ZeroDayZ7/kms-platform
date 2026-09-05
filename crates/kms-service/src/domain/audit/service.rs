@@ -1,59 +1,17 @@
 use std::sync::Arc;
 
-use chrono::Utc;
-use uuid::Uuid;
+use serde_json::Value;
 
 use crate::{
     domain::{
         audit::{
-            models::{AuditAction, AuditLog, AuditStatus},
+            models::{AuditAction, AuditLog, AuditStatus, CanonicalAuditEntry, RequestContext},
             repository::AuditRepository,
         },
-        keys::models::{KeyAlgorithm, ServiceId},
+        keys::models::KeyAlgorithm,
     },
     errors::AppResult,
 };
-
-#[derive(Debug, Clone)]
-pub struct AuditRecordInput {
-    pub caller_service: ServiceId,
-    pub target_service: ServiceId,
-    pub action: AuditAction,
-    pub algorithm: KeyAlgorithm,
-    pub status: AuditStatus,
-    pub reason: Option<String>,
-    pub request_id: Option<String>,
-    pub operation_id: Option<String>,
-    pub target_id: Option<String>,
-    pub metadata: Option<String>,
-    pub timestamp: Option<chrono::DateTime<Utc>>,
-    pub id: Option<Uuid>,
-}
-
-impl AuditRecordInput {
-    pub fn new(
-        caller_service: ServiceId,
-        target_service: ServiceId,
-        action: AuditAction,
-        algorithm: KeyAlgorithm,
-        status: AuditStatus,
-    ) -> Self {
-        Self {
-            caller_service,
-            target_service,
-            action,
-            algorithm,
-            status,
-            reason: None,
-            request_id: None,
-            operation_id: None,
-            target_id: None,
-            metadata: None,
-            timestamp: None,
-            id: None,
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct AuditService<A> {
@@ -68,23 +26,33 @@ where
         Self { repo }
     }
 
-    pub async fn record_event(&self, input: AuditRecordInput) -> AppResult<()> {
+    async fn record_internal(
+        &self,
+        ctx: &RequestContext,
+        action: AuditAction,
+        status: AuditStatus,
+        details: Option<Value>,
+        reason: Option<String>,
+        algorithm: KeyAlgorithm,
+    ) -> AppResult<()> {
+        let prev_hash = "0000000000000000000000000000000000000000000000000000000000000000";
+        let entry = CanonicalAuditEntry::new(ctx, action, status, details, prev_hash);
+
         let audit_log = AuditLog {
-            id: input.id.unwrap_or_else(Uuid::now_v7),
-            caller_service: input.caller_service,
-            target_service: input.target_service,
-            action: input.action,
-            algorithm: input.algorithm,
-            status: input.status,
-            reason: input
-                .reason
-                .as_deref()
-                .and_then(|reason| AuditLog::sanitize_reason(Some(reason))),
-            request_id: input.request_id,
-            operation_id: input.operation_id,
-            target_id: input.target_id,
-            metadata: input.metadata,
-            timestamp: input.timestamp.unwrap_or_else(Utc::now),
+            id: entry.id,
+            caller_service: entry.caller_service,
+            target_service: entry.target_service,
+            action: entry.action,
+            algorithm,
+            status: entry.status,
+            reason: reason.or(entry.reason),
+            request_id: entry.request_id,
+            operation_id: entry.operation_id,
+            target_id: entry.target_id,
+            metadata: entry
+                .metadata
+                .map(|value| serde_json::to_string(&value).unwrap_or_default()),
+            timestamp: entry.timestamp,
         };
 
         self.repo.record(audit_log).await
@@ -92,51 +60,72 @@ where
 
     pub async fn record_success(
         &self,
-        caller_service: ServiceId,
-        target_service: ServiceId,
+        ctx: &RequestContext,
         action: AuditAction,
-        algorithm: KeyAlgorithm,
-        reason: Option<&str>,
+        details: Option<Value>,
     ) -> AppResult<()> {
-        self.record_event(AuditRecordInput {
-            caller_service,
-            target_service,
+        self.record_internal(
+            ctx,
             action,
-            algorithm,
-            status: AuditStatus::Success,
-            reason: reason.map(str::to_owned),
-            request_id: None,
-            operation_id: None,
-            target_id: None,
-            metadata: None,
-            timestamp: None,
-            id: None,
-        })
+            AuditStatus::Success,
+            details,
+            None,
+            KeyAlgorithm::AES256GCM,
+        )
+        .await
+    }
+
+    pub async fn record_failure(
+        &self,
+        ctx: &RequestContext,
+        action: AuditAction,
+        reason: String,
+    ) -> AppResult<()> {
+        let sanitized = AuditLog::sanitize_reason(Some(&reason));
+        self.record_internal(
+            ctx,
+            action,
+            AuditStatus::Failure,
+            Some(Value::String(reason)),
+            sanitized,
+            KeyAlgorithm::AES256GCM,
+        )
         .await
     }
 
     pub async fn record_access_denied(
         &self,
-        caller_service: ServiceId,
-        target_service: ServiceId,
+        ctx: &RequestContext,
         action: AuditAction,
-        algorithm: KeyAlgorithm,
         reason: &str,
     ) -> AppResult<()> {
-        self.record_event(AuditRecordInput {
-            caller_service,
-            target_service,
+        let sanitized = AuditLog::sanitize_reason(Some(reason));
+        self.record_internal(
+            ctx,
             action,
-            algorithm,
-            status: AuditStatus::AccessDenied,
-            reason: Some(reason.to_owned()),
-            request_id: None,
-            operation_id: None,
-            target_id: None,
-            metadata: None,
-            timestamp: None,
-            id: None,
-        })
+            AuditStatus::AccessDenied,
+            Some(Value::String(reason.to_string())),
+            sanitized,
+            KeyAlgorithm::AES256GCM,
+        )
+        .await
+    }
+
+    pub async fn record_validation_failure(
+        &self,
+        ctx: &RequestContext,
+        action: AuditAction,
+        reason: &str,
+    ) -> AppResult<()> {
+        let sanitized = AuditLog::sanitize_reason(Some(reason));
+        self.record_internal(
+            ctx,
+            action,
+            AuditStatus::ValidationFailure,
+            Some(Value::String(reason.to_string())),
+            sanitized,
+            KeyAlgorithm::AES256GCM,
+        )
         .await
     }
 }

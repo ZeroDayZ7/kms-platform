@@ -1,14 +1,14 @@
 // src/application/use_cases/get_private_key.rs
-use chrono::Utc;
 use std::sync::Arc;
-use uuid::Uuid;
+
+use serde_json::json;
 
 use crate::{
     config::acl::{CompiledAcl, KeyAccessLevel, authorize_key_access},
     domain::{
         audit::{
-            models::{AuditAction, AuditLog, AuditStatus},
-            repository::AuditRepository,
+            models::{AuditAction, RequestContext},
+            service::AuditService,
         },
         crypto::KmsCryptoService,
         keys::{
@@ -35,7 +35,7 @@ pub struct GetPrivateKeyOutput {
 
 pub struct GetPrivateKeyUseCase<R, A> {
     key_repo: Arc<R>,
-    audit_repo: Arc<A>,
+    audit_service: Arc<AuditService<A>>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     key_cache: Arc<KeyCache>,
     acl_policy: Arc<CompiledAcl>,
@@ -44,26 +44,29 @@ pub struct GetPrivateKeyUseCase<R, A> {
 impl<R, A> GetPrivateKeyUseCase<R, A>
 where
     R: KeyRepository,
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
-    //#region new
     pub fn new(
         key_repo: Arc<R>,
-        audit_repo: Arc<A>,
+        audit_service: Arc<AuditService<A>>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         key_cache: Arc<KeyCache>,
         acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
-            audit_repo,
+            audit_service,
             crypto_service,
             key_cache,
             acl_policy,
         }
     }
 
-    pub async fn execute(&self, input: GetPrivateKeyInput) -> AppResult<GetPrivateKeyOutput> {
+    pub async fn execute(
+        &self,
+        ctx: &RequestContext,
+        input: GetPrivateKeyInput,
+    ) -> AppResult<GetPrivateKeyOutput> {
         let is_allowed = authorize_key_access(
             &self.acl_policy,
             &input.caller_service,
@@ -74,21 +77,8 @@ where
 
         // 1. Weryfikacja ACL i logowanie próby nieautoryzowanego dostępu
         if !is_allowed {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.target_service.clone(),
-                    action: AuditAction::GetPrivateKey,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::AccessDenied,
-                    reason: AuditLog::sanitize_reason(Some("ACL Policy Violation")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("acl_policy_violation".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_access_denied(ctx, AuditAction::GetPrivateKey, "ACL Policy Violation")
                 .await?;
 
             return Err(AppError::Unauthorized);
@@ -99,21 +89,16 @@ where
             input.algorithm,
             |cached_version, cached_bytes| (cached_version, cached_bytes.to_vec()),
         ) {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.target_service.clone(),
-                    action: AuditAction::GetPrivateKey,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::Success,
-                    reason: AuditLog::sanitize_reason(Some("cache_hit")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("cache_hit".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_success(
+                    ctx,
+                    AuditAction::GetPrivateKey,
+                    Some(json!({
+                        "cache_hit": true,
+                        "target_service": input.target_service.0,
+                        "algorithm": input.algorithm
+                    })),
+                )
                 .await?;
 
             let (cached_version, cached_bytes) = cached;
@@ -133,21 +118,12 @@ where
         {
             Some(key) => key,
             None => {
-                self.audit_repo
-                    .record(AuditLog {
-                        id: Uuid::now_v7(),
-                        caller_service: input.caller_service.clone(),
-                        target_service: input.target_service.clone(),
-                        action: AuditAction::GetPrivateKey,
-                        algorithm: input.algorithm,
-                        status: AuditStatus::NotFound,
-                        reason: AuditLog::sanitize_reason(Some("Key does not exist")),
-                        request_id: None,
-                        operation_id: None,
-                        target_id: None,
-                        metadata: Some("key_missing".to_string()),
-                        timestamp: Utc::now(),
-                    })
+                self.audit_service
+                    .record_validation_failure(
+                        ctx,
+                        AuditAction::GetPrivateKey,
+                        "Key does not exist",
+                    )
                     .await?;
 
                 return Err(AppError::NotFound("Key not found".into()));
@@ -173,21 +149,16 @@ where
         }
 
         // 4. Rejestracja udanego odczytu w audycie
-        self.audit_repo
-            .record(AuditLog {
-                id: Uuid::now_v7(),
-                caller_service: input.caller_service,
-                target_service: input.target_service,
-                action: AuditAction::GetPrivateKey,
-                algorithm: input.algorithm,
-                status: AuditStatus::Success,
-                reason: None,
-                request_id: None,
-                operation_id: None,
-                target_id: None,
-                metadata: Some("private_key_retrieved".to_string()),
-                timestamp: Utc::now(),
-            })
+        self.audit_service
+            .record_success(
+                ctx,
+                AuditAction::GetPrivateKey,
+                Some(json!({
+                    "target_service": input.target_service.0,
+                    "algorithm": input.algorithm,
+                    "version": active_key.version
+                })),
+            )
             .await?;
 
         Ok(GetPrivateKeyOutput {

@@ -1,5 +1,8 @@
-use crate::domain::crypto::EncryptedPrivateKey;
-use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
+use crate::domain::{
+    audit::models::RequestContext,
+    crypto::EncryptedPrivateKey,
+    keys::models::{KeyAlgorithm, ServiceId},
+};
 use crate::errors::{AppError, AppResult};
 use crate::server::{extractors::authenticated_service::AuthenticatedService, state::AppState};
 use axum::{Json, extract::State};
@@ -64,7 +67,18 @@ pub async fn encrypt_handler(
     Json(payload): Json<EncryptRequest>,
 ) -> AppResult<Json<EncryptResponse>> {
     let plaintext = decode_base64_payload(&payload.plaintext_b64, "plaintext")?;
-    let encrypted = state.use_cases.encrypt_data.execute(&plaintext).await?;
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: ServiceId("kms-service".to_string()),
+        ip: None,
+        user_agent: None,
+    };
+    let encrypted = state
+        .use_cases
+        .encrypt_data
+        .execute(&request_ctx, &plaintext)
+        .await?;
 
     Ok(Json(EncryptResponse {
         ciphertext_b64: encode_base64_payload(&encrypted.ciphertext),
@@ -82,10 +96,17 @@ pub async fn decrypt_handler(
         master_key_version: payload.master_key_version,
     };
 
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: ServiceId("kms-service".to_string()),
+        ip: None,
+        user_agent: None,
+    };
     let decrypted = state
         .use_cases
         .decrypt_data
-        .execute(&payload_struct)
+        .execute(&request_ctx, &payload_struct)
         .await?;
 
     Ok(Json(DecryptResponse {
@@ -103,14 +124,25 @@ pub async fn sign_data_handler(
         .map_err(|e| AppError::ValidationError(format!("Invalid payload_b64: {e}")))?;
 
     let input = crate::application::use_cases::sign_data::SignDataInput {
-        caller_service,
+        caller_service: caller_service.clone(),
         target_service: ServiceId(payload.target_service),
         algorithm: payload.algorithm,
         payload: payload_bytes,
         key_version: payload.key_version,
     };
 
-    let output = state.use_cases.sign_data.execute(input).await?;
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: caller_service.clone(),
+        ip: None,
+        user_agent: None,
+    };
+    let output = state
+        .use_cases
+        .sign_data
+        .execute(&request_ctx, input)
+        .await?;
 
     Ok(Json(SignDataResponse {
         signature_b64: BASE64.encode(output.signature_bytes),

@@ -1,13 +1,14 @@
 use chrono::Utc;
 use std::sync::Arc;
-use uuid::Uuid;
+
+use serde_json::json;
 
 use crate::{
     config::acl::{CompiledAcl, ControlAction, authorize_control_action},
     domain::{
         audit::{
-            models::{AuditAction, AuditLog, AuditStatus},
-            repository::AuditRepository,
+            models::{AuditAction, RequestContext},
+            service::AuditService,
         },
         crypto::KmsCryptoService,
         keys::{
@@ -27,7 +28,7 @@ pub struct GenerateKeyPairInput {
 
 pub struct GenerateKeyPairUseCase<R, A> {
     key_repo: Arc<R>,
-    audit_repo: Arc<A>,
+    audit_service: Arc<AuditService<A>>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     acl_policy: Arc<CompiledAcl>,
 }
@@ -35,24 +36,27 @@ pub struct GenerateKeyPairUseCase<R, A> {
 impl<R, A> GenerateKeyPairUseCase<R, A>
 where
     R: KeyRepository,
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
-    //#region new
     pub fn new(
         key_repo: Arc<R>,
-        audit_repo: Arc<A>,
+        audit_service: Arc<AuditService<A>>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
-            audit_repo,
+            audit_service,
             crypto_service,
             acl_policy,
         }
     }
 
-    pub async fn execute(&self, input: GenerateKeyPairInput) -> AppResult<KeyPairEntity> {
+    pub async fn execute(
+        &self,
+        ctx: &RequestContext,
+        input: GenerateKeyPairInput,
+    ) -> AppResult<KeyPairEntity> {
         let has_generate_permission = authorize_control_action(
             &self.acl_policy,
             &input.caller_service,
@@ -68,21 +72,12 @@ where
         );
 
         if !has_generate_permission {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.service_id.clone(),
-                    action: AuditAction::GenerateKey,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::AccessDenied,
-                    reason: AuditLog::sanitize_reason(Some("ACL Policy Violation for GenerateKey")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: Some(input.service_id.0.clone()),
-                    metadata: Some("acl_policy_violation".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_access_denied(
+                    ctx,
+                    AuditAction::GenerateKey,
+                    "ACL Policy Violation for GenerateKey",
+                )
                 .await?;
             return Err(AppError::Unauthorized);
         }
@@ -133,21 +128,18 @@ where
         };
 
         self.key_repo.save_key(&entity).await?;
-        self.audit_repo
-            .record(AuditLog {
-                id: Uuid::now_v7(),
-                caller_service: input.caller_service,
-                target_service: target_service.clone(),
-                action: AuditAction::GenerateKey,
-                algorithm: input.algorithm,
-                status: AuditStatus::Success,
-                reason: None,
-                request_id: None,
-                operation_id: None,
-                target_id: Some(entity.id.to_string()),
-                metadata: Some("key_generated".to_string()),
-                timestamp: Utc::now(),
-            })
+        self.audit_service
+            .record_success(
+                ctx,
+                AuditAction::GenerateKey,
+                Some(json!({
+                    "target_service": target_service.0,
+                    "algorithm": input.algorithm,
+                    "key_id": entity.id,
+                    "version": entity.version,
+                    "purpose": input.purpose
+                })),
+            )
             .await?;
 
         Ok(entity)

@@ -6,6 +6,7 @@ use crate::application::use_cases::{
 };
 use crate::config::Settings;
 use crate::config::iam_json::IamCredentialPolicy;
+use crate::domain::audit::service::AuditService;
 use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
 use crate::domain::rate_limiter::{
     InMemoryNonceStore, InMemoryRateLimiter, NonceStore, RateLimiter, RedisNonceStore,
@@ -205,6 +206,7 @@ impl AppState {
 
         let key_repo = Arc::new(PgKeyRepository::new(pg_pool.clone()));
         let audit_repo = Arc::new(PgAuditRepository::new(pg_pool.clone()));
+        let audit_service = Arc::new(AuditService::new(audit_repo.clone()));
         let key_cache = Arc::new(KeyCache::new());
         let compiled_acl = Arc::new(settings.acl.compile());
 
@@ -246,32 +248,32 @@ impl AppState {
 
         let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(
             crypto_service.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
         ));
         let decrypt_data_use_case = Arc::new(DecryptDataUseCase::new(
             crypto_service.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
         ));
 
         let generate_data_key_use_case = Arc::new(GenerateDataKeyUseCase::new(
-            audit_repo.clone(),
+            audit_service.clone(),
             crypto_service.clone(),
             compiled_acl.clone(),
         ));
         let generate_key_pair_use_case = Arc::new(GenerateKeyPairUseCase::new(
             key_repo.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
             crypto_service.clone(),
             compiled_acl.clone(),
         ));
         let get_public_key_use_case = Arc::new(GetPublicKeyUseCase::new(
             key_repo.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
         ));
 
         let get_private_key_use_case = Arc::new(GetPrivateKeyUseCase::new(
             key_repo.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
             crypto_service.clone(),
             key_cache.clone(),
             compiled_acl.clone(),
@@ -279,7 +281,7 @@ impl AppState {
 
         let get_symmetric_key_use_case = Arc::new(GetSymmetricKeyUseCase::new(
             key_repo.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
             crypto_service.clone(),
             key_cache.clone(),
             compiled_acl.clone(),
@@ -288,7 +290,7 @@ impl AppState {
         let rotate_key_use_case = Arc::new(RotateKeyUseCase::new(
             key_repo.clone(),
             crypto_service.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
             key_cache.clone(),
             settings.crypto.grace_period_minutes,
             compiled_acl.clone(),
@@ -296,7 +298,7 @@ impl AppState {
 
         let sign_data_use_case = Arc::new(SignDataUseCase::new(
             key_repo.clone(),
-            audit_repo.clone(),
+            audit_service.clone(),
             crypto_service.clone(),
             key_cache.clone(),
             compiled_acl.clone(),

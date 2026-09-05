@@ -1,11 +1,12 @@
 // src/application/use_cases/rotate_key.rs
 use crate::config::crypto::GracePeriodMinutes;
 use chrono::{Duration, Utc};
+use serde_json::json;
 use std::sync::Arc;
 
 use crate::config::acl::{CompiledAcl, ControlAction, authorize_control_action};
-use crate::domain::audit::models::{AuditAction, AuditLog, AuditStatus};
-use crate::domain::audit::repository::AuditRepository;
+use crate::domain::audit::models::{AuditAction, RequestContext};
+use crate::domain::audit::service::AuditService;
 use crate::domain::crypto::KmsCryptoService;
 use crate::domain::keys::models::{
     KeyAlgorithm, KeyPairEntity, KeyStatus, RotationReason, ServiceId,
@@ -25,11 +26,11 @@ pub struct RotateKeyInput {
 pub struct RotateKeyUseCase<R, A>
 where
     R: KeyRepository + Send + Sync,
-    A: AuditRepository + Send + Sync,
+    A: crate::domain::audit::repository::AuditRepository + Send + Sync,
 {
     key_repo: Arc<R>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
-    audit_repo: Arc<A>,
+    audit_service: Arc<AuditService<A>>,
     key_cache: Arc<KeyCache>,
     grace_period_minutes: GracePeriodMinutes,
     acl_policy: Arc<CompiledAcl>,
@@ -38,13 +39,12 @@ where
 impl<R, A> RotateKeyUseCase<R, A>
 where
     R: KeyRepository + Send + Sync,
-    A: AuditRepository + Send + Sync,
+    A: crate::domain::audit::repository::AuditRepository + Send + Sync,
 {
-    //#region new
     pub fn new(
         key_repo: Arc<R>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
-        audit_repo: Arc<A>,
+        audit_service: Arc<AuditService<A>>,
         key_cache: Arc<KeyCache>,
         grace_period_minutes: GracePeriodMinutes,
         acl_policy: Arc<CompiledAcl>,
@@ -52,14 +52,18 @@ where
         Self {
             key_repo,
             crypto_service,
-            audit_repo,
+            audit_service,
             key_cache,
             grace_period_minutes,
             acl_policy,
         }
     }
 
-    pub async fn execute(&self, input: RotateKeyInput) -> AppResult<KeyPairEntity> {
+    pub async fn execute(
+        &self,
+        ctx: &RequestContext,
+        input: RotateKeyInput,
+    ) -> AppResult<KeyPairEntity> {
         // ACL check: RotateOwnKeys for own service, RotateAllKeys for other services
         let required_action = if input.service_id == input.caller_service {
             ControlAction::RotateOwnKeys
@@ -71,6 +75,9 @@ where
             authorize_control_action(&self.acl_policy, &input.caller_service, &required_action);
 
         if !allowed {
+            self.audit_service
+                .record_access_denied(ctx, AuditAction::KeyRotated, "ACL Policy Violation")
+                .await?;
             return Err(AppError::Unauthorized);
         }
 
@@ -143,26 +150,19 @@ where
             _ => self.key_cache.remove(&input.service_id, input.algorithm),
         }
 
-        // 5. Audit the rotation
-        let audit = AuditLog {
-            id: uuid::Uuid::now_v7(),
-            caller_service: input.service_id.clone(),
-            target_service: input.service_id.clone(),
-            action: AuditAction::KeyRotated,
-            algorithm: input.algorithm,
-            status: AuditStatus::Success,
-            reason: AuditLog::sanitize_reason(Some(&format!(
-                "{:?}; actor={}",
-                input.reason, input.actor_id
-            ))),
-            request_id: None,
-            operation_id: None,
-            target_id: Some(input.service_id.0.clone()),
-            metadata: Some("key_rotation".to_string()),
-            timestamp: Utc::now(),
-        };
-
-        self.audit_repo.record(audit).await?;
+        self.audit_service
+            .record_success(
+                ctx,
+                AuditAction::KeyRotated,
+                Some(json!({
+                    "service_id": input.service_id.0,
+                    "algorithm": input.algorithm,
+                    "reason": format!("{:?}", input.reason),
+                    "actor_id": input.actor_id,
+                    "new_version": new_entity.version
+                })),
+            )
+            .await?;
 
         Ok(new_entity)
     }
