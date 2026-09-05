@@ -6,7 +6,7 @@
 
     "**/.git": true,
     "**/.gitattributes": true,
-    // "**/.gitignore": true,
+    "**/.gitignore": true,
     "**/.github": true,
     "**/.dockerignore": true,
 
@@ -19,7 +19,8 @@
     "**/out": true,
     "**/docs": true,
     "**/scripts": true,
-    "**/secrets": true
+    "**/secrets": true,
+    "**/ceremony": true
   },
   "search.exclude": {
     "**/target": true,
