@@ -105,10 +105,12 @@ impl VhsmClient {
             HsmResponse::StatusInfo {
                 active_key_version, ..
             } => Ok(active_key_version),
-            HsmResponse::Error { message, .. } => {
-                Err(AppError::crypto_error(format!("vHSM status error: {message}")))
-            }
-            _ => Err(AppError::crypto_error("Nieoczekiwana odpowiedź vHSM dla status")),
+            HsmResponse::Error { message, .. } => Err(AppError::crypto_error(format!(
+                "vHSM status error: {message}"
+            ))),
+            _ => Err(AppError::crypto_error(
+                "Nieoczekiwana odpowiedź vHSM dla status",
+            )),
         }
     }
 

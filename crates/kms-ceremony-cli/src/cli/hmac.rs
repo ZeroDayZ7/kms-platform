@@ -101,6 +101,12 @@ pub fn build_signed_request_headers_with_body(
             HeaderName::from_static("x-body-sha256"),
             HeaderValue::from_str(hash)?,
         );
+        // When body is present, the request will have a JSON payload.
+        // Ensure Content-Type is set so the server accepts the request.
+        headers.insert(
+            HeaderName::from_static("content-type"),
+            HeaderValue::from_static("application/json"),
+        );
     }
 
     Ok(headers)

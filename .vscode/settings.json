@@ -16,7 +16,7 @@
     "**/README.md": true,
     "**/SECURITY.md": true,
 
-    "**/out": true,
+    // "**/out": true,
     "**/docs": true,
     "**/scripts": true,
     "**/secrets": true,
