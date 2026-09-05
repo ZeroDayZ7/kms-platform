@@ -1,6 +1,9 @@
 use async_trait::async_trait;
 use kms_core::audit::{AuditHashInput, compute_audit_hash};
-use kms_db::{PgPool, repositories::{AuditInsert, AuditQueries}};
+use kms_db::{
+    PgPool,
+    repositories::{AuditInsert, AuditQueries},
+};
 
 use crate::{
     domain::audit::{models::AuditLog, repository::AuditRepository},

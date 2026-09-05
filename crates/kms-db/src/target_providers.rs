@@ -1,5 +1,5 @@
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::Utc;
 use rand::Rng;
 use rand::distributions::Alphanumeric;
@@ -50,7 +50,9 @@ impl PostgresDdlExecutor {
             Some(quote_sql_identifier(role.trim()))
         };
 
-        let expiry = (Utc::now() + chrono::Duration::seconds(ttl_seconds)).format("%Y-%m-%d %H:%M:%S%.6f%z").to_string();
+        let expiry = (Utc::now() + chrono::Duration::seconds(ttl_seconds))
+            .format("%Y-%m-%d %H:%M:%S%.6f%z")
+            .to_string();
         let create_sql = format!(
             "CREATE USER {} WITH PASSWORD '{}' VALID UNTIL '{}' INHERIT;",
             safe_username, safe_password, expiry

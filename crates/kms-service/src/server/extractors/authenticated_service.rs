@@ -67,6 +67,13 @@ impl FromRequestParts<AppState> for AuthenticatedService {
             .or_else(|| parts.headers.get("x-nonce"))
             .and_then(|v| v.to_str().ok());
 
+        let request_id = parts
+            .headers
+            .get("X-Request-ID")
+            .or_else(|| parts.headers.get("x-request-id"))
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+
         let body_hash = parts
             .headers
             .get("X-Body-SHA256")
@@ -125,8 +132,10 @@ impl FromRequestParts<AppState> for AuthenticatedService {
             != 1
         {
             error!(
-                "❌ Podpisy HMAC NIE są zgodne! Otrzymano: {}, oczekiwano: {}",
-                signature_hex, expected_signature
+                service_id = %service_name,
+                nonce = %nonce_value,
+                request_id = request_id.as_deref(),
+                "HMAC verification failed"
             );
             return Err(AppError::Unauthorized);
         }

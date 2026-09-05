@@ -1,4 +1,4 @@
-use crate::cli::hmac::{build_signed_request_headers, resolve_cli_config};
+use crate::cli::hmac::{build_signed_request_headers_with_body, resolve_cli_config};
 use anyhow::{Context, Result, bail};
 use dialoguer::Password;
 use kms_core::crypto::aes::decrypt_bytes_with_argon2_raw;
@@ -125,7 +125,6 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
     let cfg = resolve_cli_config(service_url)?;
     let client = Client::new();
     let path = "/api/v1/admin/bootstrap/import";
-    let headers = build_signed_request_headers(&cfg, "POST", path)?;
 
     // Budujemy pełny payload zawierający target_resources
     let payload = PostPayload {
@@ -133,13 +132,16 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
         target_resources: &bootstrap.target_resources,
         credentials: &bootstrap.credentials,
     };
+    let request_body =
+        serde_json::to_vec(&payload).context("Failed to serialize bootstrap payload")?;
+    let headers = build_signed_request_headers_with_body(&cfg, "POST", path, Some(&request_body))?;
 
     let url = format!("{}{}", cfg.service_url.trim_end_matches('/'), path);
 
     let req = client
         .post(&url)
         .headers(headers)
-        .json(&payload)
+        .body(request_body)
         .build()
         .context("Failed to build request")?;
 

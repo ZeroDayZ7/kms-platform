@@ -1,5 +1,8 @@
 use chrono::{DateTime, Utc};
-use kms_db::{PgPool, repositories::{KeyDbRow, KeyQueries}};
+use kms_db::{
+    PgPool,
+    repositories::{KeyDbRow, KeyQueries},
+};
 use uuid::Uuid;
 
 use crate::{

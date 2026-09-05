@@ -147,7 +147,56 @@ mod tests {
         let body = br#"{"key":"value"}"#;
         assert_eq!(
             sha256_hex(body),
-            "d5ac9b3bd038f6bd6f7d8c7f317e3e784f5a8bf6c66f7fca0d57032966e0a7eb"
+            "e43abcf3375244839c012f9633f95862d232a95b00d5bc7348b3098b9fed7f32"
+        );
+    }
+
+    #[test]
+    fn signed_headers_match_body_hash_for_post_requests() {
+        let cfg = CliConfig {
+            service_id: "kms-cli".to_string(),
+            secret: "secret".to_string(),
+            service_url: "http://localhost:8081".to_string(),
+        };
+        let body = br#"{"version":1,"target_resources":[],"credentials":[]}"#;
+
+        let headers = build_signed_request_headers_with_body(
+            &cfg,
+            "POST",
+            "/api/v1/admin/bootstrap/import",
+            Some(body),
+        )
+        .expect("signed headers should be built");
+
+        let timestamp = headers
+            .get("x-timestamp")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok())
+            .expect("x-timestamp header should exist");
+        let nonce = headers
+            .get("x-nonce")
+            .and_then(|v| v.to_str().ok())
+            .expect("x-nonce header should exist");
+        let body_hash = headers
+            .get("x-body-sha256")
+            .and_then(|v| v.to_str().ok())
+            .expect("x-body-sha256 header should exist");
+        let signature = headers
+            .get("x-signature")
+            .and_then(|v| v.to_str().ok())
+            .expect("x-signature header should exist");
+
+        assert_eq!(body_hash, sha256_hex(body));
+        assert_eq!(
+            signature,
+            sign_hmac_sha256(
+                &cfg.secret,
+                "POST",
+                "/api/v1/admin/bootstrap/import",
+                timestamp,
+                Some(nonce),
+                Some(body_hash)
+            )
         );
     }
 }

@@ -72,7 +72,7 @@ pub async fn import_bootstrap(
         match serde_json::from_value::<BootstrapCredentialRecord>(v.clone()) {
             Ok(rec) => cred_records.push(rec),
             Err(err) => {
-                error!(index = idx, raw_json = %v, error = %err, "Failed to deserialize bootstrap credential record");
+                error!(index = idx, error = %err, record_type = "credential", "Failed to deserialize bootstrap credential record");
                 return Err(AppError::ValidationError(format!(
                     "Invalid credential record schema at index {}: {}",
                     idx, err
@@ -104,7 +104,7 @@ pub async fn import_bootstrap(
         match serde_json::from_value::<TargetResourceRecord>(v.clone()) {
             Ok(rec) => target_records.push(rec),
             Err(err) => {
-                error!(index = idx, raw_json = %v, error = %err, "Failed to deserialize target_resource record");
+                error!(index = idx, error = %err, record_type = "target_resource", "Failed to deserialize target_resource record");
                 return Err(AppError::ValidationError(format!(
                     "Invalid target_resource record schema at index {}: {}",
                     idx, err
@@ -180,10 +180,9 @@ pub async fn import_bootstrap(
             )));
         }
 
-        let kek_row: Option<Uuid> =
-            BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id)
-                .await
-                .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        let kek_row: Option<Uuid> = BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id)
+            .await
+            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
 
         let kek_id = match kek_row {
             Some(id) => id,

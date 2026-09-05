@@ -1,6 +1,9 @@
 use chrono::{DateTime, Utc};
 use kms_core::audit::{AuditHashInput, compute_audit_hash};
-use kms_db::{Postgres, Transaction, repositories::{AuditQueries, CredentialQueries}};
+use kms_db::{
+    Postgres, Transaction,
+    repositories::{AuditQueries, CredentialQueries},
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -121,9 +124,12 @@ impl IssueAgentCredentialUseCase {
         .await?;
 
         // 3. Pobranie connection string admina dla docelowej bazy
-        let target_row: Option<(Uuid, Vec<u8>)> = CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
-            .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        let target_row: Option<(Uuid, Vec<u8>)> =
+            CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
+                .await
+                .map_err(|err| {
+                    AppError::DatabaseError(format!("Database operation failed: {err}"))
+                })?;
 
         let (target_id, conn_encrypted) = match target_row {
             Some(v) => v,
@@ -152,11 +158,10 @@ impl IssueAgentCredentialUseCase {
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
         // 4. Rozpoczęcie transakcji SQL w KMS
-        let mut tx: Transaction<'_, Postgres> = state
-            .db
-            .begin()
-            .await
-            .map_err(|err| AppError::DatabaseError(format!("Database operation failed: {err}")))?;
+        let mut tx: Transaction<'_, Postgres> =
+            state.db.begin().await.map_err(|err| {
+                AppError::DatabaseError(format!("Database operation failed: {err}"))
+            })?;
         // 4.1 Unieważnienie starych, aktywnych poświadczeń dla tego caller
         CredentialQueries::revoke_active_credentials_for_target(
             &mut tx,
