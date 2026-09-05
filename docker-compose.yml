@@ -1,3 +1,5 @@
+# cmdr: docker-compose.yml
+
 x-common-healthcheck: &common-healthcheck
   interval: 180s
   timeout: 5s

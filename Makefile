@@ -71,7 +71,6 @@ migrate:
 migrate-dev:
 	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm kms-migrate cargo run -p kms-migrate -- run
 	
-
 tools:
 	docker compose --profile tools build kms-ceremony-cli
 
