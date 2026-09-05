@@ -51,6 +51,7 @@ impl AuditRepository for PgAuditRepository {
             operation_id: log.operation_id.as_deref(),
             target_id: log.target_id.as_deref(),
             metadata: log.metadata.as_deref(),
+            hash_version: &log.hash_version,
         });
 
         AuditQueries::insert(

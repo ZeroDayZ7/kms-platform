@@ -46,6 +46,7 @@ where
             algorithm,
             status: entry.status,
             reason: reason.or(entry.reason),
+            hash_version: "v1".to_string(),
             request_id: entry.request_id,
             operation_id: entry.operation_id,
             target_id: entry.target_id,

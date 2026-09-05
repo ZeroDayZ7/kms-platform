@@ -146,8 +146,24 @@ where
 
         // If compromised or manual deactivation, ensure we atomically remove all cached versions
         match input.reason {
-            RotationReason::Compromised => self.key_cache.remove_all_for_service(&input.service_id),
-            _ => self.key_cache.remove(&input.service_id, input.algorithm),
+            RotationReason::Compromised => {
+                tracing::info!(
+                    service_id = %input.service_id,
+                    algorithm = ?input.algorithm,
+                    reason = ?input.reason,
+                    "Invalidating key cache for compromised rotation"
+                );
+                self.key_cache.remove_all_for_service(&input.service_id);
+            }
+            _ => {
+                tracing::info!(
+                    service_id = %input.service_id,
+                    algorithm = ?input.algorithm,
+                    reason = ?input.reason,
+                    "Invalidating key cache for routine rotation"
+                );
+                self.key_cache.remove(&input.service_id, input.algorithm);
+            }
         }
 
         self.audit_service

@@ -51,6 +51,7 @@ pub struct AuditLog {
     pub algorithm: KeyAlgorithm,
     pub status: AuditStatus,
     pub reason: Option<String>,
+    pub hash_version: String,
     pub request_id: Option<String>,
     pub operation_id: Option<String>,
     pub target_id: Option<String>,
@@ -77,6 +78,7 @@ pub struct NewAuditLog {
     pub status: AuditStatus,
     pub reason: Option<String>,
     pub prev_hash: Option<String>,
+    pub hash_version: String,
     pub request_id: Option<String>,
     pub operation_id: Option<String>,
     pub target_id: Option<String>,
@@ -180,6 +182,10 @@ impl CanonicalAuditEntry {
         map.insert(
             "operation_id".to_string(),
             Value::String(self.operation_id.clone().unwrap_or_default()),
+        );
+        map.insert(
+            "hash_version".to_string(),
+            Value::String("v1".to_string()),
         );
         map.insert(
             "prev_hash".to_string(),

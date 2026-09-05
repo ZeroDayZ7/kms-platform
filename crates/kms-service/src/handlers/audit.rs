@@ -142,6 +142,7 @@ pub async fn verify_audit_handler(
             operation_id: rec.operation_id.as_deref(),
             target_id: rec.target_id.as_deref(),
             metadata: rec.metadata.as_deref(),
+            hash_version: "v1",
         });
 
         if computed != rec.hash {

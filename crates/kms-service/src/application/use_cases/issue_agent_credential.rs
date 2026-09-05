@@ -54,14 +54,14 @@ impl ProvisioningStatus {
     }
 
     pub fn can_transition_to(self, next: Self) -> bool {
-        match (self, next) {
-            (Self::Pending, Self::Provisioning) => true,
-            (Self::Provisioning, Self::Active) => true,
-            (Self::Provisioning, Self::Failed) => true,
-            (Self::Active, Self::Revoking) => true,
-            (Self::Failed, Self::Revoking) => true,
-            _ => false,
-        }
+        matches!(
+            (self, next),
+            (Self::Pending, Self::Provisioning)
+                | (Self::Provisioning, Self::Active)
+                | (Self::Provisioning, Self::Failed)
+                | (Self::Active, Self::Revoking)
+                | (Self::Failed, Self::Revoking)
+        )
     }
 }
 
@@ -441,6 +441,7 @@ pub async fn insert_audit_log_tx(
         operation_id: None,
         target_id: Some(&credential_id.to_string()),
         metadata: Some("credential_provisioned"),
+        hash_version: kms_core::audit::CURRENT_AUDIT_HASH_VERSION,
     });
 
     AuditQueries::insert_tx(

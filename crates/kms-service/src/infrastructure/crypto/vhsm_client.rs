@@ -1,8 +1,8 @@
 use crate::errors::{AppError, AppResult};
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
-#[derive(Clone)]
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct VhsmClient {
     socket_path: String,
     timeout_secs: u64,

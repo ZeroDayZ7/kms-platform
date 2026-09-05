@@ -112,6 +112,7 @@ dev:
 # Zatrzymanie deweloperskie
 dev-down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+# 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
 
 # Standardowe uruchomienie produkcyjne (stary Dockerfile)
 prod:

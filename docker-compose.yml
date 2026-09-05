@@ -195,11 +195,13 @@ secrets:
 # region NETWORKS
 networks:
   kms-internal-net:
-    driver: bridge
-    internal: false
+    name: kms_internal_net
+    external: true
+
   sec-net:
-    name: kms_sec-net
-    driver: bridge
+    name: kms_sec_net
+    external: true
+
   target-admin-net:
-    name: kms_target-admin-net
-    driver: bridge
+    name: kms_target_admin_net
+    external: true

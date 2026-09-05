@@ -273,6 +273,7 @@ pub async fn import_bootstrap(
         operation_id: None,
         target_id: None,
         metadata: Some("bootstrap_import_v2"),
+        hash_version: kms_core::audit::CURRENT_AUDIT_HASH_VERSION,
     });
 
     AuditQueries::insert_tx(
