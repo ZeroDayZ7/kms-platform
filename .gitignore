@@ -3,6 +3,7 @@
 debug/
 target/
 secrets/*
+/ceremony
 !secrets/README.md
 # out/
 **/combined.txt

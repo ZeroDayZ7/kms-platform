@@ -17,6 +17,9 @@ pub fn router(state: AppState) -> Router {
         middleware::redis_rate_limit_middleware,
     );
 
+    let hmac_mw =
+        axum::middleware::from_fn_with_state(state.clone(), middleware::hmac_security_middleware);
+
     let enable_rewrap = state.settings.crypto.enable_http_rewrap;
 
     let mut router = Router::new()
@@ -92,6 +95,7 @@ pub fn router(state: AppState) -> Router {
 
     router
         .route_layer(rate_limits.global.clone())
+        .layer(hmac_mw)
         .layer(redis_mw)
         .layer(security)
         .layer(cors)

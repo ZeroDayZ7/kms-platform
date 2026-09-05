@@ -9,26 +9,37 @@ pub use crate::domain::crypto::{EncryptedPrivateKey, KeyAlgorithm, KeyPurpose, S
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ServiceId(pub String);
 
-impl fmt::Display for ServiceId {
-    //#region fmt
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TargetId(pub String);
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct CredentialId(pub String);
+
+macro_rules! impl_id_display_and_from {
+    ($type:ty) => {
+        impl fmt::Display for $type {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str(&self.0)
+            }
+        }
+
+        impl From<&str> for $type {
+            fn from(s: &str) -> Self {
+                Self(s.to_string())
+            }
+        }
+
+        impl From<String> for $type {
+            fn from(s: String) -> Self {
+                Self(s)
+            }
+        }
+    };
 }
 
-impl From<&str> for ServiceId {
-    //#region from
-    fn from(s: &str) -> Self {
-        Self(s.to_string())
-    }
-}
-
-impl From<String> for ServiceId {
-    //#region from
-    fn from(s: String) -> Self {
-        Self(s)
-    }
-}
+impl_id_display_and_from!(ServiceId);
+impl_id_display_and_from!(TargetId);
+impl_id_display_and_from!(CredentialId);
 
 #[derive(ZeroizeOnDrop)]
 pub struct RawKeyPair {

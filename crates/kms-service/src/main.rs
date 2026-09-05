@@ -74,6 +74,7 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                     algorithm: KeyAlgorithm::AES256GCM,
                     status: AuditStatus::Success,
                     reason: Some("service startup initialized".to_string()),
+                    hash_version: "v1".to_string(),
                     request_id: Some(uuid::Uuid::new_v4().to_string()),
                     operation_id: Some(uuid::Uuid::new_v4().to_string()),
                     target_id: Some("instance".to_string()),

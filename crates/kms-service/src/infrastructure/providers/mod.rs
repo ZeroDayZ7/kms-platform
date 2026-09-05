@@ -5,12 +5,13 @@ pub mod rabbitmq;
 
 use crate::errors::AppError;
 use async_trait::async_trait;
+use zeroize::Zeroizing;
 
 pub use factory::ProviderFactory;
 
 pub struct GeneratedCredential {
     pub username: String,
-    pub secret: String,
+    pub secret: Zeroizing<String>,
     pub ttl_seconds: i64,
 }
 

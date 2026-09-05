@@ -85,6 +85,56 @@ impl Zeroize for SecretBytes {
     }
 }
 
+#[derive(Clone, ZeroizeOnDrop, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0.clone()
+    }
+}
+
+impl From<String> for SecretString {
+    fn from(value: String) -> Self {
+        Self::new(value)
+    }
+}
+
+impl From<&str> for SecretString {
+    fn from(value: &str) -> Self {
+        Self::new(value.to_string())
+    }
+}
+
+impl fmt::Display for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("SecretString(\"")?;
+        f.write_str("[REDACTED]")?;
+        f.write_str("\")")
+    }
+}
+
+impl Zeroize for SecretString {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
 #[derive(ZeroizeOnDrop)]
 pub struct RawKeyPair {
     pub public_key_pem: String,
@@ -104,4 +154,23 @@ pub trait KmsCryptoService: Send + Sync {
     async fn decrypt_private_key(&self, encrypted: &EncryptedPrivateKey) -> AppResult<Vec<u8>>;
     //#region current_master_key_version
     async fn current_master_key_version(&self) -> AppResult<i32>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secret_values_are_redacted_in_debug_output() {
+        let secret_bytes = SecretBytes::new(b"super-secret-bytes".to_vec());
+        let secret_string = SecretString::new("super-secret-string".to_string());
+
+        let bytes_debug = format!("{secret_bytes:?}");
+        let string_debug = format!("{secret_string:?}");
+
+        assert!(!bytes_debug.contains("super-secret-bytes"));
+        assert!(!string_debug.contains("super-secret-string"));
+        assert!(bytes_debug.contains("[REDACTED]"));
+        assert!(string_debug.contains("[REDACTED]"));
+    }
 }

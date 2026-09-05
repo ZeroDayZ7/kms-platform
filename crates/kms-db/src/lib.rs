@@ -1,6 +1,11 @@
 // crates/kms-db/src/lib.rs
+pub mod repositories;
+pub mod target_providers;
+
+pub use sqlx::{PgPool, Postgres, Transaction};
+
 use serde::Deserialize;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::postgres::PgPoolOptions;
 use std::error::Error;
 use std::fmt;
 use zeroize::Zeroizing;

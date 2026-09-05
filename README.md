@@ -1,33 +1,100 @@
 # KMS Platform
 
-A Rust-based mono-repo Key Management System built to stop keys from floating around as plaintext in configurations and databases. Powered by microservices, vHSM isolation, and Shamir's ceremonies.
+Rust-based Key Management System for managing cryptographic keys, credentials and key lifecycle without keeping master keys in application configuration or databases.
 
-<p align="center">
-  <img src="docs/assets/banner.png" alt="KMS Platform Architecture" />
-</p>
+KMS is built as a microservice platform with an isolated vHSM and Shamir's Secret Sharing ceremonies.
 
-## Workspace Layout
+## Workspace
 
-| Component              | Role        | What it does                                                                              |
-| :--------------------- | :---------- | :---------------------------------------------------------------------------------------- |
-| **`kms-core`**         | Library     | Shared models, SSS (Shamir's Secret Sharing), IPC protocol, and cryptographic primitives. |
-| **`kms-service`**      | API Service | Lifecycle management for DEK/KEK, key rotation, and versioning.                           |
-| **`vhsm-daemon`**      | vHSM Daemon | Isolated process holding the master key strictly in RAM; handles IPC over sockets.        |
-| **`kms-ceremony-cli`** | CLI Utility | Executes key split ceremonies and generates operator shares.                              |
+| Component              | Role           | Description                                                                              |
+| ---------------------- | -------------- | ---------------------------------------------------------------------------------------- |
+| **`kms-core`**         | Library        | Shared domain models, cryptography, Shamir's Secret Sharing and IPC protocol.            |
+| **`kms-db`**           | Library        | Database access and repositories used by KMS services.                                   |
+| **`kms-service`**      | API Service    | Manages keys, KEKs, DEKs, credentials, rotation and key versions.                        |
+| **`kms-migrate`**      | Migration Tool | Applies database migrations and exits.                                                   |
+| **`vhsm-daemon`**      | vHSM           | Isolated process that keeps the master key in RAM and performs cryptographic operations. |
+| **`kms-ceremony-cli`** | CLI            | Performs key ceremonies, unlocks the vHSM and manages bootstrap operations.              |
 
----
+## Architecture
 
-## Architecture & Security
+The system separates key management from applications that use the keys.
 
-- **Master Key Providers:**
-  - **`local`**: Dev/standalone mode (direct access to the key within the service).(deprecated)
-  - **`hsm`**: Zero-trust mode. `kms-service` has zero knowledge of the master key; every cryptographic operation is delegated via Unix Socket to `vhsm-daemon`.
+- `kms-service` does not directly hold the master key when running in HSM mode.
+- `vhsm-daemon` keeps the master key in RAM and performs operations requiring it.
+- Communication with the vHSM uses a Unix socket and a length-prefixed IPC protocol.
+- Cryptographic keys are stored in encrypted/wrapped form rather than as plaintext master keys.
+- Key versions and lifecycle are managed by KMS.
+- Sensitive credentials can be provisioned and rotated through KMS.
+- Audit records are maintained for security-sensitive operations.
 
-- **Virtual HSM (vHSM):**
-  - Runs as an isolated process with memory sandboxing.
-  - Binary communication based on a length-prefixed protocol (4-byte big-endian header).
-  - Zero disk persistence for the root key; requires a formal ceremony unlock sequence.
+## Master Key
 
-- **Shamir's Secret Sharing (SSS) Ceremony:**
-  - The root master key is generated and split into $N$ shares with an $M$-of-$N$ threshold requirement.
-  - Unlocking the `vhsm-daemon` requires submitting the required number of valid, decrypted-on-the-fly shares via the CLI.
+The master key is protected by the vHSM.
+
+The key is generated during a ceremony and split using **Shamir's Secret Sharing** into `N` shares with an `M-of-N` threshold.
+
+The vHSM is unlocked by providing the required number of valid shares through `kms-ceremony-cli`.
+
+The master key is not persisted to disk by the vHSM.
+
+## Startup Sequence
+
+After starting the platform, the initialization order is:
+
+1. **Migrate** — apply the database migrations.
+2. **Unlock** — unlock the vHSM using the required Shamir shares.
+3. **Bootstrap** — import the initial encrypted credentials and resources into KMS.
+
+The development equivalents are:
+
+```bash
+make migrate-dev
+make unlock-dev
+make bootstrap-dev
+```
+
+For the standard environment:
+
+```bash
+make migrate
+make unlock
+make bootstrap
+```
+
+## Development
+
+The development environment uses Docker Compose with Rust `cargo run` and shared persistent Docker networks.
+
+```bash
+make dev
+```
+
+Development shutdown:
+
+```bash
+make dev-down
+```
+
+The development shutdown removes Compose-managed volumes but leaves the shared external Docker networks intact.
+
+## Security Model
+
+The main security boundary is the separation between:
+
+```text
+Application
+    │
+    ▼
+kms-service
+    │
+    │ IPC
+    ▼
+vhsm-daemon
+    │
+    ▼
+Master Key
+```
+
+The master key is therefore not required to be present in the KMS service configuration, database or application environment.
+
+Operator access to the master key is controlled through the Shamir ceremony.

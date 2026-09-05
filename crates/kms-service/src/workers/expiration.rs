@@ -64,6 +64,7 @@ where
             reason: AuditLog::sanitize_reason(Some(
                 "Deprecated period expired; key expired automatically",
             )),
+            hash_version: "v1".to_string(),
             request_id: None,
             operation_id: None,
             target_id: Some(key.id.to_string()),

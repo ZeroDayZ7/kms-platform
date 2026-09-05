@@ -10,7 +10,10 @@ use crate::{
         GenerateDataKeyInput, GenerateKeyPairInput, GetPublicKeyInput, GetSymmetricKeyInput,
         RotateKeyInput,
     },
-    domain::keys::models::{KeyAlgorithm, KeyPurpose, KeyStatus, RotationReason, ServiceId},
+    domain::{
+        audit::models::RequestContext,
+        keys::models::{KeyAlgorithm, KeyPurpose, KeyStatus, RotationReason, ServiceId},
+    },
     errors::{AppError, AppResult},
     server::{extractors::authenticated_service::AuthenticatedService, state::AppState},
 };
@@ -77,6 +80,13 @@ pub async fn generate_key_handler(
     AuthenticatedService(_caller): AuthenticatedService,
     Json(payload): Json<GenerateKeyRequest>,
 ) -> AppResult<Json<KeyPairResponse>> {
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: _caller.clone(),
+        ip: None,
+        user_agent: None,
+    };
     let input = GenerateKeyPairInput {
         caller_service: _caller.clone(),
         service_id: ServiceId(payload.service_id),
@@ -84,7 +94,11 @@ pub async fn generate_key_handler(
         purpose: payload.purpose,
     };
 
-    let entity = state.use_cases.generate_key_pair.execute(input).await?;
+    let entity = state
+        .use_cases
+        .generate_key_pair
+        .execute(&request_ctx, input)
+        .await?;
 
     Ok(Json(KeyPairResponse {
         id: entity.id.to_string(),
@@ -103,13 +117,23 @@ pub async fn generate_data_key_handler(
     AuthenticatedService(caller_service): AuthenticatedService,
     Json(payload): Json<GenerateDataKeyRequest>,
 ) -> AppResult<Json<GenerateDataKeyResponse>> {
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: caller_service.clone(),
+        ip: None,
+        user_agent: None,
+    };
     let output = state
         .use_cases
         .generate_data_key
-        .execute(GenerateDataKeyInput {
-            caller_service: caller_service.clone(),
-            algorithm: payload.algorithm,
-        })
+        .execute(
+            &request_ctx,
+            GenerateDataKeyInput {
+                caller_service: caller_service.clone(),
+                algorithm: payload.algorithm,
+            },
+        )
         .await?;
 
     Ok(Json(GenerateDataKeyResponse {
@@ -125,12 +149,23 @@ pub async fn get_public_key_handler(
     AuthenticatedService(_caller): AuthenticatedService,
     Path((service_id, algorithm)): Path<(String, KeyAlgorithm)>,
 ) -> AppResult<Json<KeyPairResponse>> {
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: _caller.clone(),
+        ip: None,
+        user_agent: None,
+    };
     let input = GetPublicKeyInput {
         service_id: ServiceId(service_id),
         algorithm,
     };
 
-    let entity = state.use_cases.get_public_key.execute(input).await?;
+    let entity = state
+        .use_cases
+        .get_public_key
+        .execute(&request_ctx, input)
+        .await?;
 
     Ok(Json(KeyPairResponse {
         id: entity.id.to_string(),
@@ -149,6 +184,13 @@ pub async fn rotate_key_handler(
     AuthenticatedService(caller_service): AuthenticatedService,
     Json(payload): Json<RotateKeyRequest>,
 ) -> AppResult<Json<KeyPairResponse>> {
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: caller_service.clone(),
+        ip: None,
+        user_agent: None,
+    };
     let input = RotateKeyInput {
         service_id: ServiceId(payload.service_id),
         caller_service,
@@ -157,7 +199,11 @@ pub async fn rotate_key_handler(
         actor_id: payload.actor_id,
     };
 
-    let entity = state.use_cases.rotate_key.execute(input).await?;
+    let entity = state
+        .use_cases
+        .rotate_key
+        .execute(&request_ctx, input)
+        .await?;
 
     Ok(Json(KeyPairResponse {
         id: entity.id.to_string(),
@@ -242,13 +288,24 @@ pub async fn get_symmetric_key_handler(
     AuthenticatedService(caller_service): AuthenticatedService,
     Json(payload): Json<GetSymmetricKeyRequest>,
 ) -> AppResult<Json<SymmetricKeyResponse>> {
+    let request_ctx = RequestContext {
+        operation_id: uuid::Uuid::now_v7().to_string(),
+        nonce: None,
+        actor_id: caller_service.clone(),
+        ip: None,
+        user_agent: None,
+    };
     let input = GetSymmetricKeyInput {
         caller_service,
         target_service: ServiceId(payload.service_id),
         algorithm: payload.algorithm,
     };
 
-    let output = state.use_cases.get_symmetric_key.execute(input).await?;
+    let output = state
+        .use_cases
+        .get_symmetric_key
+        .execute(&request_ctx, input)
+        .await?;
 
     Ok(Json(SymmetricKeyResponse {
         service_id: output.service_id.0,

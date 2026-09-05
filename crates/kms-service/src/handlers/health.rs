@@ -1,5 +1,6 @@
 use crate::server::state::AppState;
 use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
+use kms_db::repositories::DatabaseHealth;
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::timeout;
@@ -16,10 +17,7 @@ pub async fn health(State(state): State<AppState>) -> impl IntoResponse {
     let check_timeout = Duration::from_secs(2);
 
     let db_res = timeout(check_timeout, async {
-        sqlx::query("SELECT 1")
-            .fetch_one(&state.db)
-            .await
-            .map(|_| ())
+        DatabaseHealth::ping(&state.db).await
     })
     .await;
 

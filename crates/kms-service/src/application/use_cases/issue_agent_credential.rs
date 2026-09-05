@@ -1,7 +1,10 @@
 use chrono::{DateTime, Utc};
 use kms_core::audit::{AuditHashInput, compute_audit_hash};
+use kms_db::{
+    Postgres, Transaction,
+    repositories::{AuditQueries, CredentialQueries},
+};
 use serde::{Deserialize, Serialize};
-use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::{
@@ -28,6 +31,38 @@ pub struct IssueAgentCredentialInput {
     pub target_type: String,
     pub resource: String,
     pub ttl_seconds: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProvisioningStatus {
+    Pending,
+    Provisioning,
+    Active,
+    Failed,
+    Revoking,
+}
+
+impl ProvisioningStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "PENDING",
+            Self::Provisioning => "PROVISIONING",
+            Self::Active => "ACTIVE",
+            Self::Failed => "FAILED",
+            Self::Revoking => "REVOKING",
+        }
+    }
+
+    pub fn can_transition_to(self, next: Self) -> bool {
+        matches!(
+            (self, next),
+            (Self::Pending, Self::Provisioning)
+                | (Self::Provisioning, Self::Active)
+                | (Self::Provisioning, Self::Failed)
+                | (Self::Active, Self::Revoking)
+                | (Self::Failed, Self::Revoking)
+        )
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -108,7 +143,14 @@ impl IssueAgentCredentialUseCase {
         Self::validate_acl(state, &input)?;
 
         // 2. Generowanie poświadczeń przez vHSM
-        let kek_id = fetch_latest_kek_id(&state.db, "kms-system").await?;
+        let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
         let username = build_generic_username(&input.caller_service, &input.target_service);
         let generated = generate_secure_credential(
             &state.crypto_service,
@@ -119,12 +161,15 @@ impl IssueAgentCredentialUseCase {
         .await?;
 
         // 3. Pobranie connection string admina dla docelowej bazy
-        let target_row: Option<(Uuid, Vec<u8>)> = sqlx::query_as(
-            "SELECT id, connection_url_encrypted FROM target_resources WHERE target_name = $1 AND active = true LIMIT 1",
-        )
-        .bind(&input.target_service)
-        .fetch_optional(&state.db)
-        .await?;
+        let target_row: Option<(Uuid, Vec<u8>)> =
+            CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
+                .await
+                .map_err(|err| {
+                    AppError::database_error_with_source(
+                        format!("Database operation failed: {err}"),
+                        err,
+                    )
+                })?;
 
         let (target_id, conn_encrypted) = match target_row {
             Some(v) => v,
@@ -141,35 +186,48 @@ impl IssueAgentCredentialUseCase {
             .decrypt_bytes(&conn_encrypted)
             .await
             .map_err(|e| {
-                AppError::CryptoError(format!("Failed to decrypt target connection string: {e}"))
+                AppError::crypto_error_with_source(
+                    format!("Failed to decrypt target connection string: {e}"),
+                    e,
+                )
             })?;
         let admin_conn = String::from_utf8(admin_conn_bytes).map_err(|_| {
-            AppError::CryptoError(
-                "Decrypted target connection string is not valid UTF-8".to_string(),
-            )
+            AppError::crypto_error("Decrypted target connection string is not valid UTF-8")
         })?;
 
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
         // 4. Rozpoczęcie transakcji SQL w KMS
-        let mut tx: Transaction<'_, Postgres> = state.db.begin().await?;
+        let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
         // 4.1 Unieważnienie starych, aktywnych poświadczeń dla tego caller
-        sqlx::query(
-            r#"
-            UPDATE provisioned_credentials
-            SET revoked = true
-            WHERE service_id = $1 
-              AND target_id = $2 
-              AND revoked = false
-            "#,
+        CredentialQueries::revoke_active_credentials_for_target(
+            &mut tx,
+            &input.caller_service,
+            target_id,
         )
-        .bind(&input.caller_service)
-        .bind(target_id)
-        .execute(&mut *tx)
+        .await
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
+
+        // 5. Zapis pośredniego rekordu lifecycle do KMS przed utworzeniem konta zewnętrznego
+        insert_provisioned_credential_tx(
+            &mut tx,
+            generated.credential_id,
+            &input.caller_service,
+            target_id,
+            &username,
+            &generated.encrypted_password,
+            &username,
+            expires_at,
+            ProvisioningStatus::Provisioning.as_str(),
+        )
         .await?;
 
-        // 5. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
+        // 6. Utworzenie użytkownika bezpośrednio u target providera (np. Postgres)
         let provider = state.provider_factory.get(&target_type_clean)?;
 
         let secret_bytes = BASE64
@@ -193,25 +251,26 @@ impl IssueAgentCredentialUseCase {
         let provider_credential = match provider_result {
             Ok(c) => c,
             Err(e) => {
+                let _ = update_provisioned_credential_status_tx(
+                    &mut tx,
+                    generated.credential_id,
+                    ProvisioningStatus::Failed.as_str(),
+                )
+                .await;
                 let _ = tx.rollback().await;
                 return Err(e);
             }
         };
 
-        // 6. Zapis dynamicznych poświadczeń wyłącznie w tabeli provisioned_credentials
-        insert_provisioned_credential_tx(
+        // 7. Zaaktualizowanie statusu po uzyskaniu aktywnego konta w target providera
+        update_provisioned_credential_status_tx(
             &mut tx,
             generated.credential_id,
-            &input.caller_service,
-            target_id,
-            &provider_credential.username,
-            &generated.encrypted_password,
-            &username,
-            expires_at,
+            ProvisioningStatus::Active.as_str(),
         )
         .await?;
 
-        // 7. Zapis wpisu audytowego
+        // 8. Zapis wpisu audytowego
         insert_audit_log_tx(
             &mut tx,
             &input.caller_service,
@@ -222,12 +281,11 @@ impl IssueAgentCredentialUseCase {
         )
         .await?;
 
-        // 8. Zatwierdzenie transakcji
+        // 9. Zatwierdzenie transakcji
         if let Err(commit_err) = tx.commit().await {
             let _ = provider
-                .revoke_user(&input.target_service, &provider_credential.username)
+                .revoke_user(&admin_conn, &provider_credential.username)
                 .await;
-
             return Err(AppError::Internal(format!(
                 "DB commit failed: {commit_err}"
             )));
@@ -248,26 +306,18 @@ pub fn build_generic_username(caller_service: &str, target_service: &str) -> Str
     format!("kms_{}_{}", caller_service, target_service)
 }
 
-pub async fn fetch_latest_kek_id(db: &sqlx::PgPool, target_service_id: &str) -> AppResult<Uuid> {
-    let kek_id = sqlx::query_scalar::<_, Uuid>(
-        r#"
-        SELECT id FROM keys 
-        WHERE service_id = $1 
-          AND is_active = true 
-          AND algorithm = 'AES256GCM'
-        ORDER BY version DESC 
-        LIMIT 1
-        "#,
-    )
-    .bind(target_service_id)
-    .fetch_optional(db)
-    .await?
-    .ok_or_else(|| {
-        AppError::KeyNotFound(format!(
-            "No active AES256GCM KEK found for {}",
-            target_service_id
-        ))
-    })?;
+pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -> AppResult<Uuid> {
+    let kek_id = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
+        .await
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?
+        .ok_or_else(|| {
+            AppError::KeyNotFound(format!(
+                "No active AES256GCM KEK found for {}",
+                target_service_id
+            ))
+        })?;
 
     Ok(kek_id)
 }
@@ -285,26 +335,28 @@ pub async fn generate_secure_credential(
         .generate_credential(length)
         .await
         .map_err(|e| {
-            AppError::CryptoError(format!("Failed to generate credential via vHSM: {e}"))
+            AppError::crypto_error_with_source(
+                format!("Failed to generate credential via vHSM: {e}"),
+                e,
+            )
         })?;
 
     if wrapped_password.len() < 12 {
-        return Err(AppError::CryptoError(
-            "Wrapped password payload too short (missing nonce)".to_string(),
+        return Err(AppError::crypto_error(
+            "Wrapped password payload too short (missing nonce)",
         ));
     }
     let nonce = wrapped_password[..12].to_vec();
 
     let id_bytes = hex::decode(&credential_id)
-        .map_err(|_| AppError::CryptoError("Invalid credential id format from vHSM".to_string()))?;
+        .map_err(|_| AppError::crypto_error("Invalid credential id format from vHSM"))?;
     if id_bytes.len() != 16 {
-        return Err(AppError::CryptoError(
-            "Credential id from vHSM has invalid length".to_string(),
+        return Err(AppError::crypto_error(
+            "Credential id from vHSM has invalid length",
         ));
     }
-    let uuid = Uuid::from_slice(&id_bytes).map_err(|_| {
-        AppError::CryptoError("Failed to parse credential id into UUID".to_string())
-    })?;
+    let uuid = Uuid::from_slice(&id_bytes)
+        .map_err(|_| AppError::crypto_error("Failed to parse credential id into UUID"))?;
 
     Ok(GeneratedCredentialBlob {
         credential_id: uuid,
@@ -327,25 +379,37 @@ pub async fn insert_provisioned_credential_tx(
     password_encrypted: &[u8],
     granted_role: &str,
     expires_at: DateTime<Utc>,
+    status: &str,
 ) -> AppResult<()> {
-    sqlx::query(
-        r#"
-        INSERT INTO provisioned_credentials
-            (id, service_id, target_id, username, password_encrypted, granted_role, expires_at, revoked, created_at)
-        VALUES
-            ($1, $2, $3, $4, $5, $6, $7, false, $8)
-        "#,
+    CredentialQueries::insert_provisioned_credential(
+        tx,
+        id,
+        service_id,
+        target_id,
+        username,
+        password_encrypted,
+        granted_role,
+        expires_at,
+        status,
     )
-    .bind(id)
-    .bind(service_id)
-    .bind(target_id)
-    .bind(username)
-    .bind(password_encrypted)
-    .bind(granted_role)
-    .bind(expires_at)
-    .bind(Utc::now())
-    .execute(&mut **tx)
-    .await?;
+    .await
+    .map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
+
+    Ok(())
+}
+
+pub async fn update_provisioned_credential_status_tx(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+    status: &str,
+) -> AppResult<()> {
+    CredentialQueries::update_provisioned_credential_status(tx, id, status)
+        .await
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
     Ok(())
 }
@@ -358,10 +422,9 @@ pub async fn insert_audit_log_tx(
     credential_id: &Uuid,
     timestamp: DateTime<Utc>,
 ) -> AppResult<()> {
-    let prev_hash_row: Option<String> =
-        sqlx::query_scalar("SELECT hash FROM audit_logs ORDER BY created_at DESC, id DESC LIMIT 1")
-            .fetch_optional(&mut **tx)
-            .await?;
+    let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx).await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
     let hash = compute_audit_hash(&AuditHashInput {
@@ -378,29 +441,33 @@ pub async fn insert_audit_log_tx(
         operation_id: None,
         target_id: Some(&credential_id.to_string()),
         metadata: Some("credential_provisioned"),
+        hash_version: kms_core::audit::CURRENT_AUDIT_HASH_VERSION,
     });
 
-    sqlx::query(
-        r#"
-        INSERT INTO audit_logs 
-            (id, caller_service, target_service, action, algorithm, status, reason, prev_hash, hash, signature, created_at) 
-        VALUES 
-            ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        "#,
+    AuditQueries::insert_tx(
+        tx,
+        kms_db::repositories::AuditInsert {
+            id: Uuid::new_v4(),
+            caller_service: caller_service.to_string(),
+            target_service: target_service.to_string(),
+            action: action.to_string(),
+            algorithm: "db-credentials".to_string(),
+            status: "Success".to_string(),
+            reason: Some("agent credential provisioned".to_string()),
+            prev_hash: prev_hash.to_string(),
+            hash,
+            signature: Some(Vec::<u8>::new()),
+            request_id: None,
+            operation_id: None,
+            target_id: Some(credential_id.to_string()),
+            metadata: Some("credential_provisioned".to_string()),
+            created_at: timestamp,
+        },
     )
-    .bind(Uuid::new_v4())
-    .bind(caller_service)
-    .bind(target_service)
-    .bind(action)
-    .bind("db-credentials")
-    .bind("Success")
-    .bind("agent credential provisioned")
-    .bind(prev_hash)
-    .bind(hash)
-    .bind(Vec::<u8>::new())
-    .bind(timestamp)
-    .execute(&mut **tx)
-    .await?;
+    .await
+    .map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     Ok(())
 }
@@ -408,6 +475,20 @@ pub async fn insert_audit_log_tx(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provisioning_status_transitions_are_explicit_and_safe() {
+        assert_eq!(ProvisioningStatus::Pending.as_str(), "PENDING");
+        assert_eq!(ProvisioningStatus::Provisioning.as_str(), "PROVISIONING");
+        assert_eq!(ProvisioningStatus::Active.as_str(), "ACTIVE");
+        assert_eq!(ProvisioningStatus::Failed.as_str(), "FAILED");
+        assert_eq!(ProvisioningStatus::Revoking.as_str(), "REVOKING");
+
+        assert!(ProvisioningStatus::Pending.can_transition_to(ProvisioningStatus::Provisioning));
+        assert!(ProvisioningStatus::Provisioning.can_transition_to(ProvisioningStatus::Active));
+        assert!(ProvisioningStatus::Active.can_transition_to(ProvisioningStatus::Revoking));
+        assert!(!ProvisioningStatus::Active.can_transition_to(ProvisioningStatus::Provisioning));
+    }
 
     #[test]
     fn validate_batch_acl_fails_fast_for_unauthorized_item() {

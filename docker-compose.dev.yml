@@ -1,3 +1,5 @@
+# cmdr: docker-compose.dev.yml
+
 services:
   # region POSTGRESQL
   postgres:
@@ -76,7 +78,7 @@ services:
       target: ""
     container_name: vhsm_daemon_dev
     entrypoint: []
-    command: cargo watch -x "run -p vhsm-daemon --bin vhsm-daemon"
+    command: cargo run -p vhsm-daemon --bin vhsm-daemon
     environment:
       - RUST_LOG=${LOG__LEVEL:-debug}
       - LOG__FORMAT=${LOG__FORMAT:-pretty}
@@ -98,7 +100,7 @@ services:
       dockerfile: Dockerfile.dev
       target: ""
     container_name: kms_service_dev
-    command: cargo watch -x "run -p kms-service -- serve"
+    command: cargo run -p kms-service -- serve
     ports:
       - "8081:8080"
     environment:
@@ -130,6 +132,7 @@ services:
         condition: service_healthy
       vhsm-daemon:
         condition: service_started
+
 # region VOLUMES
 volumes:
   cargo_cache:

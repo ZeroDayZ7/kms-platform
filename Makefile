@@ -1,6 +1,6 @@
 export LANG = pl_PL.UTF-8
 
-.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean init bootstrap setup-all dev dev-down prod unlock-dev bootstrap-dev migrate migrate-dev
+.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean init bootstrap setup-all dev dev-down prod unlock-dev bootstrap-dev migrate migrate-dev net-up net-down
 
 all: fmt check clippy test
 
@@ -18,13 +18,24 @@ clippy:
 test:
 	cargo test --workspace --all-targets --all-features
 
+# --- ZARZĄDZANIE SIECIAMI (STALE SIECI) ---
+net-up:
+	@docker network create kms_internal_net 2>/dev/null || true
+	@docker network create kms_sec_net 2>/dev/null || true
+	@docker network create kms_target_admin_net 2>/dev/null || true
+
+net-down:
+	@docker network rm kms_internal_net 2>/dev/null || true
+	@docker network rm kms_sec_net 2>/dev/null || true
+	@docker network rm kms_target_admin_net 2>/dev/null || true
+
 docker-down:
 	docker compose down -v
 
-docker-up:
+docker-up: net-up
 	docker compose up -d
 
-docker-rebuild:
+docker-rebuild: net-up
 	docker compose down -v
 	docker compose up -d --build --force-recreate
 
@@ -34,7 +45,7 @@ profile:
 clean:
 	cargo clean
 
-rebuild:
+rebuild: net-up
 	@echo "===> Czyszczenie starych kontenerów i wolumenów..."
 	docker compose --profile tools down -v --remove-orphans
 	@echo "===> Formatowanie kodu (cargo fmt)..."
@@ -71,7 +82,6 @@ migrate:
 migrate-dev:
 	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm kms-migrate cargo run -p kms-migrate -- run
 	
-
 tools:
 	docker compose --profile tools build kms-ceremony-cli
 
@@ -89,7 +99,7 @@ db-reset:
 	-docker volume ls -q -f name=postgres_data | xargs -r docker volume rm
 	docker compose up -d
 
-	# Domyślne wartości zmiennych (możesz je nadpisać przy wywołaniu)
+# Domyślne wartości zmiennych
 DB_CONTAINER ?= db_kms
 DB_USER      ?= kms_root_user
 DB_NAME      ?= kms_db
@@ -103,20 +113,21 @@ check-creds:
 	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, service_id, target_type, target_db, username, status FROM db_credentials;"
 
 # Uruchomienie z przebudowaniem obrazów (gdy zmieniasz zależności/Dockerfile)
-dev-build:
+dev-build: net-up
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
-# Szybkie uruchomienie (wykorzystuje istniejące kontenery i wolumeny do hot-reloadu)
-dev:
+# Szybkie uruchomienie (automatycznie tworzy trwałe sieci, jeśli nie istnieją)
+dev: net-up
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
-# Zatrzymanie deweloperskie
+# Zatrzymanie deweloperskie (czyści wolumeny dev, ale pozostawia trwałe sieci intact)
 dev-down:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+# 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 
-# Standardowe uruchomienie produkcyjne (stary Dockerfile)
-prod:
+# Standardowe uruchomienie produkcyjne
+prod: net-up
 	docker compose up --build
 
-dev-recreate:
+dev-recreate: net-up
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate kms-service

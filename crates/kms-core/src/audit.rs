@@ -4,6 +4,8 @@ use chrono::{DateTime, Utc};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 
+pub const CURRENT_AUDIT_HASH_VERSION: &str = "v1";
+
 #[derive(Debug, Clone)]
 pub struct AuditHashInput<'a> {
     pub id: &'a str,
@@ -19,10 +21,19 @@ pub struct AuditHashInput<'a> {
     pub operation_id: Option<&'a str>,
     pub target_id: Option<&'a str>,
     pub metadata: Option<&'a str>,
+    pub hash_version: &'a str,
 }
 
 pub fn compute_audit_hash(input: &AuditHashInput<'_>) -> String {
     let mut record = BTreeMap::new();
+
+    if input.hash_version != CURRENT_AUDIT_HASH_VERSION {
+        record.insert(
+            "hash_version".to_string(),
+            Value::String(input.hash_version.to_string()),
+        );
+    }
+
     record.insert(
         "action".to_string(),
         Value::String(input.action.to_string()),

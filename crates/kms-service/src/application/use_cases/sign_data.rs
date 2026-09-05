@@ -1,15 +1,14 @@
-use chrono::Utc;
 use ed25519_dalek::Signer;
+use serde_json::json;
 use std::sync::Arc;
-use uuid::Uuid;
 use zeroize::Zeroize;
 
 use crate::{
     config::acl::{CompiledAcl, KeyAccessLevel, authorize_key_access},
     domain::{
         audit::{
-            models::{AuditAction, AuditLog, AuditStatus},
-            repository::AuditRepository,
+            models::{AuditAction, RequestContext},
+            service::AuditService,
         },
         crypto::KmsCryptoService,
         keys::{
@@ -41,10 +40,10 @@ pub struct SignDataOutput {
 pub struct SignDataUseCase<R, A>
 where
     R: KeyRepository,
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
     key_repo: Arc<R>,
-    audit_repo: Arc<A>,
+    audit_service: Arc<AuditService<A>>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     key_cache: Arc<KeyCache>,
     acl_policy: Arc<CompiledAcl>,
@@ -53,42 +52,36 @@ where
 impl<R, A> SignDataUseCase<R, A>
 where
     R: KeyRepository,
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
-    //#region new
     pub fn new(
         key_repo: Arc<R>,
-        audit_repo: Arc<A>,
+        audit_service: Arc<AuditService<A>>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         key_cache: Arc<KeyCache>,
         acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
-            audit_repo,
+            audit_service,
             crypto_service,
             key_cache,
             acl_policy,
         }
     }
 
-    pub async fn execute(&self, input: SignDataInput) -> AppResult<SignDataOutput> {
+    pub async fn execute(
+        &self,
+        ctx: &RequestContext,
+        input: SignDataInput,
+    ) -> AppResult<SignDataOutput> {
         if input.algorithm != KeyAlgorithm::Ed25519 {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.target_service.clone(),
-                    action: AuditAction::SignData,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::ValidationFailure,
-                    reason: AuditLog::sanitize_reason(Some("Only Ed25519 signing is supported")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("unsupported_algorithm".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_validation_failure(
+                    ctx,
+                    AuditAction::SignData,
+                    "Only Ed25519 signing is supported",
+                )
                 .await?;
 
             return Err(AppError::ValidationError(
@@ -105,21 +98,8 @@ where
         );
 
         if !is_allowed {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.target_service.clone(),
-                    action: AuditAction::SignData,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::AccessDenied,
-                    reason: AuditLog::sanitize_reason(Some("ACL Policy Violation")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("acl_policy_violation".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_access_denied(ctx, AuditAction::SignData, "ACL Policy Violation")
                 .await?;
 
             return Err(AppError::Unauthorized);
@@ -148,21 +128,12 @@ where
             let key = match key {
                 Some(key) => key,
                 None => {
-                    self.audit_repo
-                        .record(AuditLog {
-                            id: Uuid::now_v7(),
-                            caller_service: input.caller_service.clone(),
-                            target_service: input.target_service.clone(),
-                            action: AuditAction::SignData,
-                            algorithm: input.algorithm,
-                            status: AuditStatus::NotFound,
-                            reason: AuditLog::sanitize_reason(Some("Signing key not found")),
-                            request_id: None,
-                            operation_id: None,
-                            target_id: None,
-                            metadata: Some("key_missing".to_string()),
-                            timestamp: Utc::now(),
-                        })
+                    self.audit_service
+                        .record_validation_failure(
+                            ctx,
+                            AuditAction::SignData,
+                            "Signing key not found",
+                        )
                         .await?;
 
                     return Err(AppError::NotFound("Signing key not found".into()));
@@ -176,21 +147,8 @@ where
             {
                 Ok(bytes) => bytes,
                 Err(err) => {
-                    self.audit_repo
-                        .record(AuditLog {
-                            id: Uuid::now_v7(),
-                            caller_service: input.caller_service.clone(),
-                            target_service: input.target_service.clone(),
-                            action: AuditAction::SignData,
-                            algorithm: input.algorithm,
-                            status: AuditStatus::Failure,
-                            reason: AuditLog::sanitize_reason(Some(&err.to_string())),
-                            request_id: None,
-                            operation_id: None,
-                            target_id: None,
-                            metadata: Some("crypto_failure".to_string()),
-                            timestamp: Utc::now(),
-                        })
+                    self.audit_service
+                        .record_failure(ctx, AuditAction::SignData, err.to_string())
                         .await?;
 
                     return Err(err);
@@ -213,26 +171,15 @@ where
 
         if private_key_bytes.len() < 32 {
             private_key_bytes.zeroize();
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.target_service.clone(),
-                    action: AuditAction::SignData,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::Failure,
-                    reason: AuditLog::sanitize_reason(Some("Invalid Ed25519 private key length")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("invalid_private_key_length".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_failure(
+                    ctx,
+                    AuditAction::SignData,
+                    "Invalid Ed25519 private key length".to_string(),
+                )
                 .await?;
 
-            return Err(AppError::CryptoError(
-                "Invalid Ed25519 private key length".to_string(),
-            ));
+            return Err(AppError::crypto_error("Invalid Ed25519 private key length"));
         }
 
         let mut private_key_array = [0u8; 32];
@@ -255,21 +202,17 @@ where
                 .unwrap_or(0),
         };
 
-        self.audit_repo
-            .record(AuditLog {
-                id: Uuid::now_v7(),
-                caller_service: input.caller_service.clone(),
-                target_service: output_target_service.clone(),
-                action: AuditAction::SignData,
-                algorithm: input.algorithm,
-                status: AuditStatus::Success,
-                reason: None,
-                request_id: None,
-                operation_id: None,
-                target_id: None,
-                metadata: Some("data_signed".to_string()),
-                timestamp: Utc::now(),
-            })
+        self.audit_service
+            .record_success(
+                ctx,
+                AuditAction::SignData,
+                Some(json!({
+                    "target_service": output_target_service.0,
+                    "algorithm": input.algorithm,
+                    "key_version": output_version,
+                    "payload_len": input.payload.len()
+                })),
+            )
             .await?;
 
         Ok(SignDataOutput {

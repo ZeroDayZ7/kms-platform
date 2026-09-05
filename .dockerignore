@@ -23,6 +23,7 @@ Dockerfile
 docker-compose.yml
 .dockerignore
 .github/
+ceremony
 
 # Documentation & Local notes
 README.md

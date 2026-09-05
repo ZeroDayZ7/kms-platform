@@ -1,13 +1,13 @@
-use chrono::Utc;
 use std::sync::Arc;
-use uuid::Uuid;
+
+use serde_json::json;
 
 use crate::{
     config::acl::{CompiledAcl, KeyAccessLevel, authorize_key_access},
     domain::{
         audit::{
-            models::{AuditAction, AuditLog, AuditStatus},
-            repository::AuditRepository,
+            models::{AuditAction, RequestContext},
+            service::AuditService,
         },
         crypto::KmsCryptoService,
         keys::{
@@ -37,10 +37,10 @@ pub struct GetSymmetricKeyOutput {
 pub struct GetSymmetricKeyUseCase<K, A>
 where
     K: KeyRepository,
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
     key_repo: Arc<K>,
-    audit_repo: Arc<A>,
+    audit_service: Arc<AuditService<A>>,
     crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
     key_cache: Arc<KeyCache>,
     acl_policy: Arc<CompiledAcl>,
@@ -49,26 +49,29 @@ where
 impl<K, A> GetSymmetricKeyUseCase<K, A>
 where
     K: KeyRepository,
-    A: AuditRepository,
+    A: crate::domain::audit::repository::AuditRepository,
 {
-    //#region new
     pub fn new(
         key_repo: Arc<K>,
-        audit_repo: Arc<A>,
+        audit_service: Arc<AuditService<A>>,
         crypto_service: Arc<dyn KmsCryptoService + Send + Sync>,
         key_cache: Arc<KeyCache>,
         acl_policy: Arc<CompiledAcl>,
     ) -> Self {
         Self {
             key_repo,
-            audit_repo,
+            audit_service,
             crypto_service,
             key_cache,
             acl_policy,
         }
     }
 
-    pub async fn execute(&self, input: GetSymmetricKeyInput) -> AppResult<GetSymmetricKeyOutput> {
+    pub async fn execute(
+        &self,
+        ctx: &RequestContext,
+        input: GetSymmetricKeyInput,
+    ) -> AppResult<GetSymmetricKeyOutput> {
         let is_allowed = authorize_key_access(
             &self.acl_policy,
             &input.caller_service,
@@ -78,23 +81,12 @@ where
         );
 
         if !is_allowed {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.target_service.clone(),
-                    action: AuditAction::GetSymmetricKey,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::AccessDenied,
-                    reason: AuditLog::sanitize_reason(Some(
-                        "ACL Policy Violation for Symmetric Key",
-                    )),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("acl_policy_violation".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_access_denied(
+                    ctx,
+                    AuditAction::GetSymmetricKey,
+                    "ACL Policy Violation for Symmetric Key",
+                )
                 .await?;
 
             return Err(AppError::Unauthorized);
@@ -105,21 +97,16 @@ where
             input.algorithm,
             |cached_version, cached_bytes| (cached_version, cached_bytes.to_vec()),
         ) {
-            self.audit_repo
-                .record(AuditLog {
-                    id: Uuid::now_v7(),
-                    caller_service: input.caller_service.clone(),
-                    target_service: input.target_service.clone(),
-                    action: AuditAction::GetSymmetricKey,
-                    algorithm: input.algorithm,
-                    status: AuditStatus::Success,
-                    reason: AuditLog::sanitize_reason(Some("cache_hit")),
-                    request_id: None,
-                    operation_id: None,
-                    target_id: None,
-                    metadata: Some("cache_hit".to_string()),
-                    timestamp: Utc::now(),
-                })
+            self.audit_service
+                .record_success(
+                    ctx,
+                    AuditAction::GetSymmetricKey,
+                    Some(json!({
+                        "cache_hit": true,
+                        "target_service": input.target_service.0,
+                        "algorithm": input.algorithm
+                    })),
+                )
                 .await?;
 
             let (cached_version, cached_bytes) = cached;
@@ -138,21 +125,12 @@ where
         {
             Some(key) => key,
             None => {
-                self.audit_repo
-                    .record(AuditLog {
-                        id: Uuid::now_v7(),
-                        caller_service: input.caller_service.clone(),
-                        target_service: input.target_service.clone(),
-                        action: AuditAction::GetSymmetricKey,
-                        algorithm: input.algorithm,
-                        status: AuditStatus::NotFound,
-                        reason: AuditLog::sanitize_reason(Some("Symmetric Key does not exist")),
-                        request_id: None,
-                        operation_id: None,
-                        target_id: None,
-                        metadata: Some("key_missing".to_string()),
-                        timestamp: Utc::now(),
-                    })
+                self.audit_service
+                    .record_validation_failure(
+                        ctx,
+                        AuditAction::GetSymmetricKey,
+                        "Symmetric Key does not exist",
+                    )
                     .await?;
 
                 return Err(AppError::NotFound(format!(
@@ -179,21 +157,16 @@ where
             );
         }
 
-        self.audit_repo
-            .record(AuditLog {
-                id: Uuid::now_v7(),
-                caller_service: input.caller_service,
-                target_service: input.target_service,
-                action: AuditAction::GetSymmetricKey,
-                algorithm: input.algorithm,
-                status: AuditStatus::Success,
-                reason: None,
-                request_id: None,
-                operation_id: None,
-                target_id: None,
-                metadata: Some("symmetric_key_retrieved".to_string()),
-                timestamp: Utc::now(),
-            })
+        self.audit_service
+            .record_success(
+                ctx,
+                AuditAction::GetSymmetricKey,
+                Some(json!({
+                    "target_service": input.target_service.0,
+                    "algorithm": input.algorithm,
+                    "version": key_entity.version
+                })),
+            )
             .await?;
 
         Ok(GetSymmetricKeyOutput {

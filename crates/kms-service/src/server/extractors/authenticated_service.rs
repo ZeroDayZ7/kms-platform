@@ -61,16 +61,29 @@ impl FromRequestParts<AppState> for AuthenticatedService {
             return Err(AppError::Unauthorized);
         }
 
-        let nonce = parts.headers.get("X-Nonce").and_then(|v| v.to_str().ok());
+        let nonce = parts
+            .headers
+            .get("X-Nonce")
+            .or_else(|| parts.headers.get("x-nonce"))
+            .and_then(|v| v.to_str().ok());
+
+        let request_id = parts
+            .headers
+            .get("X-Request-ID")
+            .or_else(|| parts.headers.get("x-request-id"))
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
 
         let body_hash = parts
             .headers
             .get("X-Body-SHA256")
+            .or_else(|| parts.headers.get("x-body-sha256"))
             .and_then(|v| v.to_str().ok());
 
         let signature_hex = parts
             .headers
             .get("X-Signature")
+            .or_else(|| parts.headers.get("x-signature"))
             .or_else(|| parts.headers.get("X-HMAC-Signature"))
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| {
@@ -93,62 +106,57 @@ impl FromRequestParts<AppState> for AuthenticatedService {
 
         let method = parts.method.as_str();
         let path = parts.uri.path();
-        let canonical_payload = format!("{method}:{path}:{timestamp}");
-        let legacy_payload = if let (Some(nonce), Some(body_hash)) = (nonce, body_hash) {
-            Some(format!("{method}:{path}:{timestamp}:{nonce}:{body_hash}"))
-        } else {
-            None
-        };
+        let nonce_value = nonce.ok_or_else(|| {
+            error!("❌ Brak nagłówka X-Nonce");
+            AppError::Unauthorized
+        })?;
 
-        let mut expected_signature = None;
-        for payload in [Some(canonical_payload), legacy_payload]
-            .into_iter()
-            .flatten()
+        let mut payload = format!("{method}:{path}:{timestamp}:{nonce_value}");
+        if matches!(method, "POST" | "PUT" | "PATCH" | "DELETE") {
+            let body_hash_value = body_hash.ok_or_else(|| {
+                error!("❌ Brak nagłówka X-Body-SHA256 dla żądania z body");
+                AppError::Unauthorized
+            })?;
+            payload = format!("{method}:{path}:{timestamp}:{nonce_value}:{body_hash_value}");
+        }
+
+        let mut mac = HmacSha256::new_from_slice(service_cfg.secret.as_bytes())
+            .map_err(|_| AppError::Internal("Błąd inicjalizacji HMAC".into()))?;
+        mac.update(payload.as_bytes());
+        let expected_signature = hex::encode(mac.finalize().into_bytes());
+
+        if signature_hex
+            .as_bytes()
+            .ct_eq(expected_signature.as_bytes())
+            .unwrap_u8()
+            != 1
         {
-            let mut mac = HmacSha256::new_from_slice(service_cfg.secret.as_bytes())
-                .map_err(|_| AppError::Internal("Błąd inicjalizacji HMAC".into()))?;
-            mac.update(payload.as_bytes());
-            let candidate = hex::encode(mac.finalize().into_bytes());
-            if signature_hex
-                .as_bytes()
-                .ct_eq(candidate.as_bytes())
-                .unwrap_u8()
-                == 1
-            {
-                expected_signature = Some(candidate);
-                break;
-            }
+            error!(
+                service_id = %service_name,
+                nonce = %nonce_value,
+                request_id = request_id.as_deref(),
+                "HMAC verification failed"
+            );
+            return Err(AppError::Unauthorized);
         }
 
-        if let (Some(nonce), Some(redis)) = (nonce, state.redis_manager.as_ref()) {
-            let nonce_key = format!("hmac:nonce:{}:{}:{}", service_name, nonce, timestamp);
-            let already_used = redis
-                .set_if_not_exists(&nonce_key, "1", MAX_NONCE_TTL_SECONDS)
-                .await
-                .unwrap_or(false);
-            if !already_used {
-                error!(
-                    "❌ HMAC nonce replay detected for service '{}'",
-                    service_name
-                );
-                return Err(AppError::Unauthorized);
-            }
+        let nonce_key = format!("hmac:nonce:{}:{}:{}", service_name, nonce_value, timestamp);
+        let already_used = state
+            .nonce_store
+            .mark_used(&nonce_key, MAX_NONCE_TTL_SECONDS)
+            .await
+            .unwrap_or(false);
+        if !already_used {
+            error!(
+                "❌ HMAC nonce replay detected for service '{}'",
+                service_name
+            );
+            return Err(AppError::Unauthorized);
         }
-
-        match expected_signature {
-            Some(_) => {}
-            None => {
-                error!(
-                    "❌ Podpisy HMAC NIE są zgodne! Otrzymano: {}, oczekiwano tego samego dla formatu legacy lub canonical",
-                    signature_hex
-                );
-                return Err(AppError::Unauthorized);
-            }
-        };
 
         debug!(
             service = %service_name,
-            nonce = %nonce.unwrap_or("n/a"),
+            nonce = %nonce_value,
             timestamp = %timestamp,
             "validated HMAC metadata"
         );

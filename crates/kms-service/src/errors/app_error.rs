@@ -5,7 +5,7 @@ use axum::{
 };
 use kms_core::hsm::client::HsmClientError;
 use serde::Serialize;
-use std::borrow::Cow;
+use std::{borrow::Cow, error::Error};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -25,11 +25,17 @@ pub enum AppError {
     #[error("Błędne dane wejściowe: {0}")]
     ValidationError(String),
 
-    #[error("Błąd kryptograficzny: {0}")]
-    CryptoError(String),
+    #[error("{0}")]
+    CryptoError(
+        String,
+        #[source] Option<Box<dyn Error + Send + Sync + 'static>>,
+    ),
 
-    #[error("Błąd bazy danych: {0}")]
-    DatabaseError(String),
+    #[error("{0}")]
+    DatabaseError(
+        String,
+        #[source] Option<Box<dyn Error + Send + Sync + 'static>>,
+    ),
 
     #[error("Błąd usługi Redis")]
     RedisError(#[from] fred::error::Error),
@@ -59,24 +65,41 @@ pub enum AppError {
     Internal(String),
 }
 
+impl AppError {
+    pub fn database_error(message: impl Into<String>) -> Self {
+        Self::DatabaseError(message.into(), None)
+    }
+
+    pub fn database_error_with_source<E>(message: impl Into<String>, source: E) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
+        Self::DatabaseError(message.into(), Some(Box::new(source)))
+    }
+
+    pub fn crypto_error(message: impl Into<String>) -> Self {
+        Self::CryptoError(message.into(), None)
+    }
+
+    pub fn crypto_error_with_source<E>(message: impl Into<String>, source: E) -> Self
+    where
+        E: Error + Send + Sync + 'static,
+    {
+        Self::CryptoError(message.into(), Some(Box::new(source)))
+    }
+}
+
 impl From<serde_json::Error> for AppError {
     //#region from
-    fn from(err: serde_json::Error) -> Self {
-        Self::SerializationError(err.to_string())
+    fn from(_: serde_json::Error) -> Self {
+        Self::SerializationError("Invalid request payload".into())
     }
 }
 
 impl From<anyhow::Error> for AppError {
     //#region from
-    fn from(err: anyhow::Error) -> Self {
-        Self::RuntimeError(err.to_string())
-    }
-}
-
-impl From<sqlx::Error> for AppError {
-    //#region from
-    fn from(err: sqlx::Error) -> Self {
-        Self::DatabaseError(err.to_string())
+    fn from(_: anyhow::Error) -> Self {
+        Self::RuntimeError("Internal runtime error".into())
     }
 }
 
@@ -98,8 +121,8 @@ impl AppError {
             Self::NotFound(_) => "RESOURCE_NOT_FOUND",
             Self::ValidationError(_) => "VALIDATION_ERROR",
             Self::Conflict(_) => "CONFLICT_ERROR",
-            Self::CryptoError(_) => "CRYPTO_FAILURE",
-            Self::DatabaseError(_) => "INTERNAL_SERVER_ERROR",
+            Self::CryptoError(_, _) => "CRYPTO_FAILURE",
+            Self::DatabaseError(_, _) => "INTERNAL_SERVER_ERROR",
             Self::RedisError(_) => "INTERNAL_SERVER_ERROR",
             Self::HsmError(_) => "HSM_COMMUNICATION_ERROR",
             Self::TimeoutError => "TIMEOUT_ERROR",
@@ -120,8 +143,8 @@ impl AppError {
             Self::NotFound(_) => "Resource not found".into(),
             Self::ValidationError(_) => "Invalid request".into(),
             Self::Conflict(_) => "Resource conflict".into(),
-            Self::CryptoError(_) => "Cryptographic operation failed".into(),
-            Self::DatabaseError(_) => "Internal server error".into(),
+            Self::CryptoError(_, _) => "Cryptographic operation failed".into(),
+            Self::DatabaseError(_, _) => "Internal server error".into(),
             Self::RedisError(_) => "Internal server error".into(),
             Self::HsmError(_) => "HSM communication error".into(),
             Self::TimeoutError => "Request timed out".into(),
@@ -147,37 +170,40 @@ impl IntoResponse for AppError {
             Self::NotFound(_) => StatusCode::NOT_FOUND,
             Self::ValidationError(_) => StatusCode::BAD_REQUEST,
             Self::Conflict(_) => StatusCode::CONFLICT,
-            Self::CryptoError(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            Self::DatabaseError(err) => {
-                tracing::error!(target: "infra::db", error = ?err, "Database Error");
+            Self::CryptoError(_, _) => StatusCode::UNPROCESSABLE_ENTITY,
+            Self::DatabaseError(_, _) => {
+                tracing::error!(target: "infra::db", error_kind = "database", "Database Error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            Self::RedisError(err) => {
-                tracing::error!(target: "infra::redis", error = ?err, "Redis Error");
+            Self::RedisError(_) => {
+                tracing::error!(target: "infra::redis", error_kind = "redis", "Redis Error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            Self::HsmError(err) => {
-                tracing::error!(target: "infra::hsm", error = ?err, "HSM Error");
+            Self::HsmError(_) => {
+                tracing::error!(target: "infra::hsm", error_kind = "hsm", "HSM Error");
                 StatusCode::BAD_GATEWAY
             }
-            Self::SerializationError(err) => {
-                tracing::warn!(error = ?err, "JSON Serialization failed");
+            Self::SerializationError(_) => {
+                tracing::warn!(error_kind = "serialization", "JSON Serialization failed");
                 StatusCode::BAD_REQUEST
             }
-            Self::ConfigError(err) => {
-                tracing::error!(error = ?err, "Critical configuration error!");
+            Self::ConfigError(_) => {
+                tracing::error!(error_kind = "config", "Critical configuration error!");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            Self::ExternalServiceError(err) => {
-                tracing::error!(error = ?err, "External service call failed");
+            Self::ExternalServiceError(_) => {
+                tracing::error!(
+                    error_kind = "external_service",
+                    "External service call failed"
+                );
                 StatusCode::BAD_GATEWAY
             }
-            Self::RuntimeError(err) => {
-                tracing::error!(error = ?err, "Runtime execution error");
+            Self::RuntimeError(_) => {
+                tracing::error!(error_kind = "runtime", "Runtime execution error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
-            Self::Internal(err) => {
-                tracing::error!(error = ?err, "Unexpected Internal Error");
+            Self::Internal(_) => {
+                tracing::error!(error_kind = "internal", "Unexpected Internal Error");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::TimeoutError => StatusCode::REQUEST_TIMEOUT,
