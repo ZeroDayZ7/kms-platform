@@ -79,22 +79,35 @@ The development shutdown removes Compose-managed volumes but leaves the shared e
 
 ## Security Model
 
-The main security boundary is the separation between:
+The security model separates application services, secret management and the master key.
+
+The target architecture is:
 
 ```text
-Application
-    │
-    ▼
-kms-service
-    │
-    │ IPC
-    ▼
-vhsm-daemon
-    │
-    ▼
-Master Key
+Application Service
+       │
+       │ local IPC
+       ▼
+ secret-agent
+       │
+       │ KMS API
+       ▼
+ kms-service
+       │
+       │ IPC
+       ▼
+ vhsm-daemon
+       │
+       ▼
+ Master Key
 ```
 
-The master key is therefore not required to be present in the KMS service configuration, database or application environment.
+**`secret-agent`** is designed as a Rust-based sidecar running alongside application services. It provides the service with access to its secrets without requiring applications to manage sensitive credentials directly.
 
-Operator access to the master key is controlled through the Shamir ceremony.
+The `kms-service` manages keys, credentials and their lifecycle, while `vhsm-daemon` provides the isolated cryptographic boundary and keeps the master key in RAM.
+
+The master key is not required to be present in application configuration, databases or application environments.
+
+Operator access to the master key is controlled through the Shamir Secret Sharing ceremony.
+
+`secret-agent` is part of the target architecture and is currently being extended to support the complete secret management workflow.
