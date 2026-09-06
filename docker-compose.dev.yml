@@ -106,6 +106,7 @@ services:
     environment:
       - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.toml
       - RUST_LOG=${LOG__LEVEL:-info},kms_ceremony_cli=debug,kms_core=debug,kms_db=debug,kms_migrate=debug,kms_service=debug
+      # - RUST_LOG=trace,kms_service=trace,tower_http=trace
       - LOG__FORMAT=${LOG__FORMAT:-pretty}
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080

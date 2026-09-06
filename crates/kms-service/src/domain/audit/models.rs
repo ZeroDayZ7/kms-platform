@@ -183,10 +183,7 @@ impl CanonicalAuditEntry {
             "operation_id".to_string(),
             Value::String(self.operation_id.clone().unwrap_or_default()),
         );
-        map.insert(
-            "hash_version".to_string(),
-            Value::String("v1".to_string()),
-        );
+        map.insert("hash_version".to_string(), Value::String("v1".to_string()));
         map.insert(
             "prev_hash".to_string(),
             Value::String(self.prev_hash.clone()),
