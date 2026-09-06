@@ -2032,7 +2032,7 @@ dependencies = [
 name = "kms-db"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "rand 0.8.7",
  "serde",
@@ -2063,7 +2063,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
- "base64 0.22.1",
+ "base64 0.23.1",
  "chrono",
  "clap",
  "config",

@@ -4,18 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-clap = { version = "4.5", features = ["derive", "env"] }
-dialoguer = "0.11"
-zeroize = { workspace = true, features = ["zeroize_derive"] }
-hex = "0.4"
+# Unique dependencies for this crate
+# none currently; the crate relies on shared workspace configuration
+
+# Shared dependencies inherited from the workspace
+anyhow = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+dialoguer = { workspace = true }
+hmac = { workspace = true }
+hex = { workspace = true }
+kms-core = { workspace = true }
+reqwest = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1.0"
-sha2 = "0.10"
-hmac = "0.12"
-uuid = { version = "1.24", features = ["v4", "v7"] }
+sha2 = { workspace = true }
+subtle = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-kms-core = { path = "../kms-core" }
-subtle = "2.4"
-reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+uuid = { workspace = true }
+zeroize = { workspace = true, features = ["zeroize_derive"] }

@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-serde = { workspace = true, features = ["derive"] }
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
-chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.24", features = ["v4", "v7", "serde"] }
-tracing = "0.1"
-zeroize = { workspace = true, features = ["zeroize_derive", "serde"] }
-base64 = "0.22"
+# Unique dependencies for this crate
+base64 = "0.23.1"
 rand = "0.8"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "macros"] }
+
+# Shared dependencies inherited from the workspace
+chrono = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+zeroize = { workspace = true, features = ["zeroize_derive", "serde"] }
