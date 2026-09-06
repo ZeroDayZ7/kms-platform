@@ -2,13 +2,9 @@
 
 - Klucze prywatne nie opuszczają KMS przez interfejs REST API.
 - Endpoint `POST /api/v1/keys/private` został usunięty z publicznej specyfikacji API i nie jest dostępny do użytku produkcyjnego.
-- Wszystkie chronione endpointy wymagają podpisu HMAC-SHA256 z dodatkowymi polami:
-  - `X-Service-Name`
-  - `X-Timestamp`
-  - `X-Nonce`
-  - `X-Body-SHA256`
-  - `X-HMAC-Signature`
-- Żądania z powtórzonym nonce, niepoprawnym timestampem lub niedopasowanym podpisem są odrzucane jako nieautoryzowane.
+- Wszystkie chronione endpointy wymagają podpisu HMAC-SHA256. Weryfikacja HMAC i ochrona przed powtórnym użyciem (nonce replay) odbywa się centralnie w middleware `hmac_security_middleware` — przed dotarciem do handlerów.
+
+Po pomyślnej weryfikacji middleware wstawia zweryfikowany identyfikator serwisu (`ServiceId`) do rozszerzeń żądania, dzięki czemu extractory/handlery mogą bezpiecznie odczytać kto wywołał endpoint (patrz `AuthenticatedService` - uproszczony extractor).
 
 ---
 
@@ -19,27 +15,35 @@
 
 ---
 
-## 3. Uwierzytelnianie HMAC — wymagania dla żądań
+### 3. Uwierzytelnianie HMAC — wymagania dla żądań
 
-Wszystkie endpointy chronione wymagają nagłówków:
+Wszystkie chronione endpointy wymagają następujących nagłówków (middleware weryfikuje je centralnie):
 
-- `X-Service-Name`: identyfikator serwisu wywołującego
-- `X-Timestamp`: znacznik czasu w formacie RFC3339 / ISO 8601
+- `X-Service-Name` lub `X-Service-ID`: identyfikator serwisu wywołującego
+- `X-Timestamp`: znacznik czasu w formacie RFC3339 / ISO 8601 (może być też epoch seconds)
 - `X-Nonce`: unikalny identyfikator żądania, generowany per request
-- `X-Body-SHA256`: hex SHA-256 z treści body żądania
-- `X-HMAC-Signature`: hex podpisu HMAC-SHA256
+- `X-Body-SHA256`: hex SHA-256 z treści body żądania (zawsze wymagany — także dla GET)
+- `X-HMAC-Signature` (lub `X-Signature` / `X-HMAC-SIGNATURE`): hex podpisu HMAC-SHA256
 
-Wzór podpisu:
+Wzór podpisu (canonical payload):
 
 ```text
 HMAC-SHA256(secret, "METHOD:PATH:TIMESTAMP:NONCE:BODY_SHA256")
 ```
 
-Przykład:
+Uwagi:
+
+- Body SHA-256 obliczane jest zawsze przez klienta i serwer (middleware). Dla pustego body (np. GET bez treści) użyj hashu pustego ciągu:
+
+  e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+
+- Payload zawiera dokładnie pięć elementów rozdzielonych dwukropkami: metoda HTTP, ścieżka (path), timestamp, nonce i hex SHA-256 body.
+
+Przykład generowania podpisu (skrót):
 
 ```bash
 SERVICE_NAME="auth-service"
-SECRET="super-long-random-secret-for-auth-service-hmac-64-bytes"
+SECRET="super-long-secret"
 METHOD="POST"
 PATH_URI="/api/v1/keys/sign"
 TIMESTAMP="2026-08-23T12:00:00Z"
@@ -51,18 +55,21 @@ SIGNATURE=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$SECRET" | sed 
 
 ### 3.1 Ochrona przed atakami replay
 
-Serwer stosuje następujące zabezpieczenia:
+Serwer stosuje następujące zabezpieczenia (realizowane w middleware):
 
-- `X-Timestamp` musi być zgodny z akceptowalnym oknem czasowym: ±60 sekund względem czasu serwera.
-- `X-Nonce` musi być unikalny w oknie 300 sekund (TTL 5 minut).
-- Powtórne użycie tego samego `X-Nonce` dla tego samego `X-Service-Name` zostaje odrzucone jako replay.
-- `X-Body-SHA256` jest częścią podpisu, aby uniemożliwić podmianę treści zapytania po wygenerowaniu podpisu.
+- `X-Timestamp` musi być zgodny z akceptowalnym oknem czasowym: ±300 sekund względem czasu serwera.
+- `X-Nonce` musi być unikalny w oknie TTL = 300 sekund (5 minut). Powtórne użycie tego samego `X-Nonce` dla tego samego `X-Service-Name` zostaje odrzucone jako replay.
+- `X-Body-SHA256` jest częścią podpisu, aby zapobiec podmianie treści żądania po wygenerowaniu podpisu.
 - W przypadku niepoprawnego, wygasłego lub zduplikowanego nonce / timestampu serwer zwraca `401 Unauthorized`.
+
+Po pomyślnej weryfikacji middleware zapisuje nonce w magazynie (Redis) z TTL 300s, aby zapobiec ponownemu użyciu.
 
 ### 3.2 Statusy autoryzacji
 
 - `401 Unauthorized`: brak lub błędny nagłówek HMAC, nieprawidłowy podpis, wygasły timestamp, duplikat nonce, timestamp poza oknem czasowym.
 - `403 Forbidden`: podpis i timestamp są poprawne, ale żądanie narusza politykę ACL / brak uprawnień do danego zasobu.
+
+W logice serwera: weryfikacja podpisu i replay protection wykonuje się w middleware; autoryzacja ACL (uprawnienia do zasobu) wykonywana jest później i w razie braku uprawnień zwraca `403`.
 
 ---
 
@@ -310,9 +317,9 @@ Serwer stosuje ścisłe limity bezpieczeństwa:
 - timeout zapisu do HSM: `5 sekund`,
 - timeout odczytu odpowiedzi z HSM: `5 sekund`,
 - TTL nonce: `300 sekund` (5 minut),
-- okno czasowe timestampu: `±60 sekund` względem czasu serwera.
+- okno czasowe timestampu: `±300 sekund` względem czasu serwera.
 
-Jeżeli ramka wejściowa lub odpowiedź przekracza limit rozmiaru, HSM lub klient odpowiada błędem komunikacji i operacja jest odrzucana bez dalszego przetwarzania.
+Jeżeli ramka wejściowa lub odpowiedź przekracza limit rozmiaru, HSM lub klient odpowiada błędem komunikacji i operacja jest odrzucona bez dalszego przetwarzania.
 
 ---
 
