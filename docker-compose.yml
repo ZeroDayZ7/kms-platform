@@ -10,7 +10,7 @@ services:
   # region POSTGRESQL
   postgres:
     image: postgres:18.3-alpine
-    container_name: db_kms
+    container_name: kms_db
     networks:
       - kms-internal-net
     ports:
@@ -43,7 +43,7 @@ services:
   # redis:
   #   <<: *common-settings
   #   image: redis:8.6-alpine
-  #   container_name: zero_day_redis
+  #   container_name: kms_redis
   #   ports:
   #     - "6380:6379"
   #   command:
@@ -71,8 +71,7 @@ services:
       target: vhsm-daemon
     container_name: vhsm_daemon
     entrypoint: ["/app/vhsm-daemon"]
-    networks:
-      - kms-internal-net
+    network_mode: none
     environment:
       - APP_ENVIRONMENT=${APP_ENVIRONMENT:-development}
       - RUST_LOG=${RUST_LOG:-info,vhsm_daemon=debug}
