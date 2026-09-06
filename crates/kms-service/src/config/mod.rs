@@ -1,6 +1,7 @@
 // src/config/mod.rs
 use config::{Config, ConfigError, Environment, File};
 
+mod auth;
 mod database;
 mod log;
 mod redis;

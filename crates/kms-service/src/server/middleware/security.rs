@@ -60,6 +60,20 @@ pub async fn hmac_security_middleware(
         Err(_) => return crate::errors::AppError::Unauthorized.into_response(),
     };
 
+    // If path is in public_endpoints, skip HMAC verification
+    let path = parts.uri.path();
+    if state
+        .settings
+        .auth
+        .public_endpoints
+        .iter()
+        .any(|p| p == path)
+    {
+        tracing::debug!(path = %path, "Public endpoint - skipping HMAC verification");
+        let request = Request::from_parts(parts, Body::from(body_bytes));
+        return next.run(request).await;
+    }
+
     // Read required headers
     let service_name = parts
         .headers

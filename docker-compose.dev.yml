@@ -88,8 +88,6 @@ services:
       - cargo_cache:/usr/local/cargo/registry
       - target_cache:/app/target
       - vhsm_sockets:/run/vhsm
-    networks:
-      - kms-internal-net
 
   # ---------------------------------------------------------------------------
   # region KMS SERVICE (DEV)
