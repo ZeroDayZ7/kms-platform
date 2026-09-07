@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use chrono::Utc;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use subtle::ConstantTimeEq;
@@ -9,15 +8,7 @@ use tokio::fs;
 // Importujemy EncryptedContainer z kms-core
 use kms_core::crypto::aes::EncryptedContainer;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ShareFileRecord {
-    pub index: u8,
-    pub threshold: u8,
-    pub total_shares: u8,
-    pub container: EncryptedContainer,
-    pub share_sha256: String,
-    pub created_at: DateTime<Utc>,
-}
+pub use kms_core::ceremony::ShareFileRecord;
 
 //#region compute_sha256_hex
 pub fn compute_sha256_hex(value: &str) -> String {
