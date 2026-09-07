@@ -2,6 +2,7 @@ pub mod factory;
 pub mod minio;
 pub mod postgres;
 pub mod rabbitmq;
+pub mod redis;
 
 use crate::errors::AppError;
 use async_trait::async_trait;

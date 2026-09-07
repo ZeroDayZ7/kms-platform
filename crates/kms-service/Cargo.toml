@@ -11,6 +11,7 @@ config = "0.15"
 dotenvy = "0.15"
 ed25519-dalek = { version = "2.1", features = ["serde", "rand_core", "pkcs8"] }
 fred = { version = "10.1.0", features = ["serde-json", "enable-rustls", "i-scripts"] }
+url = "2"
 governor = "0.10.4"
 pem = "3.0"
 pkcs8 = { version = "0.10", features = ["pem", "std"] }
