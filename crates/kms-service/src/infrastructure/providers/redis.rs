@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use fred::prelude::*;
 use std::time::Duration;
 use url::Url;
@@ -22,6 +22,82 @@ fn redis_acl_error(operation: &str, username: &str) -> AppError {
 
 pub struct RedisTargetProvider;
 
+impl RedisTargetProvider {
+    /// Pomocnicza funkcja budująca klienta fred i nawiązująca połączenie z obsługą ACL username/password
+    async fn connect_admin(&self, target_conn_str: &str) -> Result<Client, AppError> {
+        let url = Url::parse(target_conn_str)
+            .map_err(|_| AppError::Internal("Invalid Redis connection string format".into()))?;
+
+        let host = url
+            .host_str()
+            .ok_or_else(|| AppError::Internal("Redis connection string missing host".into()))?;
+        let port = url.port().unwrap_or(6379);
+
+        // KLUCZOWA POPRAWKA: Odczyt username i password z URL dla Redis 6+ ACL
+        let username = if url.username().is_empty() {
+            None
+        } else {
+            Some(url.username().to_string())
+        };
+        let password = url.password().map(|s| s.to_string());
+        let db_index: u8 = url.path().trim_start_matches('/').parse().unwrap_or(0);
+
+        tracing::debug!(
+            operation = "[R2] parsed_conn",
+            host = %host,
+            port = port,
+            username = ?username,
+            db_index = db_index,
+            "[R2] Parsed connection parameters"
+        );
+
+        let reconnect_policy = ReconnectPolicy::new_exponential(0, 100, 5000, 2);
+
+        let redis_config = Config {
+            server: ServerConfig::Centralized {
+                server: Server::new(host, port),
+            },
+            username,
+            password,
+            database: Some(db_index),
+            ..Default::default()
+        };
+
+        let perf_config = PerformanceConfig::default();
+        let client = Client::new(
+            redis_config,
+            Some(perf_config),
+            None,
+            Some(reconnect_policy),
+        );
+
+        client.connect();
+
+        match tokio::time::timeout(Duration::from_secs(5), client.wait_for_connect()).await {
+            Ok(Ok(_)) => {
+                tracing::info!(
+                    operation = "[R3] connected",
+                    "[R3] Connected to Redis admin endpoint"
+                );
+                Ok(client)
+            }
+            Ok(Err(e)) => {
+                tracing::error!(operation = "[R3] connect_failed", error = %e, "[R3] Redis connection failed");
+                Err(AppError::from(e))
+            }
+            Err(_) => {
+                tracing::error!(
+                    operation = "[R3] connect_timeout",
+                    "[R3] Timeout during Redis connection initialization"
+                );
+                Err(AppError::ConfigError(
+                    "Timeout during Redis connection initialization".into(),
+                ))
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl TargetResourceProvider for RedisTargetProvider {
     async fn create_user(
@@ -31,162 +107,83 @@ impl TargetResourceProvider for RedisTargetProvider {
         ttl_seconds: i64,
         password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError> {
+        tracing::info!(operation = "[R1] create_user", target = %target_conn_str, role = %role, "[R1] Redis create_user called");
+
         let password_bytes = password.ok_or_else(|| {
             AppError::Internal("No password provided for Redis provider".to_string())
         })?;
 
-        // Re-encode to base64 so the returned plaintext password matches
-        // the `plaintext_password` value produced by the caller (which is base64).
         let encoded_password = BASE64.encode(password_bytes);
+        let client = self.connect_admin(target_conn_str).await?;
 
-        // Parse connection string (expecting a redis:// URL)
-        let url = Url::parse(target_conn_str).map_err(|_| {
-            AppError::Internal("Invalid Redis connection string format".into())
-        })?;
-
-        let host = url.host_str().ok_or_else(|| {
-            AppError::Internal("Redis connection string missing host".into())
-        })?;
-        let port = url.port().unwrap_or(6379);
-
-        // optional password in the URL (admin password)
-        let admin_password = url.password().map(|s| s.to_string());
-
-        // optional DB index from path
-        let db_index: u8 = url
-            .path()
-            .trim_start_matches('/')
-            .parse()
-            .unwrap_or(0);
-
-        let reconnect_policy = ReconnectPolicy::new_exponential(0, 100, 5000, 2);
-
-        let redis_config = Config {
-            server: ServerConfig::Centralized {
-                server: Server::new(host, port),
-            },
-            password: admin_password,
-            database: Some(db_index),
-            ..Default::default()
-        };
-
-        let perf_config = PerformanceConfig::default();
-
-        let client = Client::new(redis_config, Some(perf_config), None, Some(reconnect_policy));
-
-        client.connect();
-
-        match tokio::time::timeout(Duration::from_secs(5), client.wait_for_connect()).await {
-            Ok(Ok(_)) => tracing::info!("Connected to Redis for ACL operations"),
-            Ok(Err(e)) => return Err(AppError::from(e)),
-            Err(_) => {
-                return Err(AppError::ConfigError(
-                    "Timeout during Redis connection initialization".into(),
-                ))
-            }
-        }
-
-        // Determine ACL categories from role
-        // Simple mapping: if role contains "write" -> grant @write; if "read" -> @read
-        let mut acl_args: Vec<String> = vec!["SETUSER".to_string(), role.to_string()];
-
-        // enable user and set password
-        acl_args.push("on".to_string());
-        acl_args.push(format!(">{}", encoded_password));
-        // allow keys pattern
-        acl_args.push("~*".to_string());
+        // Budowanie reguł ACL
+        let mut rules: Vec<String> = vec![
+            "on".to_string(),
+            format!(">{}", encoded_password),
+            "~*".to_string(),
+        ];
 
         if role.contains("write") && role.contains("read") {
-            acl_args.push("+@all".to_string());
+            rules.push("+@all".to_string());
         } else if role.contains("write") {
-            acl_args.push("+@write".to_string());
-            acl_args.push("+@read".to_string());
+            rules.push("+@write".to_string());
+            rules.push("+@read".to_string());
         } else if role.contains("read") {
-            acl_args.push("+@read".to_string());
+            rules.push("+@read".to_string());
         } else {
-            // fallback to read-only
-            acl_args.push("+@read".to_string());
+            rules.push("+@read".to_string());
         }
 
-        // disallow dangerous/admin commands
-        acl_args.push("-@admin".to_string());
+        rules.push("-@admin".to_string());
 
-        // Execute ACL SETUSER via EVAL (use Redis Lua to call ACL since fred doesn't expose ACL helper)
-        let lua_script = "return redis.call('ACL','SETUSER', unpack(ARGV))";
-        let eval_args: Vec<String> = acl_args[1..].to_vec();
+        tracing::info!(operation = "[R6] exec_acl_setuser", username = %role, "[R6] Executing ACL SETUSER via RESP ACL command");
 
-        match client
-            .eval::<String, _, _, _>(lua_script, Vec::<String>::new(), eval_args)
-            .await
-        {
+        // Build ACL SETUSER args: first arg is "SETUSER", then username, then rules...
+        let mut acl_cmd_args: Vec<String> = Vec::with_capacity(2 + rules.len());
+        acl_cmd_args.push("SETUSER".to_string());
+        acl_cmd_args.push(role.to_string());
+        acl_cmd_args.extend(rules.clone());
+
+        match client.acl_setuser(role, rules.clone()).await {
             Ok(_) => {
-                tracing::info!(operation = "create_user", username = %acl_args[1], target = "redis", ttl_seconds = ttl_seconds, "Redis ACL SETUSER executed");
+                tracing::info!(operation = "[R7] setuser_ok", username = %role, target = "redis", ttl_seconds = ttl_seconds, "[R7] Redis ACL SETUSER executed successfully");
                 Ok(GeneratedCredential {
-                    username: acl_args[1].clone(),
+                    username: role.to_string(),
                     secret: Zeroizing::new(encoded_password),
                     ttl_seconds,
                 })
             }
-            Err(_) => Err(redis_acl_error("create_user", &acl_args[1])),
+            Err(e) => {
+                tracing::error!(operation = "[R8] setuser_err", error = ?e, username = %role, "[R8] Redis ACL SETUSER failed");
+                Err(redis_acl_error("create_user", role))
+            }
         }
     }
 
     async fn revoke_user(&self, target_conn_str: &str, username: &str) -> Result<(), AppError> {
-        // Connect to admin Redis and remove the user
-        let url = Url::parse(target_conn_str).map_err(|_| {
-            AppError::Internal("Invalid Redis connection string format".into())
-        })?;
+        tracing::info!(operation = "[R9] revoke_user", target = %target_conn_str, username = %username, "[R9] revoke_user called");
 
-        let host = url.host_str().ok_or_else(|| {
-            AppError::Internal("Redis connection string missing host".into())
-        })?;
-        let port = url.port().unwrap_or(6379);
-        let admin_password = url.password().map(|s| s.to_string());
-        let db_index: u8 = url.path().trim_start_matches('/').parse().unwrap_or(0);
+        let client = self.connect_admin(target_conn_str).await?;
 
-        let reconnect_policy = ReconnectPolicy::new_exponential(0, 100, 5000, 2);
+        tracing::info!(operation = "[R11] deluser", username = %username, "[R11] Executing ACL DELUSER via RESP ACL command");
 
-        let redis_config = Config {
-            server: ServerConfig::Centralized {
-                server: Server::new(host, port),
-            },
-            password: admin_password,
-            database: Some(db_index),
-            ..Default::default()
-        };
+        // Execute ACL DELUSER <username>
+        match client.acl_deluser::<i64, _>(username).await {
+            Ok(_) => {
+                tracing::info!(operation = "[R11] deluser_ok", username = %username, target = "redis", "[R11] Redis ACL user removed");
+                Ok(())
+            }
+            Err(e) => {
+                tracing::warn!(operation = "[R12] deluser_failed", error = ?e, username = %username, "[R12] ACL DELUSER failed, falling back to SETUSER off");
 
-        let perf_config = PerformanceConfig::default();
+                client.acl_setuser(username, vec!["off".to_string()]).await
+                    .map_err(|err| {
+                        tracing::error!(operation = "[R13] disable_failed", error = ?err, username = %username, "[R13] Fallback disable failed");
+                        redis_acl_error("drop_user", username)
+                    })?;
 
-        let client = Client::new(redis_config, Some(perf_config), None, Some(reconnect_policy));
-        client.connect();
-
-        match tokio::time::timeout(Duration::from_secs(5), client.wait_for_connect()).await {
-            Ok(Ok(_)) => tracing::info!("Connected to Redis for ACL revoke"),
-            Ok(Err(e)) => return Err(AppError::from(e)),
-            Err(_) => {
-                return Err(AppError::ConfigError(
-                    "Timeout during Redis connection initialization".into(),
-                ))
+                Ok(())
             }
         }
-
-        // Prefer to delete the user via ACL DELUSER; use EVAL to issue the command.
-        let del_script = "return redis.call('ACL','DELUSER', ARGV[1])";
-        if client
-            .eval::<i64, _, _, _>(del_script, Vec::<String>::new(), vec![username.to_string()])
-            .await
-            .is_err()
-        {
-            // fallback: disable the user
-            let disable_script = "return redis.call('ACL','SETUSER', ARGV[1], 'off')";
-            client
-                .eval::<String, _, _, _>(disable_script, Vec::<String>::new(), vec![username.to_string()])
-                .await
-                .map_err(|_| redis_acl_error("drop_user", username))?;
-        }
-
-        tracing::info!(operation = "drop_user", username = %username, target = "redis", "Redis ACL user removed");
-
-        Ok(())
     }
 }

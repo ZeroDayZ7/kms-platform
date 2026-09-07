@@ -142,25 +142,7 @@ impl IssueAgentCredentialUseCase {
 
         Self::validate_acl(state, &input)?;
 
-        // 2. Generowanie poświadczeń przez vHSM
-        let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
-            .await
-            .map_err(|err| {
-                AppError::database_error_with_source(
-                    format!("Database operation failed: {err}"),
-                    err,
-                )
-            })?;
-        let username = build_generic_username(&input.caller_service, &input.target_service);
-        let generated = generate_secure_credential(
-            &state.crypto_service,
-            Some(kek_id),
-            &username,
-            DEFAULT_PASSWORD_LEN,
-        )
-        .await?;
-
-        // 3. Pobranie connection string admina dla docelowej bazy
+        // 2. Pobranie connection string admina dla docelowej bazy
         let target_row: Option<(Uuid, Vec<u8>)> =
             CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
                 .await
@@ -171,8 +153,8 @@ impl IssueAgentCredentialUseCase {
                     )
                 })?;
 
-        let (target_id, conn_encrypted) = match target_row {
-            Some(v) => v,
+        let (target_id, conn_encrypted) = match target_row.as_ref() {
+            Some(v) => (v.0.clone(), v.1.clone()),
             None => {
                 return Err(AppError::NotFound(format!(
                     "Target resource not found: {}",
@@ -197,6 +179,83 @@ impl IssueAgentCredentialUseCase {
 
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
+
+        // Idempotency check: jeśli istnieje już aktywne poświadczenie dla tej pary (service, target, username)
+        // zwracamy je zamiast generować nowe. To zapobiega wielokrotnemu tworzeniu rekordów
+        // gdy część providerów (np. Redis) jest niedostępna.
+        let username = build_generic_username(&input.caller_service, &input.target_service);
+
+        if let Some((_target_id, _conn_encrypted)) = target_row.as_ref() {
+            let (target_id, _conn_encrypted) = (
+                target_row.as_ref().unwrap().0,
+                target_row.as_ref().unwrap().1.clone(),
+            );
+
+            if let Some((existing_id, existing_encrypted_password, existing_expires_at)) =
+                CredentialQueries::fetch_active_provisioned_credential(
+                    &state.db,
+                    &input.caller_service,
+                    target_id,
+                    &username,
+                )
+                .await
+                .map_err(|err| {
+                    AppError::database_error_with_source(
+                        format!("Database operation failed: {err}"),
+                        err,
+                    )
+                })?
+            {
+                tracing::info!(
+                    caller = %input.caller_service,
+                    target = %input.target_service,
+                    username = %username,
+                    credential_id = %existing_id,
+                    "[Idempotency] Found existing active provisioned credential, returning it"
+                );
+
+                // Decrypt stored wrapped password to plaintext to return to caller
+                let plaintext_bytes = state
+                    .crypto_service
+                    .decrypt_bytes(&existing_encrypted_password)
+                    .await
+                    .map_err(|e| {
+                        AppError::crypto_error_with_source(
+                            format!("Failed to decrypt stored credential: {e}"),
+                            e,
+                        )
+                    })?;
+
+                let password = String::from_utf8(plaintext_bytes).map_err(|_| {
+                    AppError::crypto_error("Decrypted credential is not valid UTF-8")
+                })?;
+
+                return Ok(IssueAgentCredentialOutput {
+                    credential_id: existing_id,
+                    username: username.clone(),
+                    password,
+                    expires_at: existing_expires_at,
+                });
+            }
+        }
+
+        // 3. Generowanie poświadczeń przez vHSM (wykonujemy dopiero gdy nie ma aktywnego rekordu)
+        let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
+
+        let generated = generate_secure_credential(
+            &state.crypto_service,
+            Some(kek_id),
+            &username,
+            DEFAULT_PASSWORD_LEN,
+        )
+        .await?;
 
         // 4. Rozpoczęcie transakcji SQL w KMS
         let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|err| {
