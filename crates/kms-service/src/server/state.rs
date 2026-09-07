@@ -244,13 +244,11 @@ impl AppState {
 
         let iam_policy_path = IamCredentialPolicy::default_policy_path();
         let iam_policy = Arc::new(
-            IamCredentialPolicy::load_from_file(&iam_policy_path).unwrap_or_else(|err| {
-                tracing::warn!(error = ?err, "Failed to load IAM policy, using empty default fallback");
-                IamCredentialPolicy {
-                    version: "2026-08-29".into(),
-                    statements: vec![],
-                }
-            }),
+            IamCredentialPolicy::load_from_file(&iam_policy_path)
+                .map_err(|err| {
+                    tracing::error!(error = ?err, "Failed to load IAM policy from {}", iam_policy_path.display());
+                    err
+                })?
         );
 
         let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(
