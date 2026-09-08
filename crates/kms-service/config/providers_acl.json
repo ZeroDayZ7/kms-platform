@@ -1,0 +1,24 @@
+{
+  "services": {
+    "auth-service": {
+      "constraints": {
+        "max_ttl_seconds": 3600,
+        "default_ttl_seconds": 900,
+        "redis_acl_rules": ["on", "+@read", "+ping", "~cache:auth:*"]
+      }
+    },
+    "gateway-service": {
+      "constraints": {
+        "max_ttl_seconds": 7200,
+        "default_ttl_seconds": 1800,
+        "redis_acl_rules": [
+          "on",
+          "+@read",
+          "+@write",
+          "+ping",
+          "~cache:gateway:*"
+        ]
+      }
+    }
+  }
+}

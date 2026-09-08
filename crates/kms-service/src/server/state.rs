@@ -216,7 +216,7 @@ impl AppState {
         ));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
-        let provider_factory = Arc::new(ProviderFactory::new());
+        let provider_factory = Arc::new(ProviderFactory::new(Arc::new(settings.providers_acl.clone())));
 
         let _ = crate::workers::expiration::run_expiration_worker(
             key_repo.clone(),

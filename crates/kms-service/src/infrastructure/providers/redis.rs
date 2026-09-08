@@ -4,6 +4,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use fred::prelude::*;
 use std::time::Duration;
 use url::Url;
+use crate::config::ProvidersAclSettings;
+use std::sync::Arc;
 
 use super::{GeneratedCredential, TargetResourceProvider};
 use crate::errors::AppError;
@@ -20,7 +22,15 @@ fn redis_acl_error(operation: &str, username: &str) -> AppError {
     AppError::Internal(format!("Redis {} operation failed", operation))
 }
 
-pub struct RedisTargetProvider;
+pub struct RedisTargetProvider {
+    providers_acl: Arc<ProvidersAclSettings>,
+}
+
+impl RedisTargetProvider {
+    pub fn new(providers_acl: Arc<ProvidersAclSettings>) -> Self {
+        Self { providers_acl }
+    }
+}
 
 impl RedisTargetProvider {
     /// Pomocnicza funkcja budująca klienta fred i nawiązująca połączenie z obsługą ACL username/password
@@ -116,35 +126,36 @@ impl TargetResourceProvider for RedisTargetProvider {
         let encoded_password = BASE64.encode(password_bytes);
         let client = self.connect_admin(target_conn_str).await?;
 
-        // Budowanie reguł ACL
-        let mut rules: Vec<String> = vec![
-            "on".to_string(),
-            format!(">{}", encoded_password),
-            "~*".to_string(),
-        ];
+        // Obtain policy for requesting service (role). Fail if missing — fail-fast semantics.
+        let policy = self
+            .providers_acl
+            .services
+            .get(role)
+            .ok_or_else(|| AppError::ConfigError(format!("No Redis ACL policy configured for service '{}'", role)))?;
 
-        if role.contains("write") && role.contains("read") {
-            rules.push("+@all".to_string());
-        } else if role.contains("write") {
-            rules.push("+@write".to_string());
-            rules.push("+@read".to_string());
-        } else if role.contains("read") {
-            rules.push("+@read".to_string());
-        } else {
-            rules.push("+@read".to_string());
+        let mut rules = policy
+            .constraints
+            .redis_acl_rules
+            .clone()
+            .ok_or_else(|| AppError::ConfigError(format!("No redis_acl_rules for service '{}'", role)))?;
+
+        // Ensure password rule is present (format: >base64password)
+        if !rules.iter().any(|r| r.starts_with('>')) {
+            if rules.len() >= 1 {
+                rules.insert(1, format!(">{}", encoded_password));
+            } else {
+                rules.push(format!(">{}", encoded_password));
+            }
         }
 
-        rules.push("-@admin".to_string());
+        // Ensure admin restriction is present
+        if !rules.iter().any(|r| r == "-@admin") {
+            rules.push("-@admin".to_string());
+        }
 
         tracing::info!(operation = "[R6] exec_acl_setuser", username = %role, "[R6] Executing ACL SETUSER via RESP ACL command");
 
-        // Build ACL SETUSER args: first arg is "SETUSER", then username, then rules...
-        let mut acl_cmd_args: Vec<String> = Vec::with_capacity(2 + rules.len());
-        acl_cmd_args.push("SETUSER".to_string());
-        acl_cmd_args.push(role.to_string());
-        acl_cmd_args.extend(rules.clone());
-
-        match client.acl_setuser(role, rules.clone()).await {
+        match client.acl_setuser(role, rules).await {
             Ok(_) => {
                 tracing::info!(operation = "[R7] setuser_ok", username = %role, target = "redis", ttl_seconds = ttl_seconds, "[R7] Redis ACL SETUSER executed successfully");
                 Ok(GeneratedCredential {

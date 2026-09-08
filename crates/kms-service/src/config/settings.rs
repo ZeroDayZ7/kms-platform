@@ -8,6 +8,7 @@ use super::redis::RedisConfig;
 use super::server::ServerConfig;
 use crate::config::crypto::CryptoSettings;
 use serde::Deserialize;
+use crate::config::ProvidersAclSettings;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Settings {
@@ -20,4 +21,5 @@ pub struct Settings {
     pub crypto: CryptoSettings,
     pub acl: AclSettings,
     pub auth: AuthConfig,
+    pub providers_acl: ProvidersAclSettings,
 }
