@@ -174,9 +174,18 @@ impl TargetResourceProvider for RedisTargetProvider {
             )));
         };
 
-        let mut rules = policy.constraints.redis_acl_rules.clone().ok_or_else(|| {
-            AppError::ConfigError(format!("No redis_acl_rules for service '{}'", role))
-        })?;
+        let redis_policy = policy
+            .redis
+            .as_ref()
+            .ok_or_else(|| AppError::ConfigError(format!("No redis configuration for service '{}'", role)))?;
+
+        let mut rules = redis_policy.acl_rules.clone();
+        if rules.is_empty() {
+            return Err(AppError::ConfigError(format!(
+                "No redis.acl_rules for service '{}'",
+                role
+            )));
+        }
 
         // Ensure password rule is present (format: >base64password)
         if !rules.iter().any(|r| r.starts_with('>')) {

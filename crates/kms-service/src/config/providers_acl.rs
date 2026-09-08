@@ -1,48 +1,32 @@
 use serde::Deserialize;
-use serde::de::Deserializer;
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct ProviderConstraints {
+    #[serde(default)]
     pub max_ttl_seconds: Option<i64>,
+    #[serde(default)]
     pub default_ttl_seconds: Option<i64>,
-    pub redis_acl_rules: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
+pub struct RedisProviderConfig {
+    #[serde(default)]
+    pub acl_rules: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct ProviderPolicy {
+    #[serde(default)]
     pub constraints: ProviderConstraints,
+    #[serde(default)]
+    pub redis: Option<RedisProviderConfig>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Deserialize, Clone, Default)]
 pub struct ProvidersAclSettings {
+    #[serde(default)]
     pub services: HashMap<String, ProviderPolicy>,
-}
-
-// Expect only the wrapped format now:
-// { "providers_acl": { "services": { ... } } }
-#[derive(Deserialize)]
-struct ProvidersAclWrapped {
-    providers_acl: ProvidersAclInner,
-}
-
-#[derive(Deserialize)]
-struct ProvidersAclInner {
-    services: HashMap<String, ProviderPolicy>,
-}
-
-impl<'de> Deserialize<'de> for ProvidersAclSettings {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let wrapped = ProvidersAclWrapped::deserialize(deserializer)
-            .map_err(|e| serde::de::Error::custom(format!("providers_acl: invalid format - expected '{{ \"providers_acl\": {{ \"services\": {{ ... }} }} }}' - {e}")))?;
-
-        Ok(ProvidersAclSettings {
-            services: wrapped.providers_acl.services,
-        })
-    }
 }
 
 impl ProvidersAclSettings {
@@ -52,17 +36,22 @@ impl ProvidersAclSettings {
         }
 
         for (name, policy) in &self.services {
-            if policy.constraints.redis_acl_rules.is_none() {
-                return Err(format!("service '{}' missing 'redis_acl_rules'", name));
+            if let Some(def) = policy.constraints.default_ttl_seconds {
+                if def <= 0 {
+                    return Err(format!("default_ttl_seconds for '{}' must be > 0", name));
+                }
+            }
+
+            if let Some(max) = policy.constraints.max_ttl_seconds {
+                if max <= 0 {
+                    return Err(format!("max_ttl_seconds for '{}' must be > 0", name));
+                }
             }
 
             if let (Some(def), Some(max)) = (
                 policy.constraints.default_ttl_seconds,
                 policy.constraints.max_ttl_seconds,
             ) {
-                if def <= 0 || max <= 0 {
-                    return Err(format!("ttl values for '{}' must be > 0", name));
-                }
                 if def > max {
                     return Err(format!(
                         "default_ttl_seconds > max_ttl_seconds for '{}'",
@@ -70,8 +59,80 @@ impl ProvidersAclSettings {
                     ));
                 }
             }
+
+            if let Some(redis) = &policy.redis {
+                if redis.acl_rules.is_empty() {
+                    return Err(format!("service '{}' has empty redis.acl_rules", name));
+                }
+            }
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn deserializes_direct_services_object() {
+        let value = json!({
+            "services": {
+                "auth-service": {
+                    "constraints": {
+                        "max_ttl_seconds": 86400,
+                        "default_ttl_seconds": 900
+                    },
+                    "redis": {
+                        "acl_rules": ["on", "+@read", "~cache:auth:*"]
+                    }
+                }
+            }
+        });
+
+        let settings: ProvidersAclSettings = serde_json::from_value(value).unwrap();
+        assert!(settings.services.contains_key("auth-service"));
+        assert!(settings.services["auth-service"].redis.is_some());
+    }
+
+    #[test]
+    fn validates_service_without_redis_specific_config() {
+        let value = json!({
+            "services": {
+                "postgres-service": {
+                    "constraints": {
+                        "max_ttl_seconds": 86400,
+                        "default_ttl_seconds": 900
+                    }
+                }
+            }
+        });
+
+        let settings: ProvidersAclSettings = serde_json::from_value(value).unwrap();
+        settings.validate().unwrap();
+    }
+
+    #[test]
+    fn rejects_wrapped_providers_acl_object() {
+        let value = json!({
+            "providers_acl": {
+                "services": {
+                    "gateway-service": {
+                        "constraints": {
+                            "max_ttl_seconds": 7200,
+                            "default_ttl_seconds": 1800
+                        },
+                        "redis": {
+                            "acl_rules": ["on", "+@read", "+ping"]
+                        }
+                    }
+                }
+            }
+        });
+
+        let settings: ProvidersAclSettings = serde_json::from_value(value).unwrap();
+        assert!(settings.validate().is_err());
     }
 }
