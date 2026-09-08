@@ -7,6 +7,7 @@ use kms_db::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::crypto::KmsCryptoService;
 use crate::{
     errors::{AppError, AppResult},
     server::state::AppState,
@@ -163,19 +164,38 @@ impl IssueAgentCredentialUseCase {
             }
         };
 
-        let admin_conn_bytes = state
-            .crypto_service
-            .decrypt_bytes(&conn_encrypted)
-            .await
-            .map_err(|e| {
-                AppError::crypto_error_with_source(
+        tracing::debug!(operation = "[DBG] fetched_target_resource", target_service = %input.target_service, target_id = %target_id, conn_encrypted_len = conn_encrypted.len(), sample_hex = %hex::encode(&conn_encrypted[..std::cmp::min(conn_encrypted.len(), 32)]));
+
+        let admin_conn_bytes = match state.crypto_service.decrypt_bytes(&conn_encrypted).await {
+            Ok(b) => b,
+            Err(e) => {
+                // try to fetch vHSM master key version for extra context
+                match state.crypto_service.current_master_key_version().await {
+                    Ok(ver) => {
+                        tracing::error!(operation = "[DBG] decrypt_target_conn_failed", target_service = %input.target_service, target_id = %target_id, vhsm_master_key_version = ver, error = %e, "Failed to decrypt target connection string")
+                    }
+                    Err(_) => {
+                        tracing::error!(operation = "[DBG] decrypt_target_conn_failed", target_service = %input.target_service, target_id = %target_id, error = %e, "Failed to decrypt target connection string")
+                    }
+                }
+                return Err(AppError::crypto_error_with_source(
                     format!("Failed to decrypt target connection string: {e}"),
                     e,
-                )
-            })?;
-        let admin_conn = String::from_utf8(admin_conn_bytes).map_err(|_| {
-            AppError::crypto_error("Decrypted target connection string is not valid UTF-8")
-        })?;
+                ));
+            }
+        };
+
+        tracing::debug!(operation = "[DBG] decrypted_target_conn", target_service = %input.target_service, target_id = %target_id, plaintext_len = admin_conn_bytes.len(), plaintext_sample_hex = %hex::encode(&admin_conn_bytes[..std::cmp::min(admin_conn_bytes.len(), 32)]));
+
+        let admin_conn = match String::from_utf8(admin_conn_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(operation = "[DBG] target_conn_not_utf8", target_service = %input.target_service, target_id = %target_id, err = ?e, "Decrypted target connection string is not valid UTF-8");
+                return Err(AppError::crypto_error(
+                    "Decrypted target connection string is not valid UTF-8",
+                ));
+            }
+        };
 
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
@@ -215,20 +235,34 @@ impl IssueAgentCredentialUseCase {
                 );
 
                 // Decrypt stored wrapped password to plaintext to return to caller
-                let plaintext_bytes = state
+                tracing::debug!(operation = "[DBG] decrypt_existing_credential", service = %input.caller_service, target_id = %target_id, encrypted_len = existing_encrypted_password.len(), sample_hex = %hex::encode(&existing_encrypted_password[..std::cmp::min(existing_encrypted_password.len(), 32)]));
+
+                let plaintext_bytes = match state
                     .crypto_service
                     .decrypt_bytes(&existing_encrypted_password)
                     .await
-                    .map_err(|e| {
-                        AppError::crypto_error_with_source(
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::error!(operation = "[DBG] decrypt_existing_failed", service = %input.caller_service, target_id = %target_id, error = %e, "Failed to decrypt stored credential");
+                        return Err(AppError::crypto_error_with_source(
                             format!("Failed to decrypt stored credential: {e}"),
                             e,
-                        )
-                    })?;
+                        ));
+                    }
+                };
 
-                let password = String::from_utf8(plaintext_bytes).map_err(|_| {
-                    AppError::crypto_error("Decrypted credential is not valid UTF-8")
-                })?;
+                tracing::debug!(operation = "[DBG] decrypted_existing_credential", service = %input.caller_service, target_id = %target_id, plaintext_len = plaintext_bytes.len(), plaintext_sample_hex = %hex::encode(&plaintext_bytes[..std::cmp::min(plaintext_bytes.len(), 32)]));
+
+                let password = match String::from_utf8(plaintext_bytes) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        tracing::error!(operation = "[DBG] existing_credential_not_utf8", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not valid UTF-8");
+                        return Err(AppError::crypto_error(
+                            "Decrypted credential is not valid UTF-8",
+                        ));
+                    }
+                };
 
                 return Ok(IssueAgentCredentialOutput {
                     credential_id: existing_id,

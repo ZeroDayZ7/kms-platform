@@ -1,11 +1,11 @@
+use crate::config::ProvidersAclSettings;
 use async_trait::async_trait;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use fred::prelude::*;
+use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
-use crate::config::ProvidersAclSettings;
-use std::sync::Arc;
 
 use super::{GeneratedCredential, TargetResourceProvider};
 use crate::errors::AppError;
@@ -127,17 +127,26 @@ impl TargetResourceProvider for RedisTargetProvider {
         let client = self.connect_admin(target_conn_str).await?;
 
         // Obtain policy for requesting service (role). Fail if missing — fail-fast semantics.
-        let policy = self
-            .providers_acl
-            .services
-            .get(role)
-            .ok_or_else(|| AppError::ConfigError(format!("No Redis ACL policy configured for service '{}'", role)))?;
+        let available_services: Vec<String> = self.providers_acl.services.keys().cloned().collect();
+        tracing::debug!(operation = "[DBG] providers_acl_lookup", available_services = ?available_services, requested_role = %role, "Looking up Redis ACL policy for role");
 
-        let mut rules = policy
-            .constraints
-            .redis_acl_rules
-            .clone()
-            .ok_or_else(|| AppError::ConfigError(format!("No redis_acl_rules for service '{}'", role)))?;
+        let policy = self.providers_acl.services.get(role).ok_or_else(|| {
+            AppError::ConfigError(format!(
+                "No Redis ACL policy configured for service '{}'. Available: {:?}",
+                role,
+                self.providers_acl
+                    .services
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+            ))
+        })?;
+
+        tracing::debug!(operation = "[DBG] providers_acl_policy", role = %role, policy = ?policy);
+
+        let mut rules = policy.constraints.redis_acl_rules.clone().ok_or_else(|| {
+            AppError::ConfigError(format!("No redis_acl_rules for service '{}'", role))
+        })?;
 
         // Ensure password rule is present (format: >base64password)
         if !rules.iter().any(|r| r.starts_with('>')) {

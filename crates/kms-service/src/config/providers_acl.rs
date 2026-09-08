@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use serde::de::Deserializer;
 use std::collections::HashMap;
 
 #[derive(Debug, Deserialize, Clone)]
@@ -13,9 +14,47 @@ pub struct ProviderPolicy {
     pub constraints: ProviderConstraints,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ProvidersAclSettings {
     pub services: HashMap<String, ProviderPolicy>,
+}
+
+// Backwards-compatible deserialization: accept either
+// { "services": { ... } }
+// or { "providers_acl": { "services": { ... } } }
+#[derive(Deserialize)]
+struct ProvidersAclDirect {
+    services: HashMap<String, ProviderPolicy>,
+}
+
+#[derive(Deserialize)]
+struct ProvidersAclWrapped {
+    providers_acl: ProvidersAclDirect,
+}
+
+impl<'de> Deserialize<'de> for ProvidersAclSettings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let v = serde_json::Value::deserialize(deserializer).map_err(serde::de::Error::custom)?;
+
+        if let Ok(direct) = ProvidersAclDirect::deserialize(v.clone()) {
+            return Ok(ProvidersAclSettings {
+                services: direct.services,
+            });
+        }
+
+        if let Ok(wrapped) = ProvidersAclWrapped::deserialize(v) {
+            return Ok(ProvidersAclSettings {
+                services: wrapped.providers_acl.services,
+            });
+        }
+
+        Err(serde::de::Error::custom(
+            "providers_acl: invalid format - expected either 'services' or 'providers_acl.services'",
+        ))
+    }
 }
 
 impl ProvidersAclSettings {
@@ -37,7 +76,10 @@ impl ProvidersAclSettings {
                     return Err(format!("ttl values for '{}' must be > 0", name));
                 }
                 if def > max {
-                    return Err(format!("default_ttl_seconds > max_ttl_seconds for '{}'", name));
+                    return Err(format!(
+                        "default_ttl_seconds > max_ttl_seconds for '{}'",
+                        name
+                    ));
                 }
             }
         }

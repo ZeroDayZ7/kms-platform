@@ -187,8 +187,8 @@ impl IntoResponse for AppError {
                 tracing::warn!(error_kind = "serialization", "JSON Serialization failed");
                 StatusCode::BAD_REQUEST
             }
-            Self::ConfigError(_) => {
-                tracing::error!(error_kind = "config", "Critical configuration error!");
+            Self::ConfigError(msg) => {
+                tracing::error!(error_kind = "config", error = %msg, "Critical configuration error!");
                 StatusCode::INTERNAL_SERVER_ERROR
             }
             Self::ExternalServiceError(_) => {
