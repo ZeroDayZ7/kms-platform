@@ -26,19 +26,25 @@ impl TargetResourceProvider for PostgresTargetProvider {
     async fn create_user(
         &self,
         target_conn_str: &str,
-        role: &str,
+        caller_service: &str,
+        generated_username: &str,
         ttl_seconds: i64,
         password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError> {
+        let _ = caller_service;
+
         let password_bytes = password.ok_or_else(|| {
             AppError::Internal("No password provided for Postgres provider".to_string())
         })?;
 
-        // Zmienna `role` zawiera wygenerowaną nazwę użytkownika (np. kms_authserv_a1b2c3d4)
-        let created =
-            PostgresDdlExecutor::create_user(target_conn_str, role, ttl_seconds, password_bytes)
-                .await
-                .map_err(|err| postgres_ddl_error("create_user", role, err))?;
+        let created = PostgresDdlExecutor::create_user(
+            target_conn_str,
+            generated_username,
+            ttl_seconds,
+            password_bytes,
+        )
+        .await
+        .map_err(|err| postgres_ddl_error("create_user", generated_username, err))?;
 
         tracing::info!(
             operation = "create_user",

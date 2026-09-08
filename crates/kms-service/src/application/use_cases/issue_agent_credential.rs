@@ -200,72 +200,64 @@ impl IssueAgentCredentialUseCase {
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
-        // Idempotency check: jeśli istnieje już aktywne poświadczenie dla tej pary (service, target, username)
-        // zwracamy je zamiast generować nowe. To zapobiega wielokrotnemu tworzeniu rekordów
-        // gdy część providerów (np. Redis) jest niedostępna.
-        let username = generate_unique_username(&input.caller_service);
-
-        if let Some((target_id, _conn_encrypted)) = target_row.as_ref() {
-            if let Some((existing_id, existing_encrypted_password, existing_expires_at)) =
-                CredentialQueries::fetch_active_provisioned_credential(
-                    &state.db,
-                    &input.caller_service,
-                    *target_id,
-                    &username,
+        if let Some((active_id, active_username, active_encrypted_password, active_expires_at)) =
+            CredentialQueries::fetch_latest_active_provisioned_credential_for_service_target(
+                &state.db,
+                &input.caller_service,
+                target_id,
+            )
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
                 )
+            })?
+        {
+            tracing::info!(
+                caller = %input.caller_service,
+                target = %input.target_service,
+                username = %active_username,
+                credential_id = %active_id,
+                "[Idempotency] Found existing active provisioned credential for caller+target; returning it"
+            );
+
+            tracing::debug!(operation = "[DBG] decrypt_existing_credential", service = %input.caller_service, target_id = %target_id, encrypted_len = active_encrypted_password.len(), sample_hex = %hex::encode(&active_encrypted_password[..std::cmp::min(active_encrypted_password.len(), 32)]));
+
+            let plaintext_bytes = match state
+                .crypto_service
+                .decrypt_bytes(&active_encrypted_password)
                 .await
-                .map_err(|err| {
-                    AppError::database_error_with_source(
-                        format!("Database operation failed: {err}"),
-                        err,
-                    )
-                })?
             {
-                tracing::info!(
-                    caller = %input.caller_service,
-                    target = %input.target_service,
-                    username = %username,
-                    credential_id = %existing_id,
-                    "[Idempotency] Found existing active provisioned credential, returning it"
-                );
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!(operation = "[DBG] decrypt_existing_failed", service = %input.caller_service, target_id = %target_id, error = %e, "Failed to decrypt stored credential");
+                    return Err(AppError::crypto_error_with_source(
+                        format!("Failed to decrypt stored credential: {e}"),
+                        e,
+                    ));
+                }
+            };
 
-                // Decrypt stored wrapped password to plaintext to return to caller
-                tracing::debug!(operation = "[DBG] decrypt_existing_credential", service = %input.caller_service, target_id = %target_id, encrypted_len = existing_encrypted_password.len(), sample_hex = %hex::encode(&existing_encrypted_password[..std::cmp::min(existing_encrypted_password.len(), 32)]));
+            tracing::debug!(operation = "[DBG] decrypted_existing_credential", service = %input.caller_service, target_id = %target_id, plaintext_len = plaintext_bytes.len(), plaintext_sample_hex = %hex::encode(&plaintext_bytes[..std::cmp::min(plaintext_bytes.len(), 32)]));
 
-                let plaintext_bytes = match state
-                    .crypto_service
-                    .decrypt_bytes(&existing_encrypted_password)
-                    .await
-                {
-                    Ok(b) => b,
-                    Err(e) => {
-                        tracing::error!(operation = "[DBG] decrypt_existing_failed", service = %input.caller_service, target_id = %target_id, error = %e, "Failed to decrypt stored credential");
-                        return Err(AppError::crypto_error_with_source(
-                            format!("Failed to decrypt stored credential: {e}"),
-                            e,
-                        ));
-                    }
-                };
+            let password = match String::from_utf8(plaintext_bytes.clone()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!(operation = "[DBG] existing_credential_not_utf8", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not valid UTF-8 - returning base64 encoded value");
+                    BASE64.encode(&plaintext_bytes)
+                }
+            };
 
-                tracing::debug!(operation = "[DBG] decrypted_existing_credential", service = %input.caller_service, target_id = %target_id, plaintext_len = plaintext_bytes.len(), plaintext_sample_hex = %hex::encode(&plaintext_bytes[..std::cmp::min(plaintext_bytes.len(), 32)]));
-
-                let password = match String::from_utf8(plaintext_bytes.clone()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::warn!(operation = "[DBG] existing_credential_not_utf8", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not valid UTF-8 - returning base64 encoded value");
-                        // If plaintext is binary (not UTF-8), return base64 encoded representation
-                        BASE64.encode(&plaintext_bytes)
-                    }
-                };
-
-                return Ok(IssueAgentCredentialOutput {
-                    credential_id: existing_id,
-                    username: username.clone(),
-                    password,
-                    expires_at: existing_expires_at,
-                });
-            }
+            return Ok(IssueAgentCredentialOutput {
+                credential_id: active_id,
+                username: active_username,
+                password,
+                expires_at: active_expires_at,
+            });
         }
+
+        let username = generate_unique_username(&input.caller_service);
 
         // 3. Generowanie poświadczeń przez vHSM (wykonujemy dopiero gdy nie ma aktywnego rekordu)
         let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
@@ -327,6 +319,7 @@ impl IssueAgentCredentialUseCase {
         let provider_result = provider
             .create_user(
                 &admin_conn,
+                &input.caller_service,
                 &username,
                 input.ttl_seconds as i64,
                 Some(secret_zero.as_ref()),

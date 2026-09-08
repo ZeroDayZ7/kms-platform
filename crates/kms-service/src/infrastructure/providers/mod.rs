@@ -21,7 +21,8 @@ pub trait TargetResourceProvider: Send + Sync {
     async fn create_user(
         &self,
         target_conn_str: &str,
-        role: &str,
+        caller_service: &str,
+        generated_username: &str,
         ttl_seconds: i64,
         password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError>;

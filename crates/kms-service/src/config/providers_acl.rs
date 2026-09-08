@@ -36,34 +36,33 @@ impl ProvidersAclSettings {
         }
 
         for (name, policy) in &self.services {
-            if let Some(def) = policy.constraints.default_ttl_seconds {
-                if def <= 0 {
-                    return Err(format!("default_ttl_seconds for '{}' must be > 0", name));
-                }
+            if let Some(def) = policy.constraints.default_ttl_seconds
+                && def <= 0
+            {
+                return Err(format!("default_ttl_seconds for '{}' must be > 0", name));
             }
 
-            if let Some(max) = policy.constraints.max_ttl_seconds {
-                if max <= 0 {
-                    return Err(format!("max_ttl_seconds for '{}' must be > 0", name));
-                }
+            if let Some(max) = policy.constraints.max_ttl_seconds
+                && max <= 0
+            {
+                return Err(format!("max_ttl_seconds for '{}' must be > 0", name));
             }
 
             if let (Some(def), Some(max)) = (
                 policy.constraints.default_ttl_seconds,
                 policy.constraints.max_ttl_seconds,
-            ) {
-                if def > max {
-                    return Err(format!(
-                        "default_ttl_seconds > max_ttl_seconds for '{}'",
-                        name
-                    ));
-                }
+            ) && def > max
+            {
+                return Err(format!(
+                    "default_ttl_seconds > max_ttl_seconds for '{}'",
+                    name
+                ));
             }
 
-            if let Some(redis) = &policy.redis {
-                if redis.acl_rules.is_empty() {
-                    return Err(format!("service '{}' has empty redis.acl_rules", name));
-                }
+            if let Some(redis) = &policy.redis
+                && redis.acl_rules.is_empty()
+            {
+                return Err(format!("service '{}' has empty redis.acl_rules", name));
             }
         }
 

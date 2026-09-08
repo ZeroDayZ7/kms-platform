@@ -286,6 +286,30 @@ impl CredentialQueries {
         .await
     }
 
+    pub async fn fetch_latest_active_provisioned_credential_for_service_target(
+        pool: &PgPool,
+        service_id: &str,
+        target_id: Uuid,
+    ) -> Result<Option<(Uuid, String, Vec<u8>, DateTime<Utc>)>, sqlx::Error> {
+        sqlx::query_as::<_, (Uuid, String, Vec<u8>, DateTime<Utc>)>(
+            r#"
+            SELECT id, username, password_encrypted, expires_at
+            FROM provisioned_credentials
+            WHERE service_id = $1
+              AND target_id = $2
+              AND revoked = false
+              AND status = 'ACTIVE'
+              AND expires_at > NOW()
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(service_id)
+        .bind(target_id)
+        .fetch_optional(pool)
+        .await
+    }
+
     pub async fn update_provisioned_credential_status(
         tx: &mut Transaction<'_, Postgres>,
         id: Uuid,
