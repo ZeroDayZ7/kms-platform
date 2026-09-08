@@ -155,7 +155,7 @@ impl IssueAgentCredentialUseCase {
                 })?;
 
         let (target_id, conn_encrypted) = match target_row.as_ref() {
-            Some(v) => (v.0, v.1.clone()), // Poprawka: usunięto .clone() z v.0 (Uuid jest Copy)
+            Some(v) => (v.0, v.1.clone()),
             None => {
                 return Err(AppError::NotFound(format!(
                     "Target resource not found: {}",
@@ -300,7 +300,7 @@ impl IssueAgentCredentialUseCase {
             target_id,
             &username,
             &generated.encrypted_password,
-            &username,
+            &input.caller_service,
             expires_at,
             ProvisioningStatus::Provisioning.as_str(),
         )
