@@ -6,9 +6,9 @@ use super::log::LogConfig;
 use super::rate_limit::RateLimitConfig;
 use super::redis::RedisConfig;
 use super::server::ServerConfig;
+use crate::config::ProvidersAclSettings;
 use crate::config::crypto::CryptoSettings;
 use serde::Deserialize;
-use crate::config::ProvidersAclSettings;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct Settings {

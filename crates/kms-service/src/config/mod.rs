@@ -4,10 +4,10 @@ use config::{Config, ConfigError, Environment, File};
 mod auth;
 mod database;
 mod log;
+mod providers_acl;
 mod redis;
 mod server;
 mod settings;
-mod providers_acl;
 
 pub mod acl;
 pub mod cors;
@@ -20,9 +20,9 @@ pub use database::DatabaseConfig;
 pub use log::LogConfig;
 pub use log::LogFormat;
 pub use log::LogLevel;
+pub use providers_acl::ProvidersAclSettings;
 pub use redis::RedisConfig;
 pub use settings::Settings;
-pub use providers_acl::ProvidersAclSettings;
 
 //#region load
 pub fn load() -> Result<Settings, ConfigError> {
@@ -63,7 +63,10 @@ pub fn load_from<P: AsRef<std::path::Path>>(path: P) -> Result<Settings, ConfigE
 
     // validate providers_acl semantics and fail fast on invalid config
     if let Err(e) = settings.providers_acl.validate() {
-        return Err(ConfigError::Message(format!("providers_acl.json validation failed: {}", e)));
+        return Err(ConfigError::Message(format!(
+            "providers_acl.json validation failed: {}",
+            e
+        )));
     }
 
     Ok(settings)

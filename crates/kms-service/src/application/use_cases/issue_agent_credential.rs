@@ -155,7 +155,7 @@ impl IssueAgentCredentialUseCase {
                 })?;
 
         let (target_id, conn_encrypted) = match target_row.as_ref() {
-            Some(v) => (v.0.clone(), v.1.clone()),
+            Some(v) => (v.0, v.1.clone()), // Poprawka: usunięto .clone() z v.0 (Uuid jest Copy)
             None => {
                 return Err(AppError::NotFound(format!(
                     "Target resource not found: {}",
@@ -203,19 +203,14 @@ impl IssueAgentCredentialUseCase {
         // Idempotency check: jeśli istnieje już aktywne poświadczenie dla tej pary (service, target, username)
         // zwracamy je zamiast generować nowe. To zapobiega wielokrotnemu tworzeniu rekordów
         // gdy część providerów (np. Redis) jest niedostępna.
-        let username = build_generic_username(&input.caller_service, &input.target_service);
+        let username = generate_unique_username(&input.caller_service);
 
-        if let Some((_target_id, _conn_encrypted)) = target_row.as_ref() {
-            let (target_id, _conn_encrypted) = (
-                target_row.as_ref().unwrap().0,
-                target_row.as_ref().unwrap().1.clone(),
-            );
-
+        if let Some((target_id, _conn_encrypted)) = target_row.as_ref() {
             if let Some((existing_id, existing_encrypted_password, existing_expires_at)) =
                 CredentialQueries::fetch_active_provisioned_credential(
                     &state.db,
                     &input.caller_service,
-                    target_id,
+                    *target_id,
                     &username,
                 )
                 .await
@@ -394,8 +389,32 @@ impl IssueAgentCredentialUseCase {
 
 // --- Funkcje pomocnicze ---
 
-pub fn build_generic_username(caller_service: &str, target_service: &str) -> String {
-    format!("kms_{}_{}", caller_service, target_service)
+pub fn generate_unique_username(caller_service: &str) -> String {
+    let mut safe_prefix = caller_service
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric()) // Poprawka: zamiana filter_map na filter
+        .collect::<String>();
+
+    if safe_prefix.is_empty() {
+        safe_prefix = "kms".to_string();
+    }
+
+    let prefix = if safe_prefix.len() > 10 {
+        safe_prefix[..10].to_string()
+    } else {
+        safe_prefix
+    };
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let suffix = suffix.chars().take(8).collect::<String>();
+
+    format!("kms_{prefix}_{suffix}")
+}
+
+pub fn build_generic_username(caller_service: &str, _target_service: &str) -> String {
+    generate_unique_username(caller_service)
 }
 
 pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -> AppResult<Uuid> {
@@ -602,5 +621,22 @@ mod tests {
         let unauthorized_result =
             validate_agent_credential_acl(&policy, "auth-service", "database", "other_db");
         assert!(matches!(unauthorized_result, Err(AppError::Forbidden)));
+    }
+
+    #[test]
+    fn generate_unique_username_uses_safe_short_prefix_and_random_suffix() {
+        let username1 = generate_unique_username("auth-service");
+        let username2 = generate_unique_username("auth-service");
+
+        assert!(username1.starts_with("kms_"));
+        assert!(username2.starts_with("kms_"));
+        assert!(username1.len() <= 24);
+        assert!(username2.len() <= 24);
+        assert!(username1 != username2);
+        assert!(
+            username1[4..]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        );
     }
 }

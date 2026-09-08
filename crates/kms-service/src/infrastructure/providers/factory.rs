@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::{TargetResourceProvider, postgres::PostgresTargetProvider, redis::RedisTargetProvider};
-use crate::errors::AppError;
 use crate::config::ProvidersAclSettings;
+use crate::errors::AppError;
 
 pub struct ProviderFactory {
     providers: HashMap<String, Arc<dyn TargetResourceProvider>>,

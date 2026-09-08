@@ -4,15 +4,19 @@ use kms_db::target_providers::PostgresDdlExecutor;
 use super::{GeneratedCredential, TargetResourceProvider};
 use crate::errors::AppError;
 
-fn postgres_ddl_error(operation: &str, username: &str) -> AppError {
+fn postgres_ddl_error(operation: &str, username: &str, err: impl std::fmt::Display) -> AppError {
     tracing::error!(
         target: "infra::db",
         operation,
         username,
         status = "failed",
+        error = %err,
         "PostgreSQL DDL operation failed"
     );
-    AppError::Internal(format!("PostgreSQL {} operation failed", operation))
+    AppError::Internal(format!(
+        "PostgreSQL {} operation failed for user '{}': {}",
+        operation, username, err
+    ))
 }
 
 pub struct PostgresTargetProvider;
@@ -30,10 +34,11 @@ impl TargetResourceProvider for PostgresTargetProvider {
             AppError::Internal("No password provided for Postgres provider".to_string())
         })?;
 
+        // Zmienna `role` zawiera wygenerowaną nazwę użytkownika (np. kms_authserv_a1b2c3d4)
         let created =
             PostgresDdlExecutor::create_user(target_conn_str, role, ttl_seconds, password_bytes)
                 .await
-                .map_err(|_| postgres_ddl_error("create_user", "target-user"))?;
+                .map_err(|err| postgres_ddl_error("create_user", role, err))?;
 
         tracing::info!(
             operation = "create_user",
@@ -60,7 +65,7 @@ impl TargetResourceProvider for PostgresTargetProvider {
 
         PostgresDdlExecutor::revoke_user(target_conn_str, username)
             .await
-            .map_err(|_| postgres_ddl_error("drop_user", username))?;
+            .map_err(|err| postgres_ddl_error("drop_user", username, err))?;
 
         Ok(())
     }

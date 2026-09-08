@@ -11,15 +11,19 @@ use super::{GeneratedCredential, TargetResourceProvider};
 use crate::errors::AppError;
 use zeroize::Zeroizing;
 
-fn redis_acl_error(operation: &str, username: &str) -> AppError {
+fn redis_acl_error(operation: &str, username: &str, err: impl std::fmt::Display) -> AppError {
     tracing::error!(
         target: "infra::redis",
         operation,
         username,
         status = "failed",
+        error = %err,
         "Redis ACL operation failed"
     );
-    AppError::Internal(format!("Redis {} operation failed", operation))
+    AppError::Internal(format!(
+        "Redis {} operation failed for user '{}': {}",
+        operation, username, err
+    ))
 }
 
 pub struct RedisTargetProvider {
@@ -30,10 +34,7 @@ impl RedisTargetProvider {
     pub fn new(providers_acl: Arc<ProvidersAclSettings>) -> Self {
         Self { providers_acl }
     }
-}
 
-impl RedisTargetProvider {
-    /// Pomocnicza funkcja budująca klienta fred i nawiązująca połączenie z obsługą ACL username/password
     async fn connect_admin(&self, target_conn_str: &str) -> Result<Client, AppError> {
         let url = Url::parse(target_conn_str)
             .map_err(|_| AppError::Internal("Invalid Redis connection string format".into()))?;
@@ -43,7 +44,6 @@ impl RedisTargetProvider {
             .ok_or_else(|| AppError::Internal("Redis connection string missing host".into()))?;
         let port = url.port().unwrap_or(6379);
 
-        // KLUCZOWA POPRAWKA: Odczyt username i password z URL dla Redis 6+ ACL
         let username = if url.username().is_empty() {
             None
         } else {
@@ -113,7 +113,7 @@ impl TargetResourceProvider for RedisTargetProvider {
     async fn create_user(
         &self,
         target_conn_str: &str,
-        role: &str,
+        role: &str, // Wygenerowany, unikalny username (np. kms_authservic_a1b2c3d4)
         ttl_seconds: i64,
         password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError> {
@@ -126,77 +126,49 @@ impl TargetResourceProvider for RedisTargetProvider {
         let encoded_password = BASE64.encode(password_bytes);
         let client = self.connect_admin(target_conn_str).await?;
 
-        // Obtain policy for requesting service (role). Fail if missing — fail-fast semantics.
-        let available_services: Vec<String> = self.providers_acl.services.keys().cloned().collect();
-        tracing::debug!(operation = "[DBG] providers_acl_lookup", available_services = ?available_services, requested_role = %role, "Looking up Redis ACL policy for role");
-
-        // Try direct lookup first; if not found, fallback to caller_service extracted from role like `kms_{caller}_{target}`
-        let policy = if let Some(p) = self.providers_acl.services.get(role) {
-            p.clone()
-        } else if role.starts_with("kms_") {
-            let mut parts = role.splitn(3, '_');
-            let _prefix = parts.next(); // "kms"
-            if let Some(caller) = parts.next() {
-                if let Some(p2) = self.providers_acl.services.get(caller) {
-                    tracing::debug!(operation = "[DBG] providers_acl_fallback", requested_role = %role, using_policy_for = %caller);
-                    p2.clone()
-                } else {
-                    return Err(AppError::ConfigError(format!(
-                        "No Redis ACL policy configured for service '{}'. Available: {:?}",
-                        role,
-                        self.providers_acl
-                            .services
-                            .keys()
-                            .cloned()
-                            .collect::<Vec<_>>()
-                    )));
-                }
-            } else {
-                return Err(AppError::ConfigError(format!(
-                    "No Redis ACL policy configured for service '{}'. Available: {:?}",
+        // POPRAWKA LOOKUPU ACL:
+        // Szukamy dopasowania w konfiguracji JSON po pełnych i skróconych nazwach
+        let policy = self.providers_acl.services.get(role)
+            .or_else(|| {
+                // Jeśli role to np. kms_authservic_a1b2c3d4, szukamy usera po prefiksie w konfiguracji
+                self.providers_acl.services.keys().find(|k| {
+                    let sanitized_k = k.replace('-', "");
+                    role.contains(&sanitized_k) || role.contains(k.as_str())
+                }).and_then(|k| self.providers_acl.services.get(k))
+            })
+            .ok_or_else(|| {
+                AppError::ConfigError(format!(
+                    "No Redis ACL policy configured for requested role/service '{}'. Available: {:?}",
                     role,
-                    self.providers_acl
-                        .services
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                )));
-            }
-        } else {
-            return Err(AppError::ConfigError(format!(
-                "No Redis ACL policy configured for service '{}'. Available: {:?}",
-                role,
-                self.providers_acl
-                    .services
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-            )));
-        };
+                    self.providers_acl.services.keys().cloned().collect::<Vec<_>>()
+                ))
+            })?;
 
-        let redis_policy = policy
-            .redis
-            .as_ref()
-            .ok_or_else(|| AppError::ConfigError(format!("No redis configuration for service '{}'", role)))?;
+        let redis_policy = policy.redis.as_ref().ok_or_else(|| {
+            AppError::ConfigError(format!(
+                "No redis configuration for service role '{}'",
+                role
+            ))
+        })?;
 
         let mut rules = redis_policy.acl_rules.clone();
         if rules.is_empty() {
             return Err(AppError::ConfigError(format!(
-                "No redis.acl_rules for service '{}'",
+                "No redis.acl_rules for service role '{}'",
                 role
             )));
         }
 
-        // Ensure password rule is present (format: >base64password)
+        // Dodanie reguły hasła (>password)
         if !rules.iter().any(|r| r.starts_with('>')) {
-            if rules.len() >= 1 {
+            if !rules.is_empty() {
                 rules.insert(1, format!(">{}", encoded_password));
             } else {
                 rules.push(format!(">{}", encoded_password));
             }
         }
 
-        // Ensure admin restriction is present
+        // Restrykcja admina
         if !rules.iter().any(|r| r == "-@admin") {
             rules.push("-@admin".to_string());
         }
@@ -212,10 +184,7 @@ impl TargetResourceProvider for RedisTargetProvider {
                     ttl_seconds,
                 })
             }
-            Err(e) => {
-                tracing::error!(operation = "[R8] setuser_err", error = ?e, username = %role, "[R8] Redis ACL SETUSER failed");
-                Err(redis_acl_error("create_user", role))
-            }
+            Err(e) => Err(redis_acl_error("create_user", role, e)),
         }
     }
 
@@ -226,7 +195,6 @@ impl TargetResourceProvider for RedisTargetProvider {
 
         tracing::info!(operation = "[R11] deluser", username = %username, "[R11] Executing ACL DELUSER via RESP ACL command");
 
-        // Execute ACL DELUSER <username>
         match client.acl_deluser::<i64, _>(username).await {
             Ok(_) => {
                 tracing::info!(operation = "[R11] deluser_ok", username = %username, target = "redis", "[R11] Redis ACL user removed");
@@ -235,11 +203,10 @@ impl TargetResourceProvider for RedisTargetProvider {
             Err(e) => {
                 tracing::warn!(operation = "[R12] deluser_failed", error = ?e, username = %username, "[R12] ACL DELUSER failed, falling back to SETUSER off");
 
-                client.acl_setuser(username, vec!["off".to_string()]).await
-                    .map_err(|err| {
-                        tracing::error!(operation = "[R13] disable_failed", error = ?err, username = %username, "[R13] Fallback disable failed");
-                        redis_acl_error("drop_user", username)
-                    })?;
+                client
+                    .acl_setuser(username, vec!["off".to_string()])
+                    .await
+                    .map_err(|err| redis_acl_error("drop_user", username, err))?;
 
                 Ok(())
             }
