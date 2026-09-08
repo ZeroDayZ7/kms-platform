@@ -130,8 +130,40 @@ impl TargetResourceProvider for RedisTargetProvider {
         let available_services: Vec<String> = self.providers_acl.services.keys().cloned().collect();
         tracing::debug!(operation = "[DBG] providers_acl_lookup", available_services = ?available_services, requested_role = %role, "Looking up Redis ACL policy for role");
 
-        let policy = self.providers_acl.services.get(role).ok_or_else(|| {
-            AppError::ConfigError(format!(
+        // Try direct lookup first; if not found, fallback to caller_service extracted from role like `kms_{caller}_{target}`
+        let policy = if let Some(p) = self.providers_acl.services.get(role) {
+            p.clone()
+        } else if role.starts_with("kms_") {
+            let mut parts = role.splitn(3, '_');
+            let _prefix = parts.next(); // "kms"
+            if let Some(caller) = parts.next() {
+                if let Some(p2) = self.providers_acl.services.get(caller) {
+                    tracing::debug!(operation = "[DBG] providers_acl_fallback", requested_role = %role, using_policy_for = %caller);
+                    p2.clone()
+                } else {
+                    return Err(AppError::ConfigError(format!(
+                        "No Redis ACL policy configured for service '{}'. Available: {:?}",
+                        role,
+                        self.providers_acl
+                            .services
+                            .keys()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    )));
+                }
+            } else {
+                return Err(AppError::ConfigError(format!(
+                    "No Redis ACL policy configured for service '{}'. Available: {:?}",
+                    role,
+                    self.providers_acl
+                        .services
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                )));
+            }
+        } else {
+            return Err(AppError::ConfigError(format!(
                 "No Redis ACL policy configured for service '{}'. Available: {:?}",
                 role,
                 self.providers_acl
@@ -139,10 +171,8 @@ impl TargetResourceProvider for RedisTargetProvider {
                     .keys()
                     .cloned()
                     .collect::<Vec<_>>()
-            ))
-        })?;
-
-        tracing::debug!(operation = "[DBG] providers_acl_policy", role = %role, policy = ?policy);
+            )));
+        };
 
         let mut rules = policy.constraints.redis_acl_rules.clone().ok_or_else(|| {
             AppError::ConfigError(format!("No redis_acl_rules for service '{}'", role))

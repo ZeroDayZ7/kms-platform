@@ -254,13 +254,12 @@ impl IssueAgentCredentialUseCase {
 
                 tracing::debug!(operation = "[DBG] decrypted_existing_credential", service = %input.caller_service, target_id = %target_id, plaintext_len = plaintext_bytes.len(), plaintext_sample_hex = %hex::encode(&plaintext_bytes[..std::cmp::min(plaintext_bytes.len(), 32)]));
 
-                let password = match String::from_utf8(plaintext_bytes) {
+                let password = match String::from_utf8(plaintext_bytes.clone()) {
                     Ok(s) => s,
                     Err(e) => {
-                        tracing::error!(operation = "[DBG] existing_credential_not_utf8", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not valid UTF-8");
-                        return Err(AppError::crypto_error(
-                            "Decrypted credential is not valid UTF-8",
-                        ));
+                        tracing::warn!(operation = "[DBG] existing_credential_not_utf8", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not valid UTF-8 - returning base64 encoded value");
+                        // If plaintext is binary (not UTF-8), return base64 encoded representation
+                        BASE64.encode(&plaintext_bytes)
                     }
                 };
 
