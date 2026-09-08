@@ -19,17 +19,16 @@ pub struct ProvidersAclSettings {
     pub services: HashMap<String, ProviderPolicy>,
 }
 
-// Backwards-compatible deserialization: accept either
-// { "services": { ... } }
-// or { "providers_acl": { "services": { ... } } }
+// Expect only the wrapped format now:
+// { "providers_acl": { "services": { ... } } }
 #[derive(Deserialize)]
-struct ProvidersAclDirect {
-    services: HashMap<String, ProviderPolicy>,
+struct ProvidersAclWrapped {
+    providers_acl: ProvidersAclInner,
 }
 
 #[derive(Deserialize)]
-struct ProvidersAclWrapped {
-    providers_acl: ProvidersAclDirect,
+struct ProvidersAclInner {
+    services: HashMap<String, ProviderPolicy>,
 }
 
 impl<'de> Deserialize<'de> for ProvidersAclSettings {
@@ -37,23 +36,12 @@ impl<'de> Deserialize<'de> for ProvidersAclSettings {
     where
         D: Deserializer<'de>,
     {
-        let v = serde_json::Value::deserialize(deserializer).map_err(serde::de::Error::custom)?;
+        let wrapped = ProvidersAclWrapped::deserialize(deserializer)
+            .map_err(|e| serde::de::Error::custom(format!("providers_acl: invalid format - expected '{{ \"providers_acl\": {{ \"services\": {{ ... }} }} }}' - {e}")))?;
 
-        if let Ok(direct) = ProvidersAclDirect::deserialize(v.clone()) {
-            return Ok(ProvidersAclSettings {
-                services: direct.services,
-            });
-        }
-
-        if let Ok(wrapped) = ProvidersAclWrapped::deserialize(v) {
-            return Ok(ProvidersAclSettings {
-                services: wrapped.providers_acl.services,
-            });
-        }
-
-        Err(serde::de::Error::custom(
-            "providers_acl: invalid format - expected either 'services' or 'providers_acl.services'",
-        ))
+        Ok(ProvidersAclSettings {
+            services: wrapped.providers_acl.services,
+        })
     }
 }
 

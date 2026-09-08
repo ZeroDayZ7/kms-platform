@@ -179,7 +179,6 @@ pub async fn issue_batch_credentials_handler(
                 );
             }
             Err(e) => {
-                // TUTAJ ZOBACZYSZ DOKŁADNY BŁĄD
                 tracing::error!(
                     error = %e,
                     name = %item.name,
@@ -187,7 +186,7 @@ pub async fn issue_batch_credentials_handler(
                     resource = %item.resource,
                     "[KMS 2.ERROR] Błąd podczas pobierania/generowania poświadczeń (najpewniej brak rekordu w target_resources)"
                 );
-                return Err(e); // Zwracamy błąd dalej do Axuma
+                return Err(e);
             }
         }
     }
