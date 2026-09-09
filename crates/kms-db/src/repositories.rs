@@ -333,22 +333,46 @@ impl CredentialQueries {
 pub struct BootstrapQueries;
 
 impl BootstrapQueries {
+    pub async fn target_resource_exists_by_id(
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM target_resources WHERE id = $1)")
+            .bind(id)
+            .fetch_one(&mut **tx)
+            .await
+    }
+
+    pub async fn credential_exists_by_id(
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM provisioned_credentials WHERE id = $1)",
+        )
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await
+    }
+
     pub async fn insert_target_resource(
         tx: &mut Transaction<'_, Postgres>,
         id: Uuid,
         target_name: &str,
         target_type: &str,
         connection_url_encrypted: &[u8],
+        default_role: Option<&str>,
         created_at: DateTime<Utc>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
-            INSERT INTO target_resources (id, target_name, target_type, connection_url_encrypted, active, created_at)
-            VALUES ($1, $2, $3, $4, true, $5)
+            INSERT INTO target_resources (id, target_name, target_type, connection_url_encrypted, default_role, active, created_at)
+            VALUES ($1, $2, $3, $4, $5, true, $6)
             ON CONFLICT (target_name)
             DO UPDATE SET
                 target_type = EXCLUDED.target_type,
                 connection_url_encrypted = EXCLUDED.connection_url_encrypted,
+                default_role = EXCLUDED.default_role,
                 active = true
             "#,
         )
@@ -356,6 +380,7 @@ impl BootstrapQueries {
         .bind(target_name)
         .bind(target_type)
         .bind(connection_url_encrypted)
+        .bind(default_role)
         .bind(created_at)
         .execute(&mut **tx)
         .await

@@ -7,7 +7,7 @@ use chrono::Utc;
 use kms_db::repositories::{AuditQueries, BootstrapQueries};
 use kms_db::{Postgres, Transaction};
 use serde::Deserialize;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -22,19 +22,23 @@ pub struct ImportBootstrapInput {
 
 #[derive(Debug, Deserialize)]
 pub struct TargetResourceRecord {
+    pub id: Option<Uuid>,
     pub target_name: String,
-    pub target_type: String,
+    pub engine: String, // zmiana z target_type w zaleznosci od mapowania JSON/DB
     pub connection_url: String,
+    pub default_role: Option<String>,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct BootstrapCredentialRecord {
+    pub id: Option<Uuid>,
     service_id: ServiceId,
     target_id: Option<TargetId>,
     credential_id: Option<CredentialId>,
-    target_type: String,
-    target_db: String,
+    #[serde(alias = "target_type")]
+    engine: String,
+    target_db: serde_json::Value, // obsługa String ("db-auth") oraz Number (0 dla Redis)
     resource: Option<String>,
     username: String,
     password: SecretString,
@@ -65,7 +69,7 @@ pub async fn import_bootstrap(
     info!(
         target_resources_len = input.target_resources.len(),
         credentials_len = input.credentials.len(),
-        "Rozpoczynam przetwarzanie bootstrap import - stan wejściowy"
+        "Rozpoczynam przetwarzanie bootstrap import"
     );
 
     // 2. Walidacja sekcji Credentials
@@ -83,22 +87,7 @@ pub async fn import_bootstrap(
         }
     }
 
-    if input.target_resources.is_empty() && cred_records.is_empty() {
-        return Err(AppError::ValidationError(
-            "Nothing to import: both target_resources and credentials are empty".into(),
-        ));
-    }
-
-    // 3. Rozpoczęcie ATOMOWEJ transakcji w bazie
-    let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|err| {
-        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
-    })?;
-    let mut inserted_total = 0usize;
-    let now = Utc::now();
-
-    // ==========================================
-    // KROK A: IMPORT DO target_resources
-    // ==========================================
+    // 3. Walidacja sekcji Target Resources
     let mut target_records: Vec<TargetResourceRecord> = Vec::new();
     for (idx, v) in input.target_resources.into_iter().enumerate() {
         match serde_json::from_value::<TargetResourceRecord>(v.clone()) {
@@ -113,19 +102,51 @@ pub async fn import_bootstrap(
         }
     }
 
-    info!(
-        count = target_records.len(),
-        "Rozpoczynam pętlę KROK A dla target_resources"
-    );
+    if target_records.is_empty() && cred_records.is_empty() {
+        return Err(AppError::ValidationError(
+            "Nothing to import: both target_resources and credentials are empty".into(),
+        ));
+    }
 
+    // 4. Rozpoczęcie atomowej transakcji w bazie
+    let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
+    let mut inserted_total = 0usize;
+    let now = Utc::now();
+
+    // ==========================================
+    // KROK A: IMPORT DO target_resources
+    // ==========================================
     for target in target_records.iter() {
+        let record_id = target.id.unwrap_or_else(Uuid::now_v7);
+
+        // Sprawdzenie czy rekord po ID już istnieje w bazie (pomijanie dublikatów)
+        let exists: bool = BootstrapQueries::target_resource_exists_by_id(&mut tx, record_id)
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
+
+        if exists {
+            warn!(
+                id = %record_id,
+                target_name = %target.target_name,
+                "Target resource ID already exists in DB. Skipping."
+            );
+            continue;
+        }
+
         info!(
+            id = %record_id,
             target_name = %target.target_name,
-            target_type = %target.target_type,
-            "Importing target resource master credentials"
+            engine = %target.engine,
+            "Importing target resource"
         );
 
-        // Szyfrowanie całego ciągu connection_url jako 1 pętla krypto
         let url_bytes = target.connection_url.as_bytes().to_vec();
         let url_zero = Zeroizing::new(url_bytes);
         let encrypted = state
@@ -141,10 +162,11 @@ pub async fn import_bootstrap(
 
         BootstrapQueries::insert_target_resource(
             &mut tx,
-            Uuid::new_v4(),
+            record_id,
             &target.target_name,
-            &target.target_type,
+            &target.engine,
             &encrypted.ciphertext,
+            target.default_role.as_deref(),
             now,
         )
         .await
@@ -156,36 +178,40 @@ pub async fn import_bootstrap(
     }
 
     // ==========================================
-    // KROK B: IMPORT DO db_credentials
+    // KROK B: IMPORT DO credentials
     // ==========================================
     for rec in cred_records.iter() {
-        info!(
-            service_id = %rec.service_id,
-            target_type = %rec.target_type,
-            target_db = %rec.target_db,
-            username = %rec.username,
-            "Inserting static credential record into PostgreSQL"
-        );
+        let record_id = rec.id.unwrap_or_else(Uuid::now_v7);
 
-        let exists: Option<Uuid> = BootstrapQueries::active_credential_exists(
-            &mut tx,
-            &rec.service_id.0,
-            &rec.target_type,
-            &rec.target_db,
-            &rec.username,
-        )
-        .await
-        .map_err(|err| {
-            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
-        })?;
+        // Sprawdzenie czy credential ID już istnieje
+        let exists: bool = BootstrapQueries::credential_exists_by_id(&mut tx, record_id)
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
-        if exists.is_some() {
-            let _ = tx.rollback().await;
-            return Err(AppError::ValidationError(format!(
-                "Duplicate active credential: {}@{} ({})",
-                rec.username, rec.target_db, rec.target_type
-            )));
+        if exists {
+            warn!(
+                id = %record_id,
+                service_id = %rec.service_id,
+                "Credential ID already exists in DB. Skipping."
+            );
+            continue;
         }
+
+        let target_db_str = rec.target_db.to_string().trim_matches('"').to_string();
+
+        info!(
+            id = %record_id,
+            service_id = %rec.service_id,
+            engine = %rec.engine,
+            target_db = %target_db_str,
+            username = %rec.username,
+            "Inserting credential record"
+        );
 
         let kek_row: Option<Uuid> = BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id.0)
             .await
@@ -228,10 +254,10 @@ pub async fn import_bootstrap(
 
         BootstrapQueries::insert_db_credential(
             &mut tx,
-            Uuid::new_v4(),
+            record_id,
             &rec.service_id.0,
-            &rec.target_type,
-            &rec.target_db,
+            &rec.engine,
+            &target_db_str,
             rec.resource.as_deref().unwrap_or(""),
             &rec.username,
             &encrypted.ciphertext,
@@ -250,14 +276,16 @@ pub async fn import_bootstrap(
     // ==========================================
     // KROK C: REJESTRACJA W AUDIT LOG
     // ==========================================
+    let audit_id = Uuid::now_v7();
     let action = "bootstrap:import";
     let prev_hash_row: Option<String> =
         AuditQueries::latest_hash_tx(&mut tx).await.map_err(|err| {
             AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
         })?;
     let prev_hash = prev_hash_row.as_deref().unwrap_or("");
+
     let hash = kms_core::audit::compute_audit_hash(&kms_core::audit::AuditHashInput {
-        id: &Uuid::new_v4().to_string(),
+        id: &audit_id.to_string(),
         caller_service: &caller_service,
         target_service: "bootstrap",
         action,
@@ -279,7 +307,7 @@ pub async fn import_bootstrap(
     AuditQueries::insert_tx(
         &mut tx,
         kms_db::repositories::AuditInsert {
-            id: Uuid::new_v4(),
+            id: audit_id,
             caller_service: caller_service.clone(),
             target_service: "bootstrap".to_string(),
             action: action.to_string(),
@@ -306,7 +334,7 @@ pub async fn import_bootstrap(
     })?;
 
     info!(
-        total = inserted_total,
+        total_inserted = inserted_total,
         "Successfully committed combined bootstrap transaction"
     );
     Ok(inserted_total)
