@@ -31,15 +31,31 @@ impl TargetResourceProvider for PostgresTargetProvider {
         ttl_seconds: i64,
         password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError> {
-        let _ = caller_service;
+        tracing::debug!(
+            target: "infra::db",
+            operation = "create_user",
+            caller_service,
+            generated_username,
+            ttl_seconds,
+            "Starting PostgreSQL user creation"
+        );
 
         let password_bytes = password.ok_or_else(|| {
+            tracing::warn!(
+                target: "infra::db",
+                operation = "create_user",
+                generated_username,
+                "Missing password for PostgreSQL user creation"
+            );
             AppError::Internal("No password provided for Postgres provider".to_string())
         })?;
 
+        let target_role = format!("kms_{}_postgres_auth", caller_service);
+
+        // Pass the caller service as the role to grant to the newly created user.
         let created = PostgresDdlExecutor::create_user(
             target_conn_str,
-            generated_username,
+            &target_role,
             ttl_seconds,
             password_bytes,
         )
@@ -47,10 +63,12 @@ impl TargetResourceProvider for PostgresTargetProvider {
         .map_err(|err| postgres_ddl_error("create_user", generated_username, err))?;
 
         tracing::info!(
+            target: "infra::db",
             operation = "create_user",
             username = %created.username,
-            target = "postgres",
+            caller_service,
             ttl_seconds = created.ttl_seconds,
+            status = "success",
             "PostgreSQL DDL executed via kms-db adapter"
         );
 
@@ -63,15 +81,23 @@ impl TargetResourceProvider for PostgresTargetProvider {
 
     async fn revoke_user(&self, target_conn_str: &str, username: &str) -> Result<(), AppError> {
         tracing::info!(
+            target: "infra::db",
             operation = "drop_user",
             username = %username,
-            target = "postgres",
             "Preparing PostgreSQL user cleanup via kms-db adapter"
         );
 
         PostgresDdlExecutor::revoke_user(target_conn_str, username)
             .await
             .map_err(|err| postgres_ddl_error("drop_user", username, err))?;
+
+        tracing::info!(
+            target: "infra::db",
+            operation = "drop_user",
+            username = %username,
+            status = "success",
+            "PostgreSQL user cleanup completed successfully"
+        );
 
         Ok(())
     }

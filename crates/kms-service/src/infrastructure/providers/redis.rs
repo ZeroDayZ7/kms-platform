@@ -141,7 +141,11 @@ impl TargetResourceProvider for RedisTargetProvider {
                 AppError::ConfigError(format!(
                     "No Redis ACL policy configured for caller_service '{}'. Available: {:?}",
                     caller_service,
-                    self.providers_acl.services.keys().cloned().collect::<Vec<_>>()
+                    self.providers_acl
+                        .services
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
                 ))
             })?;
 
