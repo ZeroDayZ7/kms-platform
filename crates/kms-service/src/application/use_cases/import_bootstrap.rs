@@ -213,17 +213,18 @@ pub async fn import_bootstrap(
             "Inserting credential record"
         );
 
-        let kek_row: Option<Uuid> = BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id.0)
-            .await
-            .map_err(|err| {
-                AppError::database_error_with_source(
-                    format!("Database operation failed: {err}"),
-                    err,
-                )
-            })?;
+        let kek_row: Option<(Uuid, i32)> =
+            BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id.0)
+                .await
+                .map_err(|err| {
+                    AppError::database_error_with_source(
+                        format!("Database operation failed: {err}"),
+                        err,
+                    )
+                })?;
 
-        let kek_id = match kek_row {
-            Some(id) => id,
+        let (kek_id, kek_version) = match kek_row {
+            Some((id, ver)) => (id, ver),
             None => {
                 let _ = tx.rollback().await;
                 return Err(AppError::Internal(format!(
@@ -233,11 +234,25 @@ pub async fn import_bootstrap(
             }
         };
 
-        let pwd_bytes = rec.password.as_str().as_bytes().to_vec();
-        let pwd_zero = Zeroizing::new(pwd_bytes);
+        // Build merged credential payload {u,p} and encrypt as single blob
+        #[derive(serde::Serialize)]
+        struct CredentialPayload<'a> {
+            u: &'a str,
+            p: &'a str,
+        }
+
+        let payload = CredentialPayload {
+            u: &rec.username,
+            p: rec.password.as_str(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|e| {
+            AppError::Internal(format!("Failed to serialize credential payload: {e}"))
+        })?;
+        let payload_zero = Zeroizing::new(payload_bytes);
+
         let encrypted = state
             .crypto_service
-            .encrypt_private_key(pwd_zero.as_ref())
+            .encrypt_private_key(payload_zero.as_ref())
             .await
             .map_err(|e| {
                 AppError::crypto_error_with_source(
@@ -250,7 +265,6 @@ pub async fn import_bootstrap(
             let _ = tx.rollback().await;
             return Err(AppError::crypto_error("Encrypted payload too short"));
         }
-        let nonce = encrypted.ciphertext[..12].to_vec();
 
         BootstrapQueries::insert_db_credential(
             &mut tx,
@@ -259,10 +273,9 @@ pub async fn import_bootstrap(
             &rec.engine,
             &target_db_str,
             rec.resource.as_deref().unwrap_or(""),
-            &rec.username,
             &encrypted.ciphertext,
-            &nonce,
             kek_id,
+            kek_version,
             now,
         )
         .await

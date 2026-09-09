@@ -14,9 +14,10 @@ CREATE TABLE provisioned_credentials (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     service_id VARCHAR(64) NOT NULL,
     target_id UUID NOT NULL REFERENCES target_resources(id),
-    username VARCHAR(128) NOT NULL,
-    password_encrypted BYTEA NOT NULL,
+    encrypted_credentials BYTEA NOT NULL, -- [12 bytes Nonce] + [Ciphertext+AuthTag] of JSON {u,p}
     granted_role VARCHAR(64) NOT NULL,
+    kek_id UUID NOT NULL REFERENCES keys(id),
+    kek_version INT NOT NULL DEFAULT 1,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked BOOLEAN NOT NULL DEFAULT false,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',

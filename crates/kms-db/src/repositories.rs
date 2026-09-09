@@ -210,10 +210,10 @@ impl CredentialQueries {
     pub async fn fetch_latest_kek_id(
         pool: &PgPool,
         target_service_id: &str,
-    ) -> Result<Option<Uuid>, sqlx::Error> {
-        sqlx::query_scalar::<_, Uuid>(
+    ) -> Result<Option<(Uuid, i32)>, sqlx::Error> {
+        sqlx::query_as::<_, (Uuid, i32)>(
             r#"
-            SELECT id FROM keys
+            SELECT id, version FROM keys
             WHERE service_id = $1
               AND is_active = true
               AND algorithm = 'AES256GCM'
@@ -232,26 +232,28 @@ impl CredentialQueries {
         id: Uuid,
         service_id: &str,
         target_id: Uuid,
-        username: &str,
-        password_encrypted: &[u8],
+        encrypted_credentials: &[u8],
         granted_role: &str,
+        kek_id: Uuid,
+        kek_version: i32,
         expires_at: DateTime<Utc>,
         status: &str,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO provisioned_credentials
-                (id, service_id, target_id, username, password_encrypted, granted_role, expires_at, revoked, status, created_at)
+                (id, service_id, target_id, encrypted_credentials, granted_role, kek_id, kek_version, expires_at, revoked, status, created_at)
             VALUES
-                ($1, $2, $3, $4, $5, $6, $7, false, $8, $9)
+                ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, $10)
             "#,
         )
         .bind(id)
         .bind(service_id)
         .bind(target_id)
-        .bind(username)
-        .bind(password_encrypted)
+        .bind(encrypted_credentials)
         .bind(granted_role)
+        .bind(kek_id)
+        .bind(kek_version)
         .bind(expires_at)
         .bind(status)
         .bind(Utc::now())
@@ -264,15 +266,13 @@ impl CredentialQueries {
         pool: &PgPool,
         service_id: &str,
         target_id: Uuid,
-        username: &str,
     ) -> Result<Option<(Uuid, Vec<u8>, DateTime<Utc>)>, sqlx::Error> {
         sqlx::query_as::<_, (Uuid, Vec<u8>, DateTime<Utc>)>(
             r#"
-            SELECT id, password_encrypted, expires_at
+            SELECT id, encrypted_credentials, expires_at
             FROM provisioned_credentials
             WHERE service_id = $1
               AND target_id = $2
-              AND username = $3
               AND revoked = false
               AND status = 'ACTIVE'
               AND expires_at > NOW()
@@ -281,7 +281,6 @@ impl CredentialQueries {
         )
         .bind(service_id)
         .bind(target_id)
-        .bind(username)
         .fetch_optional(pool)
         .await
     }
@@ -290,10 +289,10 @@ impl CredentialQueries {
         pool: &PgPool,
         service_id: &str,
         target_id: Uuid,
-    ) -> Result<Option<(Uuid, String, Vec<u8>, DateTime<Utc>)>, sqlx::Error> {
-        sqlx::query_as::<_, (Uuid, String, Vec<u8>, DateTime<Utc>)>(
+    ) -> Result<Option<(Uuid, Vec<u8>, DateTime<Utc>)>, sqlx::Error> {
+        sqlx::query_as::<_, (Uuid, Vec<u8>, DateTime<Utc>)>(
             r#"
-            SELECT id, username, password_encrypted, expires_at
+            SELECT id, encrypted_credentials, expires_at
             FROM provisioned_credentials
             WHERE service_id = $1
               AND target_id = $2
@@ -392,19 +391,18 @@ impl BootstrapQueries {
         service_id: &str,
         target_type: &str,
         target_db: &str,
-        username: &str,
+        // username removed: uniqueness handled at application layer
     ) -> Result<Option<Uuid>, sqlx::Error> {
         sqlx::query_scalar::<_, Uuid>(
             r#"
             SELECT id FROM db_credentials
-            WHERE service_id = $1 AND target_type = $2 AND target_db = $3 AND username = $4 AND status = 'ACTIVE'
+            WHERE service_id = $1 AND target_type = $2 AND target_db = $3 AND status = 'ACTIVE'
             LIMIT 1
             "#,
         )
         .bind(service_id)
         .bind(target_type)
         .bind(target_db)
-        .bind(username)
         .fetch_optional(&mut **tx)
         .await
     }
@@ -412,9 +410,9 @@ impl BootstrapQueries {
     pub async fn latest_kek_id(
         tx: &mut Transaction<'_, Postgres>,
         service_id: &str,
-    ) -> Result<Option<Uuid>, sqlx::Error> {
-        sqlx::query_scalar::<_, Uuid>(
-            "SELECT id FROM keys WHERE service_id = $1 AND is_active = true ORDER BY version DESC LIMIT 1",
+    ) -> Result<Option<(Uuid, i32)>, sqlx::Error> {
+        sqlx::query_as::<_, (Uuid, i32)>(
+            "SELECT id, version FROM keys WHERE service_id = $1 AND is_active = true ORDER BY version DESC LIMIT 1",
         )
         .bind(service_id)
         .fetch_optional(&mut **tx)
@@ -429,18 +427,17 @@ impl BootstrapQueries {
         target_type: &str,
         target_db: &str,
         resource: &str,
-        username: &str,
-        encrypted_password: &[u8],
-        nonce: &[u8],
+        encrypted_credentials: &[u8],
         kek_id: Uuid,
+        kek_version: i32,
         created_at: DateTime<Utc>,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
             INSERT INTO db_credentials
-                (id, service_id, target_type, target_db, resource, username, encrypted_password, nonce, kek_id, status, created_at)
+                (id, service_id, target_type, target_db, resource, encrypted_credentials, kek_id, kek_version, status, created_at)
             VALUES
-                ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE', $10)
+                ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9)
             "#,
         )
         .bind(id)
@@ -448,10 +445,9 @@ impl BootstrapQueries {
         .bind(target_type)
         .bind(target_db)
         .bind(resource)
-        .bind(username)
-        .bind(encrypted_password)
-        .bind(nonce)
+        .bind(encrypted_credentials)
         .bind(kek_id)
+        .bind(kek_version)
         .bind(created_at)
         .execute(&mut **tx)
         .await

@@ -200,7 +200,7 @@ impl IssueAgentCredentialUseCase {
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
 
-        if let Some((active_id, active_username, active_encrypted_password, active_expires_at)) =
+        if let Some((active_id, active_encrypted_blob, active_expires_at)) =
             CredentialQueries::fetch_latest_active_provisioned_credential_for_service_target(
                 &state.db,
                 &input.caller_service,
@@ -217,16 +217,15 @@ impl IssueAgentCredentialUseCase {
             tracing::info!(
                 caller = %input.caller_service,
                 target = %input.target_service,
-                username = %active_username,
                 credential_id = %active_id,
                 "[Idempotency] Found existing active provisioned credential for caller+target; returning it"
             );
 
-            tracing::debug!(operation = "[DBG] decrypt_existing_credential", service = %input.caller_service, target_id = %target_id, encrypted_len = active_encrypted_password.len(), sample_hex = %hex::encode(&active_encrypted_password[..std::cmp::min(active_encrypted_password.len(), 32)]));
+            tracing::debug!(operation = "[DBG] decrypt_existing_credential", service = %input.caller_service, target_id = %target_id, encrypted_len = active_encrypted_blob.len(), sample_hex = %hex::encode(&active_encrypted_blob[..std::cmp::min(active_encrypted_blob.len(), 32)]));
 
             let plaintext_bytes = match state
                 .crypto_service
-                .decrypt_bytes(&active_encrypted_password)
+                .decrypt_bytes(&active_encrypted_blob)
                 .await
             {
                 Ok(b) => b,
@@ -241,18 +240,30 @@ impl IssueAgentCredentialUseCase {
 
             tracing::debug!(operation = "[DBG] decrypted_existing_credential", service = %input.caller_service, target_id = %target_id, plaintext_len = plaintext_bytes.len(), plaintext_sample_hex = %hex::encode(&plaintext_bytes[..std::cmp::min(plaintext_bytes.len(), 32)]));
 
-            let password = match String::from_utf8(plaintext_bytes.clone()) {
-                Ok(s) => s,
+            // Parse JSON payload {u: username, p: password}
+            #[derive(serde::Deserialize)]
+            struct CredentialPayload {
+                u: String,
+                p: String,
+            }
+
+            let payload: CredentialPayload = match serde_json::from_slice(&plaintext_bytes) {
+                Ok(p) => p,
                 Err(e) => {
-                    tracing::warn!(operation = "[DBG] existing_credential_not_utf8", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not valid UTF-8 - returning base64 encoded value");
-                    BASE64.encode(&plaintext_bytes)
+                    tracing::warn!(operation = "[DBG] existing_credential_not_json", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not JSON - returning base64 encoded value as password");
+                    return Ok(IssueAgentCredentialOutput {
+                        credential_id: active_id,
+                        username: String::new(),
+                        password: BASE64.encode(&plaintext_bytes),
+                        expires_at: active_expires_at,
+                    });
                 }
             };
 
             return Ok(IssueAgentCredentialOutput {
                 credential_id: active_id,
-                username: active_username,
-                password,
+                username: payload.u,
+                password: payload.p,
                 expires_at: active_expires_at,
             });
         }
@@ -260,13 +271,16 @@ impl IssueAgentCredentialUseCase {
         let username = generate_unique_username(&input.caller_service);
 
         // 3. Generowanie poświadczeń przez vHSM (wykonujemy dopiero gdy nie ma aktywnego rekordu)
-        let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
+        let (kek_id, kek_version) = CredentialQueries::fetch_latest_kek_id(&state.db, "kms-system")
             .await
             .map_err(|err| {
                 AppError::database_error_with_source(
                     format!("Database operation failed: {err}"),
                     err,
                 )
+            })?
+            .ok_or_else(|| {
+                AppError::KeyNotFound("No active KEK found for kms-system".to_string())
             })?;
 
         let generated = generate_secure_credential(
@@ -293,14 +307,42 @@ impl IssueAgentCredentialUseCase {
         })?;
 
         // 5. Zapis pośredniego rekordu lifecycle do KMS przed utworzeniem konta zewnętrznego
+        // Build encrypted_credentials payload containing username and plaintext password, then encrypt
+        #[derive(serde::Serialize)]
+        struct CredentialPayload<'a> {
+            u: &'a str,
+            p: &'a str,
+        }
+
+        let payload = CredentialPayload {
+            u: &username,
+            p: generated.plaintext_password.as_str(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|e| {
+            AppError::Internal(format!("Failed to serialize credential payload: {e}"))
+        })?;
+        let payload_zero = zeroize::Zeroizing::new(payload_bytes);
+
+        let encrypted_blob = state
+            .crypto_service
+            .encrypt_private_key(payload_zero.as_ref())
+            .await
+            .map_err(|e| {
+                AppError::crypto_error_with_source(
+                    format!("Failed to encrypt credential payload: {e}"),
+                    e,
+                )
+            })?;
+
         insert_provisioned_credential_tx(
             &mut tx,
             generated.credential_id,
             &input.caller_service,
             target_id,
-            &username,
-            &generated.encrypted_password,
+            &encrypted_blob.ciphertext,
             &input.caller_service,
+            kek_id,
+            kek_version,
             expires_at,
             ProvisioningStatus::Provisioning.as_str(),
         )
@@ -410,8 +452,11 @@ pub fn build_generic_username(caller_service: &str, _target_service: &str) -> St
     generate_unique_username(caller_service)
 }
 
-pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -> AppResult<Uuid> {
-    let kek_id = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
+pub async fn fetch_latest_kek_id(
+    db: &kms_db::PgPool,
+    target_service_id: &str,
+) -> AppResult<(Uuid, i32)> {
+    let kek = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
         .await
         .map_err(|err| {
             AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
@@ -423,7 +468,7 @@ pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -
             ))
         })?;
 
-    Ok(kek_id)
+    Ok(kek)
 }
 
 pub async fn generate_secure_credential(
@@ -479,9 +524,10 @@ pub async fn insert_provisioned_credential_tx(
     id: Uuid,
     service_id: &str,
     target_id: Uuid,
-    username: &str,
-    password_encrypted: &[u8],
+    encrypted_credentials: &[u8],
     granted_role: &str,
+    kek_id: Uuid,
+    kek_version: i32,
     expires_at: DateTime<Utc>,
     status: &str,
 ) -> AppResult<()> {
@@ -490,9 +536,10 @@ pub async fn insert_provisioned_credential_tx(
         id,
         service_id,
         target_id,
-        username,
-        password_encrypted,
+        encrypted_credentials,
         granted_role,
+        kek_id,
+        kek_version,
         expires_at,
         status,
     )
