@@ -148,7 +148,7 @@ pub async fn import_bootstrap(
                 )
             })?;
 
-        debug!(record_id = %record_id, ciphertext_len = encrypted.ciphertext.len(), "Zapisywanie target_resource do DB");
+        debug!(record_id = %record_id, ciphertext_len = encrypted.ciphertext.len(), default_role = ?target.default_role, "Wywoływanie insert_target_resource");
         BootstrapQueries::insert_target_resource(
             &mut tx,
             record_id,
