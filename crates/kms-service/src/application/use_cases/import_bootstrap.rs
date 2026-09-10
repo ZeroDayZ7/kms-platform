@@ -15,9 +15,9 @@ use zeroize::Zeroizing;
 pub struct ImportBootstrapInput {
     pub version: u32,
     #[serde(default)]
-    pub target_resources: Vec<serde_json::Value>,
+    pub target_resources: Vec<TargetResourceRecord>,
     #[serde(default)]
-    pub credentials: Vec<serde_json::Value>,
+    pub credentials: Vec<BootstrapCredentialRecord>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,7 +31,7 @@ pub struct TargetResourceRecord {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-struct BootstrapCredentialRecord {
+pub struct BootstrapCredentialRecord {
     pub id: Option<Uuid>,
     service_id: ServiceId,
     target_id: Option<TargetId>,
@@ -80,43 +80,10 @@ pub async fn import_bootstrap(
         ));
     }
 
-    // 2. Walidacja sekcji Credentials
-    debug!("Rozpoczynam deserializację sekcji Credentials");
-    let mut cred_records: Vec<BootstrapCredentialRecord> = Vec::new();
-    for (idx, v) in input.credentials.into_iter().enumerate() {
-        match serde_json::from_value::<BootstrapCredentialRecord>(v.clone()) {
-            Ok(rec) => {
-                debug!(index = idx, service_id = %rec.service_id, username = %rec.username, "Pomyślnie zdeserializowano rekord credential");
-                cred_records.push(rec);
-            }
-            Err(err) => {
-                error!(index = idx, error = %err, record_type = "credential", "Failed to deserialize bootstrap credential record");
-                return Err(AppError::ValidationError(format!(
-                    "Invalid credential record schema at index {}: {}",
-                    idx, err
-                )));
-            }
-        }
-    }
-
-    // 3. Walidacja sekcji Target Resources
-    debug!("Rozpoczynam deserializację sekcji Target Resources");
-    let mut target_records: Vec<TargetResourceRecord> = Vec::new();
-    for (idx, v) in input.target_resources.into_iter().enumerate() {
-        match serde_json::from_value::<TargetResourceRecord>(v.clone()) {
-            Ok(rec) => {
-                debug!(index = idx, target_name = %rec.target_name, target_type = %rec.target_type, "Pomyślnie zdeserializowano rekord target_resource");
-                target_records.push(rec);
-            }
-            Err(err) => {
-                error!(index = idx, error = %err, record_type = "target_resource", "Failed to deserialize target_resource record");
-                return Err(AppError::ValidationError(format!(
-                    "Invalid target_resource record schema at index {}: {}",
-                    idx, err
-                )));
-            }
-        }
-    }
+    // Sekcje `credentials` i `target_resources` są deserializowane w extractorze.
+    // Przypiszemy je bezpośrednio do lokalnych zmiennych.
+    let cred_records: Vec<BootstrapCredentialRecord> = input.credentials;
+    let target_records: Vec<TargetResourceRecord> = input.target_resources;
 
     if target_records.is_empty() && cred_records.is_empty() {
         warn!("Anulowano import: puste listy target_resources oraz credentials");
