@@ -364,17 +364,13 @@ impl IssueAgentCredentialUseCase {
         // For Postgres provider, pass the `granted_role_owned` so the DB role used for grants
         // can come from the `default_role` column. For other providers, they still expect
         // the caller_service identifier.
-        let provider_caller_arg = if target_type_clean == "postgres" {
-            &granted_role_owned
-        } else {
-            &input.caller_service
-        };
-
         let provider_result = provider
             .create_user(
                 &admin_conn,
-                provider_caller_arg,
+                &input.caller_service,
                 &username,
+                // For Postgres use the granted_role, for others pass None
+                if target_type_clean == "postgres" { Some(granted_role_owned.as_str()) } else { None },
                 input.ttl_seconds as i64,
                 Some(secret_zero.as_ref()),
             )

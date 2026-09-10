@@ -22,7 +22,8 @@ pub trait TargetResourceProvider: Send + Sync {
         &self,
         target_conn_str: &str,
         caller_service: &str,
-        generated_username: &str,
+        username: &str,
+        granted_role: Option<&str>,
         ttl_seconds: i64,
         password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError>;
