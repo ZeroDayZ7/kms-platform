@@ -99,6 +99,6 @@ pub fn router(state: AppState) -> Router {
         .layer(redis_mw)
         .layer(security)
         .layer(cors)
-        // .layer(middleware::http_trace_layer())
+        .layer(axum::middleware::from_fn(middleware::http_logger))
         .with_state(state)
 }

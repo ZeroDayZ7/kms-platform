@@ -3,21 +3,23 @@
   "files.exclude": {
     "**/target": true,
     "**/Cargo.lock": true,
+    "**/vendor": true,
 
+    "**/.cargo": true,
     "**/.git": true,
     "**/.gitattributes": true,
-    "**/.gitignore": true,
+    // "**/.gitignore": true,
     "**/.github": true,
-    "**/.dockerignore": true,
+    // "**/.dockerignore": true,
 
     "**/tests": true,
     "**/LICENSE": true,
     // "**/*.env": true,
-    "**/README.md": true,
+    // "**/README.md": true,
     "**/SECURITY.md": true,
 
     // "**/out": true,
-    "**/docs": true,
+    // "**/docs": true,
     "**/scripts": true,
     "**/secrets": true,
     "**/ceremony": true

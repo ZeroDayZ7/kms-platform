@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::{TargetResourceProvider, postgres::PostgresTargetProvider};
+use super::{TargetResourceProvider, postgres::PostgresTargetProvider, redis::RedisTargetProvider};
+use crate::config::ProvidersAclSettings;
 use crate::errors::AppError;
 
 pub struct ProviderFactory {
@@ -9,10 +10,14 @@ pub struct ProviderFactory {
 }
 
 impl ProviderFactory {
-    pub fn new() -> Self {
+    pub fn new(providers_acl: Arc<ProvidersAclSettings>) -> Self {
         let mut providers: HashMap<String, Arc<dyn TargetResourceProvider>> = HashMap::new();
 
         providers.insert("postgres".to_string(), Arc::new(PostgresTargetProvider));
+        providers.insert(
+            "redis".to_string(),
+            Arc::new(RedisTargetProvider::new(providers_acl)),
+        );
         // providers.insert("rabbitmq".to_string(), Arc::new(RabbitMqTargetProvider));
         // providers.insert("minio".to_string(), Arc::new(MinioTargetProvider));
 
@@ -33,6 +38,6 @@ impl ProviderFactory {
 
 impl Default for ProviderFactory {
     fn default() -> Self {
-        Self::new()
+        Self::new(Arc::new(ProvidersAclSettings::default()))
     }
 }

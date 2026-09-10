@@ -7,6 +7,7 @@ use kms_db::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::domain::crypto::KmsCryptoService;
 use crate::{
     errors::{AppError, AppResult},
     server::state::AppState,
@@ -142,37 +143,16 @@ impl IssueAgentCredentialUseCase {
 
         Self::validate_acl(state, &input)?;
 
-        // 2. Generowanie poświadczeń przez vHSM
-        let kek_id = fetch_latest_kek_id(&state.db, "kms-system")
-            .await
-            .map_err(|err| {
-                AppError::database_error_with_source(
-                    format!("Database operation failed: {err}"),
-                    err,
-                )
-            })?;
-        let username = build_generic_username(&input.caller_service, &input.target_service);
-        let generated = generate_secure_credential(
-            &state.crypto_service,
-            Some(kek_id),
-            &username,
-            DEFAULT_PASSWORD_LEN,
-        )
-        .await?;
-
-        // 3. Pobranie connection string admina dla docelowej bazy
-        let target_row: Option<(Uuid, Vec<u8>)> =
+        // 2. Pobranie connection string admina dla docelowej bazy
+        let target_row: Option<(Uuid, Vec<u8>, Option<String>)> =
             CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
                 .await
                 .map_err(|err| {
-                    AppError::database_error_with_source(
-                        format!("Database operation failed: {err}"),
-                        err,
-                    )
+                    AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
                 })?;
 
-        let (target_id, conn_encrypted) = match target_row {
-            Some(v) => v,
+        let (target_id, conn_encrypted, db_default_role) = match target_row.as_ref() {
+            Some(v) => (v.0, v.1.clone(), v.2.clone()),
             None => {
                 return Err(AppError::NotFound(format!(
                     "Target resource not found: {}",
@@ -181,22 +161,138 @@ impl IssueAgentCredentialUseCase {
             }
         };
 
-        let admin_conn_bytes = state
-            .crypto_service
-            .decrypt_bytes(&conn_encrypted)
-            .await
-            .map_err(|e| {
-                AppError::crypto_error_with_source(
+        tracing::debug!(operation = "[DBG] fetched_target_resource", target_service = %input.target_service, target_id = %target_id, conn_encrypted_len = conn_encrypted.len(), sample_hex = %hex::encode(&conn_encrypted[..std::cmp::min(conn_encrypted.len(), 32)]));
+
+        let admin_conn_bytes = match state.crypto_service.decrypt_bytes(&conn_encrypted).await {
+            Ok(b) => b,
+            Err(e) => {
+                // try to fetch vHSM master key version for extra context
+                match state.crypto_service.current_master_key_version().await {
+                    Ok(ver) => {
+                        tracing::error!(operation = "[DBG] decrypt_target_conn_failed", target_service = %input.target_service, target_id = %target_id, vhsm_master_key_version = ver, error = %e, "Failed to decrypt target connection string")
+                    }
+                    Err(_) => {
+                        tracing::error!(operation = "[DBG] decrypt_target_conn_failed", target_service = %input.target_service, target_id = %target_id, error = %e, "Failed to decrypt target connection string")
+                    }
+                }
+                return Err(AppError::crypto_error_with_source(
                     format!("Failed to decrypt target connection string: {e}"),
                     e,
-                )
-            })?;
-        let admin_conn = String::from_utf8(admin_conn_bytes).map_err(|_| {
-            AppError::crypto_error("Decrypted target connection string is not valid UTF-8")
-        })?;
+                ));
+            }
+        };
+
+        tracing::debug!(operation = "[DBG] decrypted_target_conn", target_service = %input.target_service, target_id = %target_id, plaintext_len = admin_conn_bytes.len(), plaintext_sample_hex = %hex::encode(&admin_conn_bytes[..std::cmp::min(admin_conn_bytes.len(), 32)]));
+
+        let admin_conn = match String::from_utf8(admin_conn_bytes) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(operation = "[DBG] target_conn_not_utf8", target_service = %input.target_service, target_id = %target_id, err = ?e, "Decrypted target connection string is not valid UTF-8");
+                return Err(AppError::crypto_error(
+                    "Decrypted target connection string is not valid UTF-8",
+                ));
+            }
+        };
 
         let created_at = Utc::now();
         let expires_at = created_at + chrono::Duration::seconds(input.ttl_seconds as i64);
+
+        if let Some((active_id, active_encrypted_blob, active_expires_at)) =
+            CredentialQueries::fetch_latest_active_provisioned_credential_for_service_target(
+                &state.db,
+                &input.caller_service,
+                target_id,
+            )
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?
+        {
+            tracing::info!(
+                caller = %input.caller_service,
+                target = %input.target_service,
+                credential_id = %active_id,
+                "[Idempotency] Found existing active provisioned credential for caller+target; returning it"
+            );
+
+            tracing::debug!(operation = "[DBG] decrypt_existing_credential", service = %input.caller_service, target_id = %target_id, encrypted_len = active_encrypted_blob.len(), sample_hex = %hex::encode(&active_encrypted_blob[..std::cmp::min(active_encrypted_blob.len(), 32)]));
+
+            let plaintext_bytes = match state
+                .crypto_service
+                .decrypt_bytes(&active_encrypted_blob)
+                .await
+            {
+                Ok(b) => b,
+                Err(e) => {
+                    tracing::error!(operation = "[DBG] decrypt_existing_failed", service = %input.caller_service, target_id = %target_id, error = %e, "Failed to decrypt stored credential");
+                    return Err(AppError::crypto_error_with_source(
+                        format!("Failed to decrypt stored credential: {e}"),
+                        e,
+                    ));
+                }
+            };
+
+            tracing::debug!(operation = "[DBG] decrypted_existing_credential", service = %input.caller_service, target_id = %target_id, plaintext_len = plaintext_bytes.len(), plaintext_sample_hex = %hex::encode(&plaintext_bytes[..std::cmp::min(plaintext_bytes.len(), 32)]));
+
+            // Parse JSON payload {u: username, p: password}
+            #[derive(serde::Deserialize)]
+            struct CredentialPayload {
+                u: String,
+                p: String,
+            }
+
+            let payload: CredentialPayload = match serde_json::from_slice(&plaintext_bytes) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::warn!(operation = "[DBG] existing_credential_not_json", service = %input.caller_service, target_id = %target_id, err = ?e, "Decrypted credential is not JSON - returning base64 encoded value as password");
+                    return Ok(IssueAgentCredentialOutput {
+                        credential_id: active_id,
+                        username: String::new(),
+                        password: BASE64.encode(&plaintext_bytes),
+                        expires_at: active_expires_at,
+                    });
+                }
+            };
+
+            return Ok(IssueAgentCredentialOutput {
+                credential_id: active_id,
+                username: payload.u,
+                password: payload.p,
+                expires_at: active_expires_at,
+            });
+        }
+
+        // Resolve granted_role: prefer DB-configured `default_role`, otherwise fall back to convention
+        let granted_role_owned: String = match db_default_role.as_deref().filter(|s| !s.is_empty()) {
+            Some(role) => role.to_string(),
+            None => format!("kms_{}_postgres_auth", input.caller_service),
+        };
+
+        let username = generate_unique_username(&input.caller_service);
+
+        // 3. Generowanie poświadczeń przez vHSM (wykonujemy dopiero gdy nie ma aktywnego rekordu)
+        let (kek_id, kek_version) = CredentialQueries::fetch_latest_kek_id(&state.db, "kms-system")
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?
+            .ok_or_else(|| {
+                AppError::KeyNotFound("No active KEK found for kms-system".to_string())
+            })?;
+
+        let generated = generate_secure_credential(
+            &state.crypto_service,
+            Some(kek_id),
+            &username,
+            DEFAULT_PASSWORD_LEN,
+        )
+        .await?;
 
         // 4. Rozpoczęcie transakcji SQL w KMS
         let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|err| {
@@ -214,14 +310,42 @@ impl IssueAgentCredentialUseCase {
         })?;
 
         // 5. Zapis pośredniego rekordu lifecycle do KMS przed utworzeniem konta zewnętrznego
+        // Build encrypted_credentials payload containing username and plaintext password, then encrypt
+        #[derive(serde::Serialize)]
+        struct CredentialPayload<'a> {
+            u: &'a str,
+            p: &'a str,
+        }
+
+        let payload = CredentialPayload {
+            u: &username,
+            p: generated.plaintext_password.as_str(),
+        };
+        let payload_bytes = serde_json::to_vec(&payload).map_err(|e| {
+            AppError::Internal(format!("Failed to serialize credential payload: {e}"))
+        })?;
+        let payload_zero = zeroize::Zeroizing::new(payload_bytes);
+
+        let encrypted_blob = state
+            .crypto_service
+            .encrypt_private_key(payload_zero.as_ref())
+            .await
+            .map_err(|e| {
+                AppError::crypto_error_with_source(
+                    format!("Failed to encrypt credential payload: {e}"),
+                    e,
+                )
+            })?;
+
         insert_provisioned_credential_tx(
             &mut tx,
             generated.credential_id,
             &input.caller_service,
             target_id,
-            &username,
-            &generated.encrypted_password,
-            &username,
+            &encrypted_blob.ciphertext,
+            &granted_role_owned,
+            kek_id,
+            kek_version,
             expires_at,
             ProvisioningStatus::Provisioning.as_str(),
         )
@@ -237,10 +361,16 @@ impl IssueAgentCredentialUseCase {
             })?;
         let secret_zero = zeroize::Zeroizing::new(secret_bytes);
 
+        // For Postgres provider, pass the `granted_role_owned` so the DB role used for grants
+        // can come from the `default_role` column. For other providers, they still expect
+        // the caller_service identifier.
         let provider_result = provider
             .create_user(
                 &admin_conn,
+                &input.caller_service,
                 &username,
+                // For Postgres use the granted_role, for others pass None
+                if target_type_clean == "postgres" { Some(granted_role_owned.as_str()) } else { None },
                 input.ttl_seconds as i64,
                 Some(secret_zero.as_ref()),
             )
@@ -302,12 +432,39 @@ impl IssueAgentCredentialUseCase {
 
 // --- Funkcje pomocnicze ---
 
-pub fn build_generic_username(caller_service: &str, target_service: &str) -> String {
-    format!("kms_{}_{}", caller_service, target_service)
+pub fn generate_unique_username(caller_service: &str) -> String {
+    let mut safe_prefix = caller_service
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric()) // Poprawka: zamiana filter_map na filter
+        .collect::<String>();
+
+    if safe_prefix.is_empty() {
+        safe_prefix = "kms".to_string();
+    }
+
+    let prefix = if safe_prefix.len() > 10 {
+        safe_prefix[..10].to_string()
+    } else {
+        safe_prefix
+    };
+
+    let suffix = Uuid::new_v4().simple().to_string();
+    let suffix = suffix.chars().take(8).collect::<String>();
+
+    format!("kms_{prefix}_{suffix}")
 }
 
-pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -> AppResult<Uuid> {
-    let kek_id = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
+pub fn build_generic_username(caller_service: &str, _target_service: &str) -> String {
+    generate_unique_username(caller_service)
+}
+
+pub async fn fetch_latest_kek_id(
+    db: &kms_db::PgPool,
+    target_service_id: &str,
+) -> AppResult<(Uuid, i32)> {
+    let kek = CredentialQueries::fetch_latest_kek_id(db, target_service_id)
         .await
         .map_err(|err| {
             AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
@@ -319,7 +476,7 @@ pub async fn fetch_latest_kek_id(db: &kms_db::PgPool, target_service_id: &str) -
             ))
         })?;
 
-    Ok(kek_id)
+    Ok(kek)
 }
 
 pub async fn generate_secure_credential(
@@ -375,9 +532,10 @@ pub async fn insert_provisioned_credential_tx(
     id: Uuid,
     service_id: &str,
     target_id: Uuid,
-    username: &str,
-    password_encrypted: &[u8],
+    encrypted_credentials: &[u8],
     granted_role: &str,
+    kek_id: Uuid,
+    kek_version: i32,
     expires_at: DateTime<Utc>,
     status: &str,
 ) -> AppResult<()> {
@@ -386,9 +544,10 @@ pub async fn insert_provisioned_credential_tx(
         id,
         service_id,
         target_id,
-        username,
-        password_encrypted,
+        encrypted_credentials,
         granted_role,
+        kek_id,
+        kek_version,
         expires_at,
         status,
     )
@@ -510,5 +669,22 @@ mod tests {
         let unauthorized_result =
             validate_agent_credential_acl(&policy, "auth-service", "database", "other_db");
         assert!(matches!(unauthorized_result, Err(AppError::Forbidden)));
+    }
+
+    #[test]
+    fn generate_unique_username_uses_safe_short_prefix_and_random_suffix() {
+        let username1 = generate_unique_username("auth-service");
+        let username2 = generate_unique_username("auth-service");
+
+        assert!(username1.starts_with("kms_"));
+        assert!(username2.starts_with("kms_"));
+        assert!(username1.len() <= 24);
+        assert!(username2.len() <= 24);
+        assert!(username1 != username2);
+        assert!(
+            username1[4..]
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        );
     }
 }

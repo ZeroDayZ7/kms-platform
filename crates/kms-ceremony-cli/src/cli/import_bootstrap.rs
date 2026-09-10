@@ -4,6 +4,7 @@ use dialoguer::Password;
 use kms_core::crypto::aes::decrypt_bytes_with_argon2_raw;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 use std::path::PathBuf;
 use tokio::fs;
 use zeroize::{Zeroize, Zeroizing};
@@ -15,13 +16,16 @@ const MAX_FIELD_LEN: usize = 1024;
 // --- NOWA STRUKTURA DLA TARGET RESOURCES ---
 #[derive(Debug, Deserialize, Serialize)]
 pub struct TargetResourceRecord {
+    pub id: Option<Uuid>,
     pub target_name: String,
     pub target_type: String,
     pub connection_url: String,
+    pub default_role: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct BootstrapCredentialRecord {
+    pub id: Option<Uuid>,
     pub service_id: String,
     pub target_type: String,
     pub target_db: String,

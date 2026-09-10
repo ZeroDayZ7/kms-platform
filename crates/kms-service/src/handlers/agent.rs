@@ -158,7 +158,6 @@ pub async fn issue_batch_credentials_handler(
             ttl_seconds: payload.ttl_seconds,
         };
 
-        // Zamiast używać `?`, łapiemy wynik, aby go zalogować
         let output_result = IssueAgentCredentialUseCase::execute(&state, input).await;
 
         match output_result {
@@ -179,15 +178,14 @@ pub async fn issue_batch_credentials_handler(
                 );
             }
             Err(e) => {
-                // TUTAJ ZOBACZYSZ DOKŁADNY BŁĄD
                 tracing::error!(
                     error = %e,
                     name = %item.name,
                     target_service = %resolved_target_service,
                     resource = %item.resource,
-                    "[KMS 2.ERROR] Błąd podczas pobierania/generowania poświadczeń (najpewniej brak rekordu w target_resources)"
+                    "[KMS 2.ERROR] Błąd podczas pobierania/generowania poświadczeń"
                 );
-                return Err(e); // Zwracamy błąd dalej do Axuma
+                return Err(e);
             }
         }
     }

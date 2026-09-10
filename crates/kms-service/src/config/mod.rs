@@ -1,8 +1,10 @@
 // src/config/mod.rs
 use config::{Config, ConfigError, Environment, File};
 
+mod auth;
 mod database;
 mod log;
+mod providers_acl;
 mod redis;
 mod server;
 mod settings;
@@ -18,6 +20,7 @@ pub use database::DatabaseConfig;
 pub use log::LogConfig;
 pub use log::LogFormat;
 pub use log::LogLevel;
+pub use providers_acl::ProvidersAclSettings;
 pub use redis::RedisConfig;
 pub use settings::Settings;
 
@@ -43,10 +46,12 @@ pub fn load_from<P: AsRef<std::path::Path>>(path: P) -> Result<Settings, ConfigE
         .parent()
         .unwrap_or_else(|| std::path::Path::new("config"));
     let acl_path = config_dir.join("services_acl.toml");
+    let providers_acl_path = config_dir.join("providers_acl.json");
 
     let settings: Settings = Config::builder()
         .add_source(File::from(settings_path).required(true))
         .add_source(File::from(acl_path).required(true))
+        .add_source(File::from(providers_acl_path).required(true))
         .add_source(
             Environment::default()
                 .separator("__")
@@ -55,6 +60,14 @@ pub fn load_from<P: AsRef<std::path::Path>>(path: P) -> Result<Settings, ConfigE
         )
         .build()?
         .try_deserialize()?;
+
+    // validate providers_acl semantics and fail fast on invalid config
+    if let Err(e) = settings.providers_acl.validate() {
+        return Err(ConfigError::Message(format!(
+            "providers_acl.json validation failed: {}",
+            e
+        )));
+    }
 
     Ok(settings)
 }

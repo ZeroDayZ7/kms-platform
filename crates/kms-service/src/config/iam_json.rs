@@ -28,14 +28,14 @@ impl IamCredentialPolicy {
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> AppResult<Self> {
         let path_ref = path.as_ref();
         let content = fs::read_to_string(path_ref).map_err(|e| {
-            AppError::Internal(format!(
+            AppError::ConfigError(format!(
                 "Failed to read IAM policy file '{}': {e}",
                 path_ref.display()
             ))
         })?;
 
         let policy: Self = serde_json::from_str(&content)
-            .map_err(|e| AppError::Internal(format!("Failed to parse IAM policy JSON: {e}")))?;
+            .map_err(|e| AppError::ConfigError(format!("Failed to parse IAM policy JSON: {e}")))?;
 
         Ok(policy)
     }

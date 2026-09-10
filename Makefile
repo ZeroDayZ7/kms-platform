@@ -118,7 +118,7 @@ dev-build: net-up
 
 # Szybkie uruchomienie (automatycznie tworzy trwałe sieci, jeśli nie istnieją)
 dev: net-up
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 # Zatrzymanie deweloperskie (czyści wolumeny dev, ale pozostawia trwałe sieci intact)
 dev-down:

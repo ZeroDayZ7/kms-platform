@@ -216,7 +216,9 @@ impl AppState {
         ));
         let crypto_service = Arc::new(VhsmCryptoService::new(vhsm_client));
 
-        let provider_factory = Arc::new(ProviderFactory::new());
+        let provider_factory = Arc::new(ProviderFactory::new(Arc::new(
+            settings.providers_acl.clone(),
+        )));
 
         let _ = crate::workers::expiration::run_expiration_worker(
             key_repo.clone(),
@@ -244,13 +246,11 @@ impl AppState {
 
         let iam_policy_path = IamCredentialPolicy::default_policy_path();
         let iam_policy = Arc::new(
-            IamCredentialPolicy::load_from_file(&iam_policy_path).unwrap_or_else(|err| {
-                tracing::warn!(error = ?err, "Failed to load IAM policy, using empty default fallback");
-                IamCredentialPolicy {
-                    version: "2026-08-29".into(),
-                    statements: vec![],
-                }
-            }),
+            IamCredentialPolicy::load_from_file(&iam_policy_path)
+                .map_err(|err| {
+                    tracing::error!(error = ?err, "Failed to load IAM policy from {}", iam_policy_path.display());
+                    err
+                })?
         );
 
         let encrypt_data_use_case = Arc::new(EncryptDataUseCase::new(

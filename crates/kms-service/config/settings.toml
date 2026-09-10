@@ -34,11 +34,14 @@ db = 0
 
 [rate_limit]
 global_per_second = 50
-global_burst = 100
+global_burst = 200
 health_per_second = 50
 health_burst = 100
 auth_per_second = 50
-auth_burst = 100
+auth_burst = 200
+
+[auth]
+public_endpoints = ["/health", "/status", "/favicon.ico"]
 
 # ==============================================================================
 # VHSM Crypto Config (Pure Client Mode)

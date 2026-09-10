@@ -1,10 +1,12 @@
 use super::acl::AclSettings;
+use super::auth::AuthConfig;
 use super::cors::CorsConfig;
 use super::database::DatabaseConfig;
 use super::log::LogConfig;
 use super::rate_limit::RateLimitConfig;
 use super::redis::RedisConfig;
 use super::server::ServerConfig;
+use crate::config::ProvidersAclSettings;
 use crate::config::crypto::CryptoSettings;
 use serde::Deserialize;
 
@@ -18,4 +20,6 @@ pub struct Settings {
     pub rate_limit: RateLimitConfig,
     pub crypto: CryptoSettings,
     pub acl: AclSettings,
+    pub auth: AuthConfig,
+    pub providers_acl: ProvidersAclSettings,
 }

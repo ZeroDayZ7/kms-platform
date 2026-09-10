@@ -28,7 +28,9 @@ pub async fn run_reconciliation_worker(
     });
 }
 
-async fn reconcile_stale_provisioning(db: Arc<PgPool>) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn reconcile_stale_provisioning(
+    db: Arc<PgPool>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let now = Utc::now();
     let stale = sqlx::query_scalar::<_, String>(
         r#"
