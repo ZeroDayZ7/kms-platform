@@ -5,7 +5,7 @@
     "**/Cargo.lock": true,
     "**/vendor": true,
 
-    // "**/.cargo": true,
+    "**/.cargo": true,
     "**/.git": true,
     "**/.gitattributes": true,
     // "**/.gitignore": true,
