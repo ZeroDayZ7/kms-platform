@@ -144,18 +144,15 @@ impl IssueAgentCredentialUseCase {
         Self::validate_acl(state, &input)?;
 
         // 2. Pobranie connection string admina dla docelowej bazy
-        let target_row: Option<(Uuid, Vec<u8>)> =
+        let target_row: Option<(Uuid, Vec<u8>, Option<String>)> =
             CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
                 .await
                 .map_err(|err| {
-                    AppError::database_error_with_source(
-                        format!("Database operation failed: {err}"),
-                        err,
-                    )
+                    AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
                 })?;
 
-        let (target_id, conn_encrypted) = match target_row.as_ref() {
-            Some(v) => (v.0, v.1.clone()),
+        let (target_id, conn_encrypted, db_default_role) = match target_row.as_ref() {
+            Some(v) => (v.0, v.1.clone(), v.2.clone()),
             None => {
                 return Err(AppError::NotFound(format!(
                     "Target resource not found: {}",
@@ -268,6 +265,12 @@ impl IssueAgentCredentialUseCase {
             });
         }
 
+        // Resolve granted_role: prefer DB-configured `default_role`, otherwise fall back to convention
+        let granted_role_owned: String = match db_default_role.as_deref().filter(|s| !s.is_empty()) {
+            Some(role) => role.to_string(),
+            None => format!("kms_{}_postgres_auth", input.caller_service),
+        };
+
         let username = generate_unique_username(&input.caller_service);
 
         // 3. Generowanie poświadczeń przez vHSM (wykonujemy dopiero gdy nie ma aktywnego rekordu)
@@ -340,7 +343,7 @@ impl IssueAgentCredentialUseCase {
             &input.caller_service,
             target_id,
             &encrypted_blob.ciphertext,
-            &input.caller_service,
+            &granted_role_owned,
             kek_id,
             kek_version,
             expires_at,
@@ -358,10 +361,19 @@ impl IssueAgentCredentialUseCase {
             })?;
         let secret_zero = zeroize::Zeroizing::new(secret_bytes);
 
+        // For Postgres provider, pass the `granted_role_owned` so the DB role used for grants
+        // can come from the `default_role` column. For other providers, they still expect
+        // the caller_service identifier.
+        let provider_caller_arg = if target_type_clean == "postgres" {
+            &granted_role_owned
+        } else {
+            &input.caller_service
+        };
+
         let provider_result = provider
             .create_user(
                 &admin_conn,
-                &input.caller_service,
+                provider_caller_arg,
                 &username,
                 input.ttl_seconds as i64,
                 Some(secret_zero.as_ref()),

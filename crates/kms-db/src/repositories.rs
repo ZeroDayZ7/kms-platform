@@ -177,9 +177,9 @@ impl CredentialQueries {
     pub async fn fetch_target_resource(
         pool: &PgPool,
         target_name: &str,
-    ) -> Result<Option<(Uuid, Vec<u8>)>, sqlx::Error> {
-        sqlx::query_as::<_, (Uuid, Vec<u8>)>(
-            "SELECT id, connection_url_encrypted FROM target_resources WHERE target_name = $1 AND active = true LIMIT 1",
+    ) -> Result<Option<(Uuid, Vec<u8>, Option<String>)>, sqlx::Error> {
+        sqlx::query_as::<_, (Uuid, Vec<u8>, Option<String>)>(
+            "SELECT id, connection_url_encrypted, default_role FROM target_resources WHERE target_name = $1 AND active = true LIMIT 1",
         )
         .bind(target_name)
         .fetch_optional(pool)
