@@ -114,7 +114,8 @@ impl TargetResourceProvider for RedisTargetProvider {
         &self,
         target_conn_str: &str,
         caller_service: &str,
-        generated_username: &str,
+        username: &str,
+        _granted_role: Option<&str>,
         ttl_seconds: i64,
         password: Option<&[u8]>,
     ) -> Result<GeneratedCredential, AppError> {
@@ -122,7 +123,7 @@ impl TargetResourceProvider for RedisTargetProvider {
             operation = "[R1] create_user",
             target = %target_conn_str,
             caller_service = %caller_service,
-            generated_username = %generated_username,
+            username = %username,
             "[R1] Redis create_user called"
         );
 
@@ -178,28 +179,28 @@ impl TargetResourceProvider for RedisTargetProvider {
 
         tracing::info!(
             operation = "[R6] exec_acl_setuser",
-            username = %generated_username,
+            username = %username,
             caller_service = %caller_service,
             "[R6] Executing ACL SETUSER via RESP ACL command"
         );
 
-        match client.acl_setuser(generated_username, rules).await {
+        match client.acl_setuser(username, rules).await {
             Ok(_) => {
                 tracing::info!(
                     operation = "[R7] setuser_ok",
-                    username = %generated_username,
+                    username = %username,
                     caller_service = %caller_service,
                     target = "redis",
                     ttl_seconds = ttl_seconds,
                     "[R7] Redis ACL SETUSER executed successfully"
                 );
                 Ok(GeneratedCredential {
-                    username: generated_username.to_string(),
+                    username: username.to_string(),
                     secret: Zeroizing::new(encoded_password),
                     ttl_seconds,
                 })
             }
-            Err(e) => Err(redis_acl_error("create_user", generated_username, e)),
+            Err(e) => Err(redis_acl_error("create_user", username, e)),
         }
     }
 

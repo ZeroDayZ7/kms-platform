@@ -36,27 +36,12 @@ pub async fn rewrap_keys_handler(
     })))
 }
 
-#[derive(Debug, serde::Deserialize)]
-pub struct ImportBootstrapRequest {
-    pub version: u32,
-    #[serde(default)]
-    pub target_resources: Vec<serde_json::Value>,
-    #[serde(default)]
-    pub credentials: Vec<serde_json::Value>,
-}
-
 pub async fn import_bootstrap_handler(
     State(state): State<AppState>,
     AuthenticatedService(caller): AuthenticatedService,
-    Json(payload): Json<ImportBootstrapRequest>,
+    Json(payload): Json<ImportBootstrapInput>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let input = ImportBootstrapInput {
-        version: payload.version,
-        target_resources: payload.target_resources,
-        credentials: payload.credentials,
-    };
-
-    let count = import_bootstrap(state.clone(), caller.0, input).await?;
+    let count = import_bootstrap(state.clone(), caller.0, payload).await?;
 
     Ok(Json(serde_json::json!({"imported": count})))
 }

@@ -1,6 +1,5 @@
 // crates/kms-db/src/lib.rs
 pub mod repositories;
-pub mod target_providers;
 
 pub use sqlx::{PgPool, Postgres, Transaction};
 

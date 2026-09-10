@@ -3,12 +3,14 @@
   "files.exclude": {
     "**/target": true,
     "**/Cargo.lock": true,
+    "**/vendor": true,
 
+    "**/.cargo": true,
     "**/.git": true,
     "**/.gitattributes": true,
-    "**/.gitignore": true,
+    // "**/.gitignore": true,
     "**/.github": true,
-    "**/.dockerignore": true,
+    // "**/.dockerignore": true,
 
     "**/tests": true,
     "**/LICENSE": true,

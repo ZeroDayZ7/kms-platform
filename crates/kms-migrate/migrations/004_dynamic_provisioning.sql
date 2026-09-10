@@ -1,21 +1,23 @@
 -- Target systems (admin connections managed by KMS)
 CREATE TABLE target_resources (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     target_name VARCHAR(64) UNIQUE NOT NULL, -- np. 'postgres_auth', 'postgres_citizen', 'rabbit_prod', 'minio_s3'
     target_type VARCHAR(32) NOT NULL, -- 'postgresql', 'rabbitmq', 'minio'
     connection_url_encrypted BYTEA NOT NULL, -- zaszyfrowane connection string / master credentials
+    default_role VARCHAR(64), -- Domyślna rola (może być NULL dla zasobów bez obsługi ról, np. Redis)
     active BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Active provisioned dynamic credentials
 CREATE TABLE provisioned_credentials (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     service_id VARCHAR(64) NOT NULL,
     target_id UUID NOT NULL REFERENCES target_resources(id),
-    username VARCHAR(128) NOT NULL,
-    password_encrypted BYTEA NOT NULL,
+    encrypted_credentials BYTEA NOT NULL, -- [12 bytes Nonce] + [Ciphertext+AuthTag] of JSON {u,p}
     granted_role VARCHAR(64) NOT NULL,
+    kek_id UUID NOT NULL REFERENCES keys(id),
+    kek_version INT NOT NULL DEFAULT 1,
     expires_at TIMESTAMPTZ NOT NULL,
     revoked BOOLEAN NOT NULL DEFAULT false,
     status VARCHAR(32) NOT NULL DEFAULT 'PENDING',

@@ -1,5 +1,6 @@
 # Rust compilation artifacts & cache
 /target/
+/vendor
 **/*.rs.bk
 **/*.swp
 **/*.swo
