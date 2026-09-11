@@ -367,12 +367,7 @@ impl BootstrapQueries {
             r#"
             INSERT INTO target_resources (id, target_name, target_type, connection_url_encrypted, default_role, active, created_at)
             VALUES ($1, $2, $3, $4, $5, true, $6)
-            ON CONFLICT (target_name)
-            DO UPDATE SET
-                target_type = EXCLUDED.target_type,
-                connection_url_encrypted = EXCLUDED.connection_url_encrypted,
-                default_role = EXCLUDED.default_role,
-                active = true
+            ON CONFLICT (id) DO NOTHING
             "#,
         )
         .bind(id)
