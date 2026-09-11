@@ -51,6 +51,16 @@ struct PostPayload<'a> {
     credentials: &'a [BootstrapCredentialRecord],
 }
 
+#[derive(Debug, Deserialize)]
+struct ImportBootstrapResponse {
+    total_in_file: usize,
+    resources_imported: usize,
+    resources_skipped: usize,
+    credentials_imported: usize,
+    credentials_skipped: usize,
+    message: String,
+}
+
 pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>) -> Result<()> {
     // Validate file exists and size
     let meta = fs::metadata(&file).await.context("Cannot stat file")?;
@@ -156,7 +166,20 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
         bail!("KMS import failed: {}", body);
     }
 
-    println!("Bootstrap import successful");
+    let summary: ImportBootstrapResponse = resp
+        .json()
+        .await
+        .context("Failed to parse bootstrap import response")?;
+
+    println!(
+        "Wczytano zasoby: {} nowe, {} pominięte; poświadczenia: {} nowe, {} pominięte (łącznie w pliku: {})",
+        summary.resources_imported,
+        summary.resources_skipped,
+        summary.credentials_imported,
+        summary.credentials_skipped,
+        summary.total_in_file
+    );
+    println!("{}", summary.message);
 
     Ok(())
 }

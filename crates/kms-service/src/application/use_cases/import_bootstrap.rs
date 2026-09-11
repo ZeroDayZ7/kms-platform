@@ -6,10 +6,20 @@ use crate::server::state::AppState;
 use chrono::Utc;
 use kms_db::repositories::{AuditQueries, BootstrapQueries};
 use kms_db::{Postgres, Transaction};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 use zeroize::Zeroizing;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ImportBootstrapSummary {
+    pub total_in_file: usize,
+    pub resources_imported: usize,
+    pub resources_skipped: usize,
+    pub credentials_imported: usize,
+    pub credentials_skipped: usize,
+    pub message: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ImportBootstrapInput {
@@ -49,7 +59,7 @@ pub async fn import_bootstrap(
     state: AppState,
     caller_service: String,
     input: ImportBootstrapInput,
-) -> AppResult<usize> {
+) -> AppResult<ImportBootstrapSummary> {
     info!(
         caller_service = %caller_service,
         version = input.version,
@@ -100,7 +110,10 @@ pub async fn import_bootstrap(
     })?;
     debug!("Transakcja DB otwarta pomyślnie");
 
-    let mut inserted_total = 0usize;
+    let mut resources_imported = 0usize;
+    let mut resources_skipped = 0usize;
+    let mut credentials_imported = 0usize;
+    let mut credentials_skipped = 0usize;
     let now = Utc::now();
 
     // ==========================================
@@ -130,6 +143,7 @@ pub async fn import_bootstrap(
                 target_name = %target.target_name,
                 "Target resource ID już istnieje w bazie danych. Pomijam rekord."
             );
+            resources_skipped += 1;
             continue;
         }
 
@@ -149,7 +163,7 @@ pub async fn import_bootstrap(
             })?;
 
         debug!(record_id = %record_id, ciphertext_len = encrypted.ciphertext.len(), default_role = ?target.default_role, "Wywoływanie insert_target_resource");
-        BootstrapQueries::insert_target_resource(
+        let inserted = BootstrapQueries::insert_target_resource(
             &mut tx,
             record_id,
             &target.target_name,
@@ -164,8 +178,13 @@ pub async fn import_bootstrap(
             AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
         })?;
 
-        inserted_total += 1;
-        info!(record_id = %record_id, target_name = %target.target_name, "Pomyślnie zaimportowano target_resource");
+        if inserted {
+            resources_imported += 1;
+            info!(record_id = %record_id, target_name = %target.target_name, "Pomyślnie zaimportowano target_resource");
+        } else {
+            resources_skipped += 1;
+            warn!(record_id = %record_id, target_name = %target.target_name, "Target resource został pominięty w czasie zapisu (konflikt/duplica=on conflict)");
+        }
     }
 
     // ==========================================
@@ -195,6 +214,7 @@ pub async fn import_bootstrap(
                 service_id = %rec.service_id,
                 "Credential ID już istnieje w bazie danych. Pomijam rekord."
             );
+            credentials_skipped += 1;
             continue;
         }
 
@@ -269,7 +289,7 @@ pub async fn import_bootstrap(
         }
 
         debug!(record_id = %record_id, ciphertext_len = encrypted.ciphertext.len(), "Zapisywanie credential do DB");
-        BootstrapQueries::insert_db_credential(
+        let inserted = BootstrapQueries::insert_db_credential(
             &mut tx,
             record_id,
             &rec.service_id.0,
@@ -287,8 +307,13 @@ pub async fn import_bootstrap(
             AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
         })?;
 
-        inserted_total += 1;
-        info!(record_id = %record_id, service_id = %rec.service_id, username = %rec.username, "Pomyślnie zaimportowano credential");
+        if inserted {
+            credentials_imported += 1;
+            info!(record_id = %record_id, service_id = %rec.service_id, username = %rec.username, "Pomyślnie zaimportowano credential");
+        } else {
+            credentials_skipped += 1;
+            warn!(record_id = %record_id, service_id = %rec.service_id, "Credential został pominięty w czasie zapisu (ON CONFLICT DO NOTHING)");
+        }
     }
 
     // ==========================================
@@ -316,7 +341,7 @@ pub async fn import_bootstrap(
         status: "Success",
         reason: Some(&format!(
             "imported {} total records (resources + credentials)",
-            inserted_total
+            resources_imported + credentials_imported
         )),
         prev_hash,
         timestamp: &now,
@@ -337,7 +362,10 @@ pub async fn import_bootstrap(
             action: action.to_string(),
             algorithm: "bootstrap-import".to_string(),
             status: "Success".to_string(),
-            reason: Some(format!("imported {} total records", inserted_total)),
+            reason: Some(format!(
+                "imported {} total records (resources + credentials)",
+                resources_imported + credentials_imported
+            )),
             prev_hash: prev_hash.to_string(),
             hash,
             signature: Some(Vec::<u8>::new()),
@@ -360,10 +388,27 @@ pub async fn import_bootstrap(
         AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
     })?;
 
+    let total_in_file = target_records.len() + cred_records.len();
+    let summary = ImportBootstrapSummary {
+        total_in_file,
+        resources_imported,
+        resources_skipped,
+        credentials_imported,
+        credentials_skipped,
+        message: format!(
+            "Pomyślnie przetworzona operacja: zaimportowano {}/{} nowych pozycji ({} pozycji już istniało w bazie)",
+            resources_imported + credentials_imported,
+            total_in_file,
+            resources_skipped + credentials_skipped
+        ),
+    };
+
     info!(
-        total_inserted = inserted_total,
+        total_inserted = resources_imported + credentials_imported,
+        skipped = resources_skipped + credentials_skipped,
+        total_in_file = total_in_file,
         audit_id = %audit_id,
         "Zatwierdzono transakcję importu bootstrapu z sukcesem"
     );
-    Ok(inserted_total)
+    Ok(summary)
 }

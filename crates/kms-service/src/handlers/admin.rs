@@ -41,7 +41,14 @@ pub async fn import_bootstrap_handler(
     AuthenticatedService(caller): AuthenticatedService,
     Json(payload): Json<ImportBootstrapInput>,
 ) -> AppResult<Json<serde_json::Value>> {
-    let count = import_bootstrap(state.clone(), caller.0, payload).await?;
+    let summary = import_bootstrap(state.clone(), caller.0, payload).await?;
 
-    Ok(Json(serde_json::json!({"imported": count})))
+    Ok(Json(serde_json::json!({
+        "total_in_file": summary.total_in_file,
+        "resources_imported": summary.resources_imported,
+        "resources_skipped": summary.resources_skipped,
+        "credentials_imported": summary.credentials_imported,
+        "credentials_skipped": summary.credentials_skipped,
+        "message": summary.message,
+    })))
 }

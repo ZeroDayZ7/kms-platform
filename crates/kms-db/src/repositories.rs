@@ -362,8 +362,8 @@ impl BootstrapQueries {
         connection_url_encrypted: &[u8],
         default_role: Option<&str>,
         created_at: DateTime<Utc>,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
             r#"
             INSERT INTO target_resources (id, target_name, target_type, connection_url_encrypted, default_role, active, created_at)
             VALUES ($1, $2, $3, $4, $5, true, $6)
@@ -382,8 +382,9 @@ impl BootstrapQueries {
         .bind(default_role)
         .bind(created_at)
         .execute(&mut **tx)
-        .await
-        .map(|_| ())
+        .await?;
+
+        Ok(result.rows_affected() == 1)
     }
 
     pub async fn active_credential_exists(
@@ -431,13 +432,14 @@ impl BootstrapQueries {
         kek_id: Uuid,
         kek_version: i32,
         created_at: DateTime<Utc>,
-    ) -> Result<(), sqlx::Error> {
-        sqlx::query(
+    ) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
             r#"
             INSERT INTO db_credentials
                 (id, service_id, target_type, target_db, resource, encrypted_credentials, kek_id, kek_version, status, created_at)
             VALUES
                 ($1, $2, $3, $4, $5, $6, $7, $8, 'ACTIVE', $9)
+            ON CONFLICT (id) DO NOTHING
             "#,
         )
         .bind(id)
@@ -450,8 +452,9 @@ impl BootstrapQueries {
         .bind(kek_version)
         .bind(created_at)
         .execute(&mut **tx)
-        .await
-        .map(|_| ())
+        .await?;
+
+        Ok(result.rows_affected() == 1)
     }
 }
 
