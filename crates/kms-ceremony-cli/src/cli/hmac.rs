@@ -49,8 +49,17 @@ pub fn sign_hmac_sha256(
 ) -> String {
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .expect("HMAC secret must be valid for SHA-256");
+    let mut mac = match HmacSha256::new_from_slice(secret.as_bytes()) {
+        Ok(mac) => mac,
+        Err(error) => {
+            tracing::error!(
+                error = %error,
+                "HMAC signing key was rejected by SHA-256 construction; using empty signature as safe fallback"
+            );
+            return String::new();
+        }
+    };
+
     mac.update(canonical_request_string(method, path, timestamp, nonce, body_hash).as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }

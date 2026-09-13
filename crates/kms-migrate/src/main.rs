@@ -375,10 +375,20 @@ async fn wait_for_exit_signal() {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{SignalKind, signal};
-        let mut sigint =
-            signal(SignalKind::interrupt()).expect("sigint handler should be installed");
-        let mut sigterm =
-            signal(SignalKind::terminate()).expect("sigterm handler should be installed");
+        let mut sigint = match signal(SignalKind::interrupt()) {
+            Ok(signal) => signal,
+            Err(error) => {
+                tracing::error!(error = %error, "Failed to install SIGINT handler");
+                return;
+            }
+        };
+        let mut sigterm = match signal(SignalKind::terminate()) {
+            Ok(signal) => signal,
+            Err(error) => {
+                tracing::error!(error = %error, "Failed to install SIGTERM handler");
+                return;
+            }
+        };
 
         tokio::select! {
             _ = sigint.recv() => {}
@@ -388,7 +398,9 @@ async fn wait_for_exit_signal() {
 
     #[cfg(not(unix))]
     {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Err(error) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %error, "Failed to install Ctrl+C handler");
+        }
     }
 }
 

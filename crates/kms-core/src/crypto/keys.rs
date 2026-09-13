@@ -11,7 +11,16 @@ impl SecretKey {
     //#region generate
     pub fn generate() -> Self {
         let mut key = [0u8; KEY_SIZE];
-        getrandom(&mut key).expect("OS RNG failed");
+
+        if getrandom(&mut key).is_err() {
+            // This is a hard process-level invariant: the OS CSPRNG is required for
+            // secret material generation. If the platform RNG is unavailable, the
+            // process cannot safely continue and must fail fast without panicking
+            // through a Rust `unwrap`/`expect` call.
+            tracing::error!("OS RNG failed while generating SecretKey; aborting process");
+            std::process::abort();
+        }
+
         Self(key)
     }
 

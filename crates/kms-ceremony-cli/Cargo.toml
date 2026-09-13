@@ -21,5 +21,6 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 subtle = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true, features = ["zeroize_derive"] }
