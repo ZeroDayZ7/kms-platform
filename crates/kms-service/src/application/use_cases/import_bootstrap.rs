@@ -323,6 +323,13 @@ pub async fn import_bootstrap(
     let action = "bootstrap:import";
 
     debug!(audit_id = %audit_id, "Pobieranie poprzedniego hasha z audit logu");
+    AuditQueries::lock_audit_chain_tx(&mut tx)
+        .await
+        .map_err(|err| {
+            error!(error = %err, "Błąd SQL podczas blokowania łańcucha audytu");
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
+
     let prev_hash_row: Option<String> =
         AuditQueries::latest_hash_tx(&mut tx).await.map_err(|err| {
             error!(error = %err, "Błąd SQL podczas pobierania latest_hash_tx");

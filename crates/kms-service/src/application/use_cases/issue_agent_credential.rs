@@ -589,6 +589,10 @@ pub async fn insert_audit_log_tx(
     credential_id: &Uuid,
     timestamp: DateTime<Utc>,
 ) -> AppResult<()> {
+    AuditQueries::lock_audit_chain_tx(tx).await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
+
     let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx).await.map_err(|err| {
         AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
     })?;
@@ -694,5 +698,117 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
         );
+    }
+
+    #[tokio::test]
+    async fn audit_chain_lock_serializes_concurrent_writes() {
+        let Some(database_url) = std::env::var("DATABASE_URL").ok().or_else(|| {
+            kms_db::DatabaseConfig::from_env()
+                .ok()
+                .map(|cfg| cfg.connection_string().to_string())
+        }) else {
+            eprintln!("SKIP: no DATABASE_URL configured for audit-chain concurrency test");
+            return;
+        };
+
+        let pool = match sqlx::PgPool::connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(err) => {
+                eprintln!(
+                    "SKIP: unable to reach PostgreSQL for audit-chain concurrency test: {err}"
+                );
+                return;
+            }
+        };
+
+        let table_exists: Option<bool> = match sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'audit_logs')",
+        )
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("SKIP: audit_logs table unavailable for concurrency test: {err}");
+                return;
+            }
+        };
+
+        if table_exists != Some(true) {
+            eprintln!("SKIP: audit_logs table not present for concurrency test");
+            return;
+        }
+
+        let group_id = Uuid::now_v7();
+        let mut handles = Vec::new();
+
+        for i in 0..8 {
+            let pool = pool.clone();
+            let task = tokio::spawn(async move {
+                let mut tx = pool.begin().await.unwrap();
+                AuditQueries::lock_audit_chain_tx(&mut tx).await.unwrap();
+
+                let prev_hash_row: Option<String> =
+                    AuditQueries::latest_hash_tx(&mut tx).await.unwrap();
+                let prev_hash = prev_hash_row.as_deref().unwrap_or("");
+                let audit_id = Uuid::now_v7();
+                let hash = compute_audit_hash(&AuditHashInput {
+                    id: &audit_id.to_string(),
+                    caller_service: "audit-test",
+                    target_service: "audit-test",
+                    action: "concurrency-test",
+                    algorithm: "concurrency-test",
+                    status: "Success",
+                    reason: Some("concurrency regression test"),
+                    prev_hash,
+                    timestamp: &Utc::now(),
+                    request_id: Some(&format!("req-{group_id}-{i}")),
+                    operation_id: Some(&format!("op-{group_id}-{i}")),
+                    target_id: Some(&format!("target-{group_id}-{i}")),
+                    metadata: Some("concurrency_regression"),
+                    hash_version: kms_core::audit::AuditHashVersion::CURRENT,
+                });
+
+                AuditQueries::insert_tx(
+                    &mut tx,
+                    kms_db::repositories::AuditInsert {
+                        id: audit_id,
+                        caller_service: "audit-test".to_string(),
+                        target_service: "audit-test".to_string(),
+                        action: "concurrency-test".to_string(),
+                        algorithm: "concurrency-test".to_string(),
+                        status: "Success".to_string(),
+                        reason: Some("concurrency regression test".to_string()),
+                        prev_hash: prev_hash.to_string(),
+                        hash,
+                        signature: Some(Vec::<u8>::new()),
+                        request_id: Some(format!("req-{group_id}-{i}")),
+                        operation_id: Some(format!("op-{group_id}-{i}")),
+                        target_id: Some(format!("target-{group_id}-{i}")),
+                        metadata: Some("concurrency_regression".to_string()),
+                        created_at: Utc::now(),
+                    },
+                )
+                .await
+                .unwrap();
+
+                tx.commit().await.unwrap();
+            });
+
+            handles.push(task);
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_logs WHERE caller_service = 'audit-test' AND target_service = 'audit-test' AND action = 'concurrency-test'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(count, 8);
     }
 }

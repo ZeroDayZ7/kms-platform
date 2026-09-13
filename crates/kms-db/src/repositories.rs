@@ -40,9 +40,21 @@ pub struct AuditInsert {
     pub created_at: DateTime<Utc>,
 }
 
+pub const AUDIT_CHAIN_LOCK_KEY: i64 = 0x4B4D535F41554449_i64;
+
 pub struct AuditQueries;
 
 impl AuditQueries {
+    pub async fn lock_audit_chain_tx(
+        tx: &mut Transaction<'_, Postgres>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(AUDIT_CHAIN_LOCK_KEY)
+            .execute(&mut **tx)
+            .await
+            .map(|_| ())
+    }
+
     pub async fn list_recent(
         pool: &PgPool,
         limit: Option<usize>,
