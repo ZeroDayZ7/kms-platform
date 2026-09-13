@@ -134,5 +134,5 @@ fn quote_sql_identifier(value: &str) -> String {
 }
 
 fn escape_sql_literal(value: &str) -> String {
-    value.replace('\'' , "''")
+    value.replace('\'', "''")
 }

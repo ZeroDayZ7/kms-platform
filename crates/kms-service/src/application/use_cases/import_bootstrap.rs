@@ -221,16 +221,15 @@ pub async fn import_bootstrap(
         let target_db_str = rec.target_db.to_string().trim_matches('"').to_string();
 
         debug!(record_id = %record_id, service_id = %rec.service_id, "Pobieranie aktywnego KEK z DB");
-        let kek_row: Option<(Uuid, i32)> =
-            BootstrapQueries::latest_kek_id(&mut tx, &rec.service_id.0)
-                .await
-                .map_err(|err| {
-                    error!(error = %err, service_id = %rec.service_id, "Błąd SQL podczas zapytania o KEK");
-                    AppError::database_error_with_source(
-                        format!("Database operation failed: {err}"),
-                        err,
-                    )
-                })?;
+        let kek_row: Option<(Uuid, i32)> = BootstrapQueries::latest_kek_id(
+            &mut tx,
+            &rec.service_id.0,
+        )
+        .await
+        .map_err(|err| {
+            error!(error = %err, service_id = %rec.service_id, "Błąd SQL podczas zapytania o KEK");
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
         let (kek_id, kek_version) = match kek_row {
             Some((id, ver)) => {
@@ -349,7 +348,7 @@ pub async fn import_bootstrap(
         operation_id: None,
         target_id: None,
         metadata: Some("bootstrap_import_v2"),
-        hash_version: kms_core::audit::CURRENT_AUDIT_HASH_VERSION,
+        hash_version: kms_core::audit::AuditHashVersion::CURRENT,
     });
     debug!(audit_id = %audit_id, computed_hash = %hash, "Obliczono hash audytowy");
 

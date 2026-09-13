@@ -148,7 +148,10 @@ impl IssueAgentCredentialUseCase {
             CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
                 .await
                 .map_err(|err| {
-                    AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+                    AppError::database_error_with_source(
+                        format!("Database operation failed: {err}"),
+                        err,
+                    )
                 })?;
 
         let (target_id, conn_encrypted, db_default_role) = match target_row.as_ref() {
@@ -266,7 +269,8 @@ impl IssueAgentCredentialUseCase {
         }
 
         // Resolve granted_role: prefer DB-configured `default_role`, otherwise fall back to convention
-        let granted_role_owned: String = match db_default_role.as_deref().filter(|s| !s.is_empty()) {
+        let granted_role_owned: String = match db_default_role.as_deref().filter(|s| !s.is_empty())
+        {
             Some(role) => role.to_string(),
             None => format!("kms_{}_postgres_auth", input.caller_service),
         };
@@ -370,7 +374,11 @@ impl IssueAgentCredentialUseCase {
                 &input.caller_service,
                 &username,
                 // For Postgres use the granted_role, for others pass None
-                if target_type_clean == "postgres" { Some(granted_role_owned.as_str()) } else { None },
+                if target_type_clean == "postgres" {
+                    Some(granted_role_owned.as_str())
+                } else {
+                    None
+                },
                 input.ttl_seconds as i64,
                 Some(secret_zero.as_ref()),
             )
@@ -600,7 +608,7 @@ pub async fn insert_audit_log_tx(
         operation_id: None,
         target_id: Some(&credential_id.to_string()),
         metadata: Some("credential_provisioned"),
-        hash_version: kms_core::audit::CURRENT_AUDIT_HASH_VERSION,
+        hash_version: kms_core::audit::AuditHashVersion::CURRENT,
     });
 
     AuditQueries::insert_tx(

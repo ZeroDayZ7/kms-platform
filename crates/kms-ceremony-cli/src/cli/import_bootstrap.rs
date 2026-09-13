@@ -4,9 +4,9 @@ use dialoguer::Password;
 use kms_core::crypto::aes::decrypt_bytes_with_argon2_raw;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::path::PathBuf;
 use tokio::fs;
+use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MiB

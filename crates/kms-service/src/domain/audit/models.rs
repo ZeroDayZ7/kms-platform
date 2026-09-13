@@ -1,5 +1,6 @@
 use crate::domain::keys::models::{KeyAlgorithm, ServiceId};
 use chrono::{DateTime, Utc};
+use kms_core::audit::AuditHashVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
@@ -51,7 +52,7 @@ pub struct AuditLog {
     pub algorithm: KeyAlgorithm,
     pub status: AuditStatus,
     pub reason: Option<String>,
-    pub hash_version: String,
+    pub hash_version: AuditHashVersion,
     pub request_id: Option<String>,
     pub operation_id: Option<String>,
     pub target_id: Option<String>,
@@ -78,7 +79,7 @@ pub struct NewAuditLog {
     pub status: AuditStatus,
     pub reason: Option<String>,
     pub prev_hash: Option<String>,
-    pub hash_version: String,
+    pub hash_version: AuditHashVersion,
     pub request_id: Option<String>,
     pub operation_id: Option<String>,
     pub target_id: Option<String>,
@@ -183,7 +184,10 @@ impl CanonicalAuditEntry {
             "operation_id".to_string(),
             Value::String(self.operation_id.clone().unwrap_or_default()),
         );
-        map.insert("hash_version".to_string(), Value::String("v1".to_string()));
+        map.insert(
+            "hash_version".to_string(),
+            Value::String(AuditHashVersion::CURRENT.as_str().to_string()),
+        );
         map.insert(
             "prev_hash".to_string(),
             Value::String(self.prev_hash.clone()),
@@ -234,6 +238,38 @@ impl CanonicalAuditEntry {
 }
 
 impl AuditLog {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        id: uuid::Uuid,
+        caller_service: ServiceId,
+        target_service: ServiceId,
+        action: AuditAction,
+        algorithm: KeyAlgorithm,
+        status: AuditStatus,
+        reason: Option<String>,
+        request_id: Option<String>,
+        operation_id: Option<String>,
+        target_id: Option<String>,
+        metadata: Option<String>,
+        timestamp: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            id,
+            caller_service,
+            target_service,
+            action,
+            algorithm,
+            status,
+            reason,
+            hash_version: AuditHashVersion::CURRENT,
+            request_id,
+            operation_id,
+            target_id,
+            metadata,
+            timestamp,
+        }
+    }
+
     pub fn sanitize_reason(reason: Option<&str>) -> Option<String> {
         let reason = reason?;
         if reason.trim().is_empty() {

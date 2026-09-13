@@ -38,23 +38,22 @@ where
         let prev_hash = "0000000000000000000000000000000000000000000000000000000000000000";
         let entry = CanonicalAuditEntry::new(ctx, action, status, details, prev_hash);
 
-        let audit_log = AuditLog {
-            id: entry.id,
-            caller_service: entry.caller_service,
-            target_service: entry.target_service,
-            action: entry.action,
+        let audit_log = AuditLog::new(
+            entry.id,
+            entry.caller_service,
+            entry.target_service,
+            entry.action,
             algorithm,
-            status: entry.status,
-            reason: reason.or(entry.reason),
-            hash_version: "v1".to_string(),
-            request_id: entry.request_id,
-            operation_id: entry.operation_id,
-            target_id: entry.target_id,
-            metadata: entry
+            entry.status,
+            reason.or(entry.reason),
+            entry.request_id,
+            entry.operation_id,
+            entry.target_id,
+            entry
                 .metadata
                 .map(|value| serde_json::to_string(&value).unwrap_or_default()),
-            timestamp: entry.timestamp,
-        };
+            entry.timestamp,
+        );
 
         self.repo.record(audit_log).await
     }

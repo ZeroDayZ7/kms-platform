@@ -66,21 +66,20 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
 
             let startup_audit = PgAuditRepository::new(state.db.clone());
             startup_audit
-                .record(AuditLog {
-                    id: uuid::Uuid::now_v7(),
-                    caller_service: ServiceId("kms-service".to_string()),
-                    target_service: ServiceId("kms-service".to_string()),
-                    action: AuditAction::SystemStarted,
-                    algorithm: KeyAlgorithm::AES256GCM,
-                    status: AuditStatus::Success,
-                    reason: Some("service startup initialized".to_string()),
-                    hash_version: "v1".to_string(),
-                    request_id: Some(uuid::Uuid::new_v4().to_string()),
-                    operation_id: Some(uuid::Uuid::new_v4().to_string()),
-                    target_id: Some("instance".to_string()),
-                    metadata: Some("service_startup".to_string()),
-                    timestamp: Utc::now(),
-                })
+                .record(AuditLog::new(
+                    uuid::Uuid::now_v7(),
+                    ServiceId("kms-service".to_string()),
+                    ServiceId("kms-service".to_string()),
+                    AuditAction::SystemStarted,
+                    KeyAlgorithm::AES256GCM,
+                    AuditStatus::Success,
+                    Some("service startup initialized".to_string()),
+                    Some(uuid::Uuid::new_v4().to_string()),
+                    Some(uuid::Uuid::new_v4().to_string()),
+                    Some("instance".to_string()),
+                    Some("service_startup".to_string()),
+                    Utc::now(),
+                ))
                 .await
                 .context("Failed to record startup audit event")?;
 
