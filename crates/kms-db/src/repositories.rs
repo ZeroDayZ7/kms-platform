@@ -44,6 +44,19 @@ pub const AUDIT_CHAIN_LOCK_KEY: i64 = 0x4B4D535F41554449_i64;
 
 pub struct AuditQueries;
 
+#[derive(Debug, Clone)]
+pub struct ProvisionedCredentialInsert {
+    pub id: Uuid,
+    pub service_id: String,
+    pub target_id: Uuid,
+    pub encrypted_credentials: Vec<u8>,
+    pub granted_role: String,
+    pub kek_id: Uuid,
+    pub kek_version: i32,
+    pub expires_at: DateTime<Utc>,
+    pub status: String,
+}
+
 impl AuditQueries {
     pub async fn lock_audit_chain_tx(
         tx: &mut Transaction<'_, Postgres>,
@@ -238,18 +251,9 @@ impl CredentialQueries {
         .await
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub async fn insert_provisioned_credential(
         tx: &mut Transaction<'_, Postgres>,
-        id: Uuid,
-        service_id: &str,
-        target_id: Uuid,
-        encrypted_credentials: &[u8],
-        granted_role: &str,
-        kek_id: Uuid,
-        kek_version: i32,
-        expires_at: DateTime<Utc>,
-        status: &str,
+        record: ProvisionedCredentialInsert,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
             r#"
@@ -259,15 +263,15 @@ impl CredentialQueries {
                 ($1, $2, $3, $4, $5, $6, $7, $8, false, $9, $10)
             "#,
         )
-        .bind(id)
-        .bind(service_id)
-        .bind(target_id)
-        .bind(encrypted_credentials)
-        .bind(granted_role)
-        .bind(kek_id)
-        .bind(kek_version)
-        .bind(expires_at)
-        .bind(status)
+        .bind(record.id)
+        .bind(record.service_id)
+        .bind(record.target_id)
+        .bind(record.encrypted_credentials)
+        .bind(record.granted_role)
+        .bind(record.kek_id)
+        .bind(record.kek_version)
+        .bind(record.expires_at)
+        .bind(record.status)
         .bind(Utc::now())
         .execute(&mut **tx)
         .await

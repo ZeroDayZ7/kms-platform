@@ -343,15 +343,17 @@ impl IssueAgentCredentialUseCase {
 
         insert_provisioned_credential_tx(
             &mut tx,
-            generated.credential_id,
-            &input.caller_service,
-            target_id,
-            &encrypted_blob.ciphertext,
-            &granted_role_owned,
-            kek_id,
-            kek_version,
-            expires_at,
-            ProvisioningStatus::Provisioning.as_str(),
+            ProvisionedCredentialWrite {
+                id: generated.credential_id,
+                service_id: input.caller_service.clone(),
+                target_id,
+                encrypted_credentials: encrypted_blob.ciphertext.clone(),
+                granted_role: granted_role_owned.clone(),
+                kek_id,
+                kek_version,
+                expires_at,
+                status: ProvisioningStatus::Provisioning.as_str().to_string(),
+            },
         )
         .await?;
 
@@ -534,30 +536,36 @@ pub async fn generate_secure_credential(
 
 // --- Funkcje pomocnicze transakcyjne ---
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Debug, Clone)]
+pub struct ProvisionedCredentialWrite {
+    pub id: Uuid,
+    pub service_id: String,
+    pub target_id: Uuid,
+    pub encrypted_credentials: Vec<u8>,
+    pub granted_role: String,
+    pub kek_id: Uuid,
+    pub kek_version: i32,
+    pub expires_at: DateTime<Utc>,
+    pub status: String,
+}
+
 pub async fn insert_provisioned_credential_tx(
     tx: &mut Transaction<'_, Postgres>,
-    id: Uuid,
-    service_id: &str,
-    target_id: Uuid,
-    encrypted_credentials: &[u8],
-    granted_role: &str,
-    kek_id: Uuid,
-    kek_version: i32,
-    expires_at: DateTime<Utc>,
-    status: &str,
+    params: ProvisionedCredentialWrite,
 ) -> AppResult<()> {
     CredentialQueries::insert_provisioned_credential(
         tx,
-        id,
-        service_id,
-        target_id,
-        encrypted_credentials,
-        granted_role,
-        kek_id,
-        kek_version,
-        expires_at,
-        status,
+        kms_db::repositories::ProvisionedCredentialInsert {
+            id: params.id,
+            service_id: params.service_id,
+            target_id: params.target_id,
+            encrypted_credentials: params.encrypted_credentials,
+            granted_role: params.granted_role,
+            kek_id: params.kek_id,
+            kek_version: params.kek_version,
+            expires_at: params.expires_at,
+            status: params.status,
+        },
     )
     .await
     .map_err(|err| {
