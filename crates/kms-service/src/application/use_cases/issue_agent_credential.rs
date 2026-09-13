@@ -614,7 +614,7 @@ pub async fn insert_audit_log_tx(
     AuditQueries::insert_tx(
         tx,
         kms_db::repositories::AuditInsert {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             caller_service: caller_service.to_string(),
             target_service: target_service.to_string(),
             action: action.to_string(),
