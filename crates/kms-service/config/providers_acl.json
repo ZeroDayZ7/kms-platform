@@ -7,7 +7,21 @@
           "default_ttl_seconds": 900
         },
         "redis": {
-          "acl_rules": ["on", "+@read", "+ping", "~cache:auth:*"]
+          "acl_rules": [
+            "on",
+            "+@read",
+            "+@write",
+            "+@string",
+            "+@keyspace",
+            "+set",
+            "+setex",
+            "+get",
+            "+del",
+            "+expire",
+            "+ping",
+            "+select",
+            "~*"
+          ]
         }
       },
       "gateway-service": {
@@ -16,7 +30,16 @@
           "default_ttl_seconds": 1800
         },
         "redis": {
-          "acl_rules": ["on", "+@read", "+@write", "+ping", "~cache:gateway:*"]
+          "acl_rules": [
+            "on",
+            "+@read",
+            "+@string",
+            "+@keyspace",
+            "+get",
+            "+ping",
+            "+select",
+            "~*"
+          ]
         }
       }
     }
