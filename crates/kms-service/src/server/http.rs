@@ -39,16 +39,15 @@ async fn shutdown_signal(timeout: u64, shutdown_token: CancellationToken) {
 
     #[cfg(unix)]
     let terminate = async {
-        let mut terminate_signal = match signal::unix::signal(signal::unix::SignalKind::terminate())
-        {
-            Ok(signal) => signal,
+        match signal::unix::signal(signal::unix::SignalKind::terminate()) {
+            Ok(mut terminate_signal) => {
+                terminate_signal.recv().await;
+            }
             Err(error) => {
                 warn!(error = %error, "failed to install SIGTERM handler");
                 std::future::pending::<()>().await;
             }
-        };
-
-        terminate_signal.recv().await;
+        }
     };
 
     #[cfg(not(unix))]
