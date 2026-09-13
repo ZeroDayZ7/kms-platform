@@ -148,7 +148,10 @@ impl IssueAgentCredentialUseCase {
             CredentialQueries::fetch_target_resource(&state.db, &input.target_service)
                 .await
                 .map_err(|err| {
-                    AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+                    AppError::database_error_with_source(
+                        format!("Database operation failed: {err}"),
+                        err,
+                    )
                 })?;
 
         let (target_id, conn_encrypted, db_default_role) = match target_row.as_ref() {
@@ -266,7 +269,8 @@ impl IssueAgentCredentialUseCase {
         }
 
         // Resolve granted_role: prefer DB-configured `default_role`, otherwise fall back to convention
-        let granted_role_owned: String = match db_default_role.as_deref().filter(|s| !s.is_empty()) {
+        let granted_role_owned: String = match db_default_role.as_deref().filter(|s| !s.is_empty())
+        {
             Some(role) => role.to_string(),
             None => format!("kms_{}_postgres_auth", input.caller_service),
         };
@@ -339,15 +343,17 @@ impl IssueAgentCredentialUseCase {
 
         insert_provisioned_credential_tx(
             &mut tx,
-            generated.credential_id,
-            &input.caller_service,
-            target_id,
-            &encrypted_blob.ciphertext,
-            &granted_role_owned,
-            kek_id,
-            kek_version,
-            expires_at,
-            ProvisioningStatus::Provisioning.as_str(),
+            ProvisionedCredentialWrite {
+                id: generated.credential_id,
+                service_id: input.caller_service.clone(),
+                target_id,
+                encrypted_credentials: encrypted_blob.ciphertext.clone(),
+                granted_role: granted_role_owned.clone(),
+                kek_id,
+                kek_version,
+                expires_at,
+                status: ProvisioningStatus::Provisioning.as_str().to_string(),
+            },
         )
         .await?;
 
@@ -370,7 +376,11 @@ impl IssueAgentCredentialUseCase {
                 &input.caller_service,
                 &username,
                 // For Postgres use the granted_role, for others pass None
-                if target_type_clean == "postgres" { Some(granted_role_owned.as_str()) } else { None },
+                if target_type_clean == "postgres" {
+                    Some(granted_role_owned.as_str())
+                } else {
+                    None
+                },
                 input.ttl_seconds as i64,
                 Some(secret_zero.as_ref()),
             )
@@ -526,30 +536,36 @@ pub async fn generate_secure_credential(
 
 // --- Funkcje pomocnicze transakcyjne ---
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Debug, Clone)]
+pub struct ProvisionedCredentialWrite {
+    pub id: Uuid,
+    pub service_id: String,
+    pub target_id: Uuid,
+    pub encrypted_credentials: Vec<u8>,
+    pub granted_role: String,
+    pub kek_id: Uuid,
+    pub kek_version: i32,
+    pub expires_at: DateTime<Utc>,
+    pub status: String,
+}
+
 pub async fn insert_provisioned_credential_tx(
     tx: &mut Transaction<'_, Postgres>,
-    id: Uuid,
-    service_id: &str,
-    target_id: Uuid,
-    encrypted_credentials: &[u8],
-    granted_role: &str,
-    kek_id: Uuid,
-    kek_version: i32,
-    expires_at: DateTime<Utc>,
-    status: &str,
+    params: ProvisionedCredentialWrite,
 ) -> AppResult<()> {
     CredentialQueries::insert_provisioned_credential(
         tx,
-        id,
-        service_id,
-        target_id,
-        encrypted_credentials,
-        granted_role,
-        kek_id,
-        kek_version,
-        expires_at,
-        status,
+        kms_db::repositories::ProvisionedCredentialInsert {
+            id: params.id,
+            service_id: params.service_id,
+            target_id: params.target_id,
+            encrypted_credentials: params.encrypted_credentials,
+            granted_role: params.granted_role,
+            kek_id: params.kek_id,
+            kek_version: params.kek_version,
+            expires_at: params.expires_at,
+            status: params.status,
+        },
     )
     .await
     .map_err(|err| {
@@ -581,6 +597,10 @@ pub async fn insert_audit_log_tx(
     credential_id: &Uuid,
     timestamp: DateTime<Utc>,
 ) -> AppResult<()> {
+    AuditQueries::lock_audit_chain_tx(tx).await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
+
     let prev_hash_row: Option<String> = AuditQueries::latest_hash_tx(tx).await.map_err(|err| {
         AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
     })?;
@@ -600,13 +620,13 @@ pub async fn insert_audit_log_tx(
         operation_id: None,
         target_id: Some(&credential_id.to_string()),
         metadata: Some("credential_provisioned"),
-        hash_version: kms_core::audit::CURRENT_AUDIT_HASH_VERSION,
+        hash_version: kms_core::audit::AuditHashVersion::CURRENT,
     });
 
     AuditQueries::insert_tx(
         tx,
         kms_db::repositories::AuditInsert {
-            id: Uuid::new_v4(),
+            id: Uuid::now_v7(),
             caller_service: caller_service.to_string(),
             target_service: target_service.to_string(),
             action: action.to_string(),
@@ -686,5 +706,117 @@ mod tests {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || c == '_')
         );
+    }
+
+    #[tokio::test]
+    async fn audit_chain_lock_serializes_concurrent_writes() {
+        let Some(database_url) = std::env::var("DATABASE_URL").ok().or_else(|| {
+            kms_db::DatabaseConfig::from_env()
+                .ok()
+                .map(|cfg| cfg.connection_string().to_string())
+        }) else {
+            eprintln!("SKIP: no DATABASE_URL configured for audit-chain concurrency test");
+            return;
+        };
+
+        let pool = match sqlx::PgPool::connect(&database_url).await {
+            Ok(pool) => pool,
+            Err(err) => {
+                eprintln!(
+                    "SKIP: unable to reach PostgreSQL for audit-chain concurrency test: {err}"
+                );
+                return;
+            }
+        };
+
+        let table_exists: Option<bool> = match sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'audit_logs')",
+        )
+        .fetch_optional(&pool)
+        .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!("SKIP: audit_logs table unavailable for concurrency test: {err}");
+                return;
+            }
+        };
+
+        if table_exists != Some(true) {
+            eprintln!("SKIP: audit_logs table not present for concurrency test");
+            return;
+        }
+
+        let group_id = Uuid::now_v7();
+        let mut handles = Vec::new();
+
+        for i in 0..8 {
+            let pool = pool.clone();
+            let task = tokio::spawn(async move {
+                let mut tx = pool.begin().await.unwrap();
+                AuditQueries::lock_audit_chain_tx(&mut tx).await.unwrap();
+
+                let prev_hash_row: Option<String> =
+                    AuditQueries::latest_hash_tx(&mut tx).await.unwrap();
+                let prev_hash = prev_hash_row.as_deref().unwrap_or("");
+                let audit_id = Uuid::now_v7();
+                let hash = compute_audit_hash(&AuditHashInput {
+                    id: &audit_id.to_string(),
+                    caller_service: "audit-test",
+                    target_service: "audit-test",
+                    action: "concurrency-test",
+                    algorithm: "concurrency-test",
+                    status: "Success",
+                    reason: Some("concurrency regression test"),
+                    prev_hash,
+                    timestamp: &Utc::now(),
+                    request_id: Some(&format!("req-{group_id}-{i}")),
+                    operation_id: Some(&format!("op-{group_id}-{i}")),
+                    target_id: Some(&format!("target-{group_id}-{i}")),
+                    metadata: Some("concurrency_regression"),
+                    hash_version: kms_core::audit::AuditHashVersion::CURRENT,
+                });
+
+                AuditQueries::insert_tx(
+                    &mut tx,
+                    kms_db::repositories::AuditInsert {
+                        id: audit_id,
+                        caller_service: "audit-test".to_string(),
+                        target_service: "audit-test".to_string(),
+                        action: "concurrency-test".to_string(),
+                        algorithm: "concurrency-test".to_string(),
+                        status: "Success".to_string(),
+                        reason: Some("concurrency regression test".to_string()),
+                        prev_hash: prev_hash.to_string(),
+                        hash,
+                        signature: Some(Vec::<u8>::new()),
+                        request_id: Some(format!("req-{group_id}-{i}")),
+                        operation_id: Some(format!("op-{group_id}-{i}")),
+                        target_id: Some(format!("target-{group_id}-{i}")),
+                        metadata: Some("concurrency_regression".to_string()),
+                        created_at: Utc::now(),
+                    },
+                )
+                .await
+                .unwrap();
+
+                tx.commit().await.unwrap();
+            });
+
+            handles.push(task);
+        }
+
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM audit_logs WHERE caller_service = 'audit-test' AND target_service = 'audit-test' AND action = 'concurrency-test'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(count, 8);
     }
 }

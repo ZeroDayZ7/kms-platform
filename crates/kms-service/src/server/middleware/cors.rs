@@ -11,19 +11,38 @@ pub fn create_cors_layer(settings: &Settings) -> CorsLayer {
     // 1. Obsługa Originów (nowy enum)
     layer = match &settings.cors.allowed_origin {
         AllowedOrigins::Any => layer.allow_origin(Any),
-        AllowedOrigins::Single(origin) => {
-            let val = origin.parse::<HeaderValue>().expect("Invalid CORS origin");
-            layer.allow_origin(val)
-        }
+        AllowedOrigins::Single(origin) => match origin.parse::<HeaderValue>() {
+            Ok(value) => layer.allow_origin(value),
+            Err(error) => {
+                tracing::warn!(
+                    origin = %origin,
+                    error = %error,
+                    "Invalid CORS origin configured; falling back to wildcard"
+                );
+                layer.allow_origin(Any)
+            }
+        },
         AllowedOrigins::List(origins) => {
             let header_values: Vec<HeaderValue> = origins
                 .iter()
-                .map(|o| {
-                    o.parse::<HeaderValue>()
-                        .expect("Invalid CORS origin in list")
+                .filter_map(|origin| match origin.parse::<HeaderValue>() {
+                    Ok(value) => Some(value),
+                    Err(error) => {
+                        tracing::warn!(
+                            origin = %origin,
+                            error = %error,
+                            "Ignoring invalid CORS origin in configured list"
+                        );
+                        None
+                    }
                 })
                 .collect();
-            layer.allow_origin(header_values)
+
+            if header_values.is_empty() {
+                layer.allow_origin(Any)
+            } else {
+                layer.allow_origin(header_values)
+            }
         }
     };
 

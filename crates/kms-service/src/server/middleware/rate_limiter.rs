@@ -21,29 +21,63 @@ impl RateLimitLayers {
     //# region new
     //#region new
     pub fn new(settings: &Settings, limiter: Arc<dyn RateLimiter>) -> Self {
-        let global_conf = GovernorConfigBuilder::default()
-            .key_extractor(SmartIpKeyExtractor)
-            .per_second(settings.rate_limit.global_per_second)
-            .burst_size(settings.rate_limit.global_burst)
-            .use_headers()
-            .finish()
-            .unwrap();
+        let build_config = |label: &str,
+                            per_second: u64,
+                            burst_size: u32|
+         -> tower_governor::governor::GovernorConfig<
+            SmartIpKeyExtractor,
+            StateInformationMiddleware,
+        > {
+            let config = GovernorConfigBuilder::default()
+                .key_extractor(SmartIpKeyExtractor)
+                .per_second(per_second)
+                .burst_size(burst_size)
+                .use_headers()
+                .finish();
 
-        let health_conf = GovernorConfigBuilder::default()
-            .key_extractor(SmartIpKeyExtractor)
-            .per_second(settings.rate_limit.health_per_second)
-            .burst_size(settings.rate_limit.health_burst)
-            .use_headers()
-            .finish()
-            .unwrap();
+            if let Some(config) = config {
+                return config;
+            }
 
-        let auth_conf = GovernorConfigBuilder::default()
-            .key_extractor(SmartIpKeyExtractor)
-            .per_second(settings.rate_limit.auth_per_second)
-            .burst_size(settings.rate_limit.auth_burst)
-            .use_headers()
-            .finish()
-            .unwrap();
+            tracing::error!(
+                label = label,
+                per_second,
+                burst_size,
+                "Invalid governor rate-limit config; using conservative fallback"
+            );
+
+            // This fallback is intentionally conservative and guaranteed to be valid for the
+            // builder configuration used here. It avoids panic-driven handling while preserving
+            // service safety in a degraded operating mode.
+            GovernorConfigBuilder::default()
+                .key_extractor(SmartIpKeyExtractor)
+                .per_second(1)
+                .burst_size(1)
+                .use_headers()
+                .finish()
+                .unwrap_or_else(|| {
+                    tracing::error!(
+                        "Governor fallback config is invalid; aborting to preserve invariant safety"
+                    );
+                    std::process::abort();
+                })
+        };
+
+        let global_conf = build_config(
+            "global",
+            settings.rate_limit.global_per_second,
+            settings.rate_limit.global_burst,
+        );
+        let health_conf = build_config(
+            "health",
+            settings.rate_limit.health_per_second,
+            settings.rate_limit.health_burst,
+        );
+        let auth_conf = build_config(
+            "auth",
+            settings.rate_limit.auth_per_second,
+            settings.rate_limit.auth_burst,
+        );
 
         Self {
             global: GovernorLayer::new(Arc::new(global_conf)),

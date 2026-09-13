@@ -2004,6 +2004,7 @@ dependencies = [
  "sha2",
  "subtle",
  "tokio",
+ "tracing",
  "uuid",
  "zeroize",
 ]
@@ -2024,6 +2025,7 @@ dependencies = [
  "ssss",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
  "uuid",
  "zeroize",
 ]

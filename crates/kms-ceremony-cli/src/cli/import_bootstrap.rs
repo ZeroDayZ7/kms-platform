@@ -4,9 +4,9 @@ use dialoguer::Password;
 use kms_core::crypto::aes::decrypt_bytes_with_argon2_raw;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use std::path::PathBuf;
 use tokio::fs;
+use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_FILE_SIZE: u64 = 5 * 1024 * 1024; // 5 MiB
@@ -49,6 +49,16 @@ struct PostPayload<'a> {
     version: u32,
     target_resources: &'a [TargetResourceRecord],
     credentials: &'a [BootstrapCredentialRecord],
+}
+
+#[derive(Debug, Deserialize)]
+struct ImportBootstrapResponse {
+    total_in_file: usize,
+    resources_imported: usize,
+    resources_skipped: usize,
+    credentials_imported: usize,
+    credentials_skipped: usize,
+    message: String,
 }
 
 pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>) -> Result<()> {
@@ -156,7 +166,20 @@ pub async fn handle_import_bootstrap(file: PathBuf, service_url: Option<String>)
         bail!("KMS import failed: {}", body);
     }
 
-    println!("Bootstrap import successful");
+    let summary: ImportBootstrapResponse = resp
+        .json()
+        .await
+        .context("Failed to parse bootstrap import response")?;
+
+    println!(
+        "Wczytano zasoby: {} nowe, {} pominięte; poświadczenia: {} nowe, {} pominięte (łącznie w pliku: {})",
+        summary.resources_imported,
+        summary.resources_skipped,
+        summary.credentials_imported,
+        summary.credentials_skipped,
+        summary.total_in_file
+    );
+    println!("{}", summary.message);
 
     Ok(())
 }

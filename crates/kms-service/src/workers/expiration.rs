@@ -54,23 +54,20 @@ where
             )
             .await?;
 
-        let audit = AuditLog {
-            id: uuid::Uuid::now_v7(),
-            caller_service: key.service_id.clone(),
-            target_service: key.service_id.clone(),
-            action: AuditAction::KeyExpired,
-            algorithm: key.algorithm,
-            status: AuditStatus::Success,
-            reason: AuditLog::sanitize_reason(Some(
-                "Deprecated period expired; key expired automatically",
-            )),
-            hash_version: "v1".to_string(),
-            request_id: None,
-            operation_id: None,
-            target_id: Some(key.id.to_string()),
-            metadata: Some("key_expired".to_string()),
-            timestamp: Utc::now(),
-        };
+        let audit = AuditLog::new(
+            uuid::Uuid::now_v7(),
+            key.service_id.clone(),
+            key.service_id.clone(),
+            AuditAction::KeyExpired,
+            key.algorithm,
+            AuditStatus::Success,
+            AuditLog::sanitize_reason(Some("Deprecated period expired; key expired automatically")),
+            None,
+            None,
+            Some(key.id.to_string()),
+            Some("key_expired".to_string()),
+            Utc::now(),
+        );
 
         audit_repo.record(audit).await?;
     }
