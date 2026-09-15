@@ -14,6 +14,7 @@ use crate::domain::rate_limiter::{
 use crate::errors::AppResult;
 use crate::infrastructure::crypto::kms_service::VhsmCryptoService;
 use crate::infrastructure::crypto::vhsm_client::VhsmClient;
+use crate::infrastructure::identity::SpiffeX509IdentityProvider;
 use crate::infrastructure::postgres::{PgAuditRepository, PgKeyRepository, init_postgres};
 use crate::infrastructure::providers::ProviderFactory;
 use crate::infrastructure::redis::client::RedisManager;
@@ -179,6 +180,7 @@ pub struct AppState {
     pub key_cache: Arc<KeyCache>,
     pub iam_policy: Arc<IamCredentialPolicy>,
     pub provider_factory: Arc<ProviderFactory>,
+    pub spiffe_identity: Option<Arc<SpiffeX509IdentityProvider>>,
 }
 
 impl AppState {
@@ -219,6 +221,33 @@ impl AppState {
         let provider_factory = Arc::new(ProviderFactory::new(Arc::new(
             settings.providers_acl.clone(),
         )));
+
+        let spiffe_identity = if settings.auth.spiffe.enabled {
+            let tls_identity = crate::domain::auth::TlsIdentity {
+                certificate_path: settings.auth.spiffe.tls_cert_path.clone(),
+                key_path: settings.auth.spiffe.tls_key_path.clone(),
+                trust_bundle_path: settings.auth.spiffe.trust_bundle_path.clone(),
+                workload_id: settings.auth.spiffe.workload_id.clone(),
+                spiffe_id: None,
+            };
+
+            Some(Arc::new(SpiffeX509IdentityProvider::new(
+                crate::domain::auth::WorkloadIdentityConfig {
+                    enabled: true,
+                    trust_domain: settings.auth.spiffe.trust_domain.clone(),
+                    workload_id: settings.auth.spiffe.workload_id.clone(),
+                    spire_agent_socket_path: settings.auth.spiffe.spire_agent_socket_path.clone(),
+                    tls_identity,
+                    rotation_interval_secs: settings
+                        .auth
+                        .spiffe
+                        .rotation_interval_secs
+                        .unwrap_or(300),
+                },
+            )))
+        } else {
+            None
+        };
 
         let _ = crate::workers::expiration::run_expiration_worker(
             key_repo.clone(),
@@ -333,6 +362,7 @@ impl AppState {
             key_cache,
             iam_policy,
             provider_factory,
+            spiffe_identity,
         })
     }
 
