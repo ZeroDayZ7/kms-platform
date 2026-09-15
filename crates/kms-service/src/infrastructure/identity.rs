@@ -1,4 +1,9 @@
+use std::fs;
 use std::path::Path;
+
+use rustls::RootCertStore;
+use rustls::pki_types::{CertificateDer, UnixTime, pem::PemObject};
+use webpki::{ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage};
 
 use crate::domain::auth::{
     AuthError, Principal, TlsIdentity, WorkloadIdentityConfig, WorkloadIdentityProvider,
@@ -15,24 +20,19 @@ impl SpiffeX509IdentityProvider {
     }
 
     pub fn extract_spiffe_uri_from_cert(&self, cert_bytes: &[u8]) -> Result<String, AuthError> {
-        let der = decode_cert_der(cert_bytes)?;
-        let mut cursor = 0usize;
+        let cert_der = parse_leaf_certificate(cert_bytes)?;
+        let end_entity = EndEntityCert::try_from(&cert_der)
+            .map_err(|err| AuthError::UntrustedIdentity(format!("invalid X.509 certificate: {err}")))?;
 
-        let (_cert_seq, next) = read_der_tlv(&der, 0)?;
-        let tbs = find_tbs_certificate_for_cert(&der, next)?;
-        for extension in extract_extensions_from_tbs(&tbs)? {
-            if extension.oid == [2, 5, 29, 17] {
-                for value in parse_subject_alt_name_set(&extension.value)? {
-                    if value.starts_with("spiffe://") {
-                        return Ok(value);
-                    }
-                }
-            }
-        }
-
-        Err(AuthError::UntrustedIdentity(
-            "SPIFFE certificate does not contain a valid spiffe:// URI SAN".to_string(),
-        ))
+        end_entity
+            .valid_uri_names()
+            .find(|uri| uri.starts_with("spiffe://"))
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                AuthError::UntrustedIdentity(
+                    "SPIFFE certificate does not contain a valid spiffe:// URI SAN".to_string(),
+                )
+            })
     }
 
     pub fn validate_spiffe_identity(&self, cert_bytes: &[u8]) -> Result<Principal, AuthError> {
@@ -71,20 +71,33 @@ impl SpiffeX509IdentityProvider {
         cert_pem: &[u8],
         trust_bundle_pem: &[u8],
     ) -> Result<(), AuthError> {
-        let _ = self.extract_spiffe_uri_from_cert(cert_pem)?;
-        let bundle = pem::parse_many(trust_bundle_pem).map_err(|err| {
-            AuthError::UntrustedIdentity(format!("invalid trust bundle PEM: {err}"))
-        })?;
-        if bundle.is_empty() {
+        let leaf_cert = parse_leaf_certificate(cert_pem)?;
+        let trust_anchors = load_trust_anchors(trust_bundle_pem)?;
+        if trust_anchors.is_empty() {
             return Err(AuthError::UntrustedIdentity(
                 "trust bundle is empty; mTLS verification must fail closed".to_string(),
             ));
         }
+
+        let leaf = EndEntityCert::try_from(&leaf_cert)
+            .map_err(|err| AuthError::UntrustedIdentity(format!("invalid leaf certificate: {err}")))?;
+
+        leaf.verify_for_usage(
+            ALL_VERIFICATION_ALGS,
+            &trust_anchors,
+            &[],
+            UnixTime::now(),
+            KeyUsage::client_auth(),
+            None,
+            None,
+        )
+        .map_err(|err| AuthError::UntrustedIdentity(format!("certificate chain validation failed: {err}")))?;
+
         Ok(())
     }
 
     pub fn load_pem_from_file(path: impl AsRef<Path>) -> Result<Vec<u8>, AuthError> {
-        std::fs::read(path).map_err(|err| {
+        fs::read(path).map_err(|err| {
             AuthError::MissingMetadata(format!("failed to read certificate file: {err}"))
         })
     }
@@ -98,7 +111,9 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
             .tls_identity
             .certificate_path
             .clone()
-            .ok_or_else(|| AuthError::MissingMetadata("TLS certificate path is not configured".to_string()))?;
+            .ok_or_else(|| {
+                AuthError::MissingMetadata("TLS certificate path is not configured".to_string())
+            })?;
         let pem = Self::load_pem_from_file(cert_path)?;
         self.validate_spiffe_identity(&pem)
     }
@@ -118,229 +133,37 @@ fn normalize_workload_id(value: &str) -> String {
     format!("/{}", normalized.trim_end_matches('/'))
 }
 
-fn decode_cert_der(cert_bytes: &[u8]) -> Result<Vec<u8>, AuthError> {
-    if let Ok(pem_items) = pem::parse_many(cert_bytes) {
-        if let Some(pem) = pem_items.into_iter().next() {
-            return Ok(pem.contents);
-        }
-    }
-
-    if cert_bytes.starts_with(b"-----BEGIN CERTIFICATE-----") {
-        return Err(AuthError::UntrustedIdentity(
-            "certificate PEM could not be parsed into a valid X.509 block".to_string(),
-        ));
-    }
-
-    Ok(cert_bytes.to_vec())
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DerNode {
-    tag: u8,
-    value: Vec<u8>,
-}
-
-fn read_der_tlv(data: &[u8], offset: usize) -> Result<(DerNode, usize), AuthError> {
-    if offset >= data.len() {
-        return Err(AuthError::UntrustedIdentity(
-            "certificate DER is truncated while reading a TLV node".to_string(),
-        ));
-    }
-
-    let tag = data[offset];
-    let length = if data.get(offset + 1).is_none() {
-        return Err(AuthError::UntrustedIdentity(
-            "certificate DER is missing a length byte".to_string(),
-        ));
-    } else {
-        let first = data[offset + 1];
-        if first & 0x80 == 0 {
-            first as usize
-        } else {
-            let num_bytes = (first & 0x7f) as usize;
-            if num_bytes == 0 || offset + 2 + num_bytes > data.len() {
-                return Err(AuthError::UntrustedIdentity(
-                    "certificate DER length is invalid".to_string(),
-                ));
-            }
-            let mut len = 0usize;
-            for b in &data[offset + 2..offset + 2 + num_bytes] {
-                len = (len << 8) | (*b as usize);
-            }
-            len
-        }
+fn parse_leaf_certificate(cert_bytes: &[u8]) -> Result<CertificateDer<'static>, AuthError> {
+    let cert = match CertificateDer::from_pem_slice(cert_bytes) {
+        Ok(cert) => cert,
+        Err(_) => CertificateDer::from(cert_bytes.to_vec()),
     };
 
-    let value_start = match tag {
-        0x30 | 0x31 | 0xA0 | 0xA1 | 0xA3 => offset + 2 + length_len_for(data, offset + 1),
-        _ => offset + 2 + length_len_for(data, offset + 1),
-    };
-
-    let value_end = match offset + 1 + length_len_for(data, offset + 1) {
-        start if start <= data.len() => start + length,
-        _ => return Err(AuthError::UntrustedIdentity("certificate DER layout is malformed".to_string())),
-    };
-
-    if value_end > data.len() {
+    if cert.is_empty() {
         return Err(AuthError::UntrustedIdentity(
-            "certificate DER length exceeds available bytes".to_string(),
+            "certificate payload is empty: mTLS verification must fail closed".to_string(),
         ));
     }
 
-    let value = data[value_start..value_end].to_vec();
-    Ok((DerNode { tag, value }, value_end))
+    Ok(cert)
 }
 
-fn length_len_for(data: &[u8], offset: usize) -> usize {
-    let first = data.get(offset).copied().unwrap_or(0);
-    if first & 0x80 == 0 {
-        1
-    } else {
-        let len_bytes = (first & 0x7f) as usize;
-        len_bytes + 1
-    }
-}
+fn load_trust_anchors(trust_bundle_pem: &[u8]) -> Result<Vec<rustls::pki_types::TrustAnchor<'static>>, AuthError> {
+    let certs: Vec<_> = CertificateDer::pem_slice_iter(trust_bundle_pem)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| {
+            AuthError::UntrustedIdentity(format!("invalid trust bundle PEM: {err}"))
+        })?;
 
-fn find_tbs_certificate_for_cert(data: &[u8], offset: usize) -> Result<Vec<u8>, AuthError> {
-    let (cert_node, _) = read_der_tlv(data, 0)?;
-    if cert_node.tag != 0x30 {
+    if certs.is_empty() {
         return Err(AuthError::UntrustedIdentity(
-            "certificate root node is not a SEQUENCE".to_string(),
-        ));
-    }
-    let mut cursor = 0usize;
-    let mut index = 0usize;
-    while cursor < cert_node.value.len() {
-        let (node, next) = read_der_tlv(&cert_node.value, cursor)?;
-        if index == 0 {
-            return Ok(node.value);
-        }
-        cursor = next;
-        index += 1;
-    }
-    Err(AuthError::UntrustedIdentity(
-        "certificate is missing the TBS certificate element".to_string(),
-    ))
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Extension {
-    oid: [u8; 4],
-    value: Vec<u8>,
-}
-
-fn extract_extensions_from_tbs(tbs: &[u8]) -> Result<Vec<Extension>, AuthError> {
-    let (_, mut cursor) = read_der_tlv(tbs, 0)?;
-    let mut saw_sequence = false;
-    while cursor < tbs.len() {
-        let (node, next) = read_der_tlv(tbs, cursor)?;
-        if node.tag == 0xA3 {
-            saw_sequence = true;
-            let inner = parse_extensions_sequence(&node.value)?;
-            return Ok(inner);
-        }
-        cursor = next;
-    }
-    if saw_sequence {
-        return Ok(Vec::new());
-    }
-    Err(AuthError::UntrustedIdentity(
-        "certificate TBS block does not contain X.509 extensions".to_string(),
-    ))
-}
-
-fn parse_extensions_sequence(data: &[u8]) -> Result<Vec<Extension>, AuthError> {
-    let (outer, _) = read_der_tlv(data, 0)?;
-    if outer.tag != 0x30 {
-        return Err(AuthError::UntrustedIdentity(
-            "certificate extensions block is not a SEQUENCE".to_string(),
+            "trust bundle is empty; mTLS verification must fail closed".to_string(),
         ));
     }
 
-    let mut extensions = Vec::new();
-    let mut cursor = 0usize;
-    while cursor < outer.value.len() {
-        let (extension_node, next) = read_der_tlv(&outer.value, cursor)?;
-        if extension_node.tag != 0x30 {
-            return Err(AuthError::UntrustedIdentity(
-                "certificate extension is not a SEQUENCE".to_string(),
-            ));
-        }
-
-        let mut ext_cursor = 0usize;
-        let (oid_node, after_oid) = read_der_tlv(&extension_node.value, ext_cursor)?;
-        let oid = oid_node.value;
-        let oid_arr = to_oid_array(&oid)?;
-
-        ext_cursor = after_oid;
-        let mut critical = false;
-        if ext_cursor < extension_node.value.len() {
-            let (next_node, next_after) = read_der_tlv(&extension_node.value, ext_cursor)?;
-            if next_node.tag == 0x01 {
-                critical = next_node.value.first().copied().unwrap_or(0) != 0;
-                ext_cursor = next_after;
-            } else {
-                if next_node.tag != 0x04 {
-                    return Err(AuthError::UntrustedIdentity(
-                        "unexpected certificate extension format".to_string(),
-                    ));
-                }
-            }
-        }
-
-        if ext_cursor >= extension_node.value.len() {
-            return Err(AuthError::UntrustedIdentity(
-                "certificate extension is missing its value".to_string(),
-            ));
-        }
-        let (value_node, _) = read_der_tlv(&extension_node.value, ext_cursor)?;
-        if value_node.tag != 0x04 {
-            return Err(AuthError::UntrustedIdentity(
-                "certificate extension value is not OCTET STRING".to_string(),
-            ));
-        }
-        extensions.push(Extension { oid: oid_arr, value: value_node.value });
-        cursor = next;
-    }
-    Ok(extensions)
-}
-
-fn to_oid_array(bytes: &[u8]) -> Result<[u8; 4], AuthError> {
-    if bytes.len() != 6 && bytes.len() != 5 {
-        return Err(AuthError::UntrustedIdentity(
-            "unsupported X.509 OID length while parsing SPIFFE SAN".to_string(),
-        ));
-    }
-    let mut out = [0u8; 4];
-    for (idx, item) in bytes.iter().take(4).enumerate() {
-        out[idx] = *item;
-    }
-    Ok(out)
-}
-
-fn parse_subject_alt_name_set(value: &[u8]) -> Result<Vec<String>, AuthError> {
-    let (outer, _) = read_der_tlv(value, 0)?;
-    if outer.tag != 0x30 {
-        return Err(AuthError::UntrustedIdentity(
-            "subjectAltName extension value is not a SEQUENCE".to_string(),
-        ));
-    }
-
-    let mut entries = Vec::new();
-    let mut cursor = 0usize;
-    while cursor < outer.value.len() {
-        let (name, next) = read_der_tlv(&outer.value, cursor)?;
-        if name.tag == 0x86 {
-            entries.push(String::from_utf8_lossy(&name.value).into_owned());
-        }
-        cursor = next;
-    }
-    if entries.is_empty() {
-        return Err(AuthError::UntrustedIdentity(
-            "subjectAltName extension has no URI values".to_string(),
-        ));
-    }
-    Ok(entries)
+    let mut roots = RootCertStore::empty();
+    roots.add_parsable_certificates(certs);
+    Ok(roots.roots)
 }
 
 #[cfg(test)]
@@ -348,14 +171,12 @@ mod tests {
     use super::SpiffeX509IdentityProvider;
     use crate::domain::auth::WorkloadIdentityConfig;
 
-    const CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIBQzCCATygAwIBAgIBADANBgkqhkiG9w0BAQsFADAVMRMwEQYDVQQDEwJ0ZXN0MB4X\nDTI0MDEwMTAwMDAwMFoXDTI1MDEwMTAwMDAwMFowFTETMBEGA1UEAxMKZXhhbXBsZS5v\ncmcwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCABT8w6XxwH2C3b7yPqLhOMAa3KzZVxVJ\n8YNNm7Y7y7cQ6kXE6Pocd1aXQwHgTsQq9QXxM9Cz9j6oG7U6VJ0mA1j5bw6/6Hplahg\nDwQZsB0wGzAMBgorBgEEAYI3AgEEMH8eW8sZ1j2G7WS65mY4OmMH5W6kM4e0/2x7x1v\n8gN62nR4JbTQ7m5Ps7dS0aE1j3Oh/RbQbElLLxKOuDgkvQfK7h96RltmR9VbLX7B7sU\nWXXVg5f0D0B8FkVt38Jz7qSoa5x0D8u+Y4Ym6LiTVQWJ0UQ6u5FFt8v8ZQbO3UdI2n3\nM8QY8u3sT7qC5m3K7ZV0L7Q5G2B6Yv7EoV0=\n-----END CERTIFICATE-----\n";
+    const CERT_PEM: &str = "-----BEGIN CERTIFICATE-----\nMIIDLzCCAhegAwIBAgIUUiuMFI9m5dhsxXx8r3RuFaioNV0wDQYJKoZIhvcNAQEL\nBQAwFjEUMBIGA1UEAwwLZXhhbXBsZS5vcmcwHhcNMjYwOTE1MjExODQxWhcNMzYw\nOTEyMjExODQxWjAWMRQwEgYDVQQDDAtleGFtcGxlLm9yZzCCASIwDQYJKoZIhvcN\nAQEBBQADggEPADCCAQoCggEBAL6XOL6+NYCPA+KqHdLbGbJFYGk0eWIKSYhebEX2\nUKw4hJHiz9b+G5pYN8aSWP5eIvj7xvOEXkOieGyr50iIirFeboI4F1gAmc/9gO4l\nZ9TQLUhRosKvlTPn30c0QsgpWccCy4HehPP7Q2EhiuvHcn/b7ZEHK/tKYdMGv1BR\nnOUSItUfT9pdV4ujTOMTFyUClMa0LAY595OnJTAp0Ah6YYRAAFbWe06Kwl2jVlnh\n0X6AeQKu6jiby/7JQdItuWpu0nCfro6wK+I8Ey/1Jk65vrtlcm6dGFMYW1OpU5CO\naiDLjY5VVmxs8rOtcIjqS6o6QA/MWOMraPdFCZV0QmD8d2UCAwEAAaN1MHMwNwYD\nVR0RBDAwLoYsc3BpZmZlOi8vZXhhbXBsZS5vcmcvbnMvZGVmYXVsdC93b3JrbG9h\nZC9rbXMwCQYDVR0TBAIwADAOBgNVHQ8BAf8EBAMCBaAwHQYDVR0OBBYEFO2Prxh1\nhR3nxfN+x6QN3BC/vH27MA0GCSqGSIb3DQEBCwUAA4IBAQC1BOq8yKDYip/Ldn7K\nrPEYGlbEZyQmJiqQhDunWXn3v5DIiFJlSIrk+bjQ2HdkYi7AuaPITwimYVsGwj3z\n4DSHcwDGJi1sFBvs5UiHoh9+41uOJAUTArjHjR0k0nA9IkqlyuZSJNzKYUMw4jwz\nSHG+GRs357Kl+EsNERYRJGSI/OormB1VZessPwSa93R888u3SyPv4xtXm6rDo0Kh\n1nb9yamHcHWSOwLrW27ILn6+Yup4/ap1ngiRSGdp8Hlwz3V3+9r6jiwTZDP3L0qF\nVEaWtcFxH3pILXXZAzaJFYUDo9RYNMzUsKP2e0vOTdkJRgRBJxfzP1YD3NkkcjjK\nCPGG\n-----END CERTIFICATE-----\n";
 
     #[test]
     fn parses_spiiffe_uri_san_from_pem() {
         let provider = SpiffeX509IdentityProvider::new(WorkloadIdentityConfig::default());
-        let cert = CERT_PEM.as_bytes();
-
-        let result = provider.extract_spiffe_uri_from_cert(cert).unwrap();
+        let result = provider.extract_spiffe_uri_from_cert(CERT_PEM.as_bytes()).unwrap();
         assert_eq!(result, "spiffe://example.org/ns/default/workload/kms");
     }
 

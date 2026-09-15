@@ -2080,6 +2080,8 @@ dependencies = [
  "pem",
  "pkcs8",
  "rand 0.8.7",
+ "rustls",
+ "rustls-webpki",
  "serde",
  "serde_json",
  "sha2",
