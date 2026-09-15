@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -16,35 +17,82 @@ pub enum PrincipalKind {
     Service,
     Spiffe,
     Mtls,
+    Operator,
+    System,
     Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Principal {
-    pub subject: String,
-    pub kind: PrincipalKind,
-    pub attributes: BTreeMap<String, String>,
+pub enum Principal {
+    Service {
+        id: String,
+        attributes: BTreeMap<String, String>,
+    },
+    Spiffe {
+        uri: String,
+        attributes: BTreeMap<String, String>,
+    },
+    Operator {
+        id: String,
+        attributes: BTreeMap<String, String>,
+    },
+    System {
+        id: String,
+        attributes: BTreeMap<String, String>,
+    },
+    Unknown {
+        subject: String,
+        attributes: BTreeMap<String, String>,
+    },
 }
 
 impl Principal {
     pub fn service(service_id: impl Into<String>) -> Self {
-        Self {
-            subject: service_id.into(),
-            kind: PrincipalKind::Service,
+        Self::Service {
+            id: service_id.into(),
             attributes: BTreeMap::new(),
         }
     }
 
     pub fn spiffe(uri: impl Into<String>) -> Self {
-        Self {
-            subject: uri.into(),
-            kind: PrincipalKind::Spiffe,
+        Self::Spiffe {
+            uri: uri.into(),
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn operator(id: impl Into<String>) -> Self {
+        Self::Operator {
+            id: id.into(),
+            attributes: BTreeMap::new(),
+        }
+    }
+
+    pub fn system(id: impl Into<String>) -> Self {
+        Self::System {
+            id: id.into(),
             attributes: BTreeMap::new(),
         }
     }
 
     pub fn as_str(&self) -> &str {
-        &self.subject
+        match self {
+            Self::Service { id, .. }
+            | Self::Operator { id, .. }
+            | Self::System { id, .. }
+            | Self::Unknown { subject: id, .. } => id,
+            Self::Spiffe { uri, .. } => uri,
+        }
+    }
+
+    pub fn kind(&self) -> PrincipalKind {
+        match self {
+            Self::Service { .. } => PrincipalKind::Service,
+            Self::Spiffe { .. } => PrincipalKind::Spiffe,
+            Self::Operator { .. } => PrincipalKind::Operator,
+            Self::System { .. } => PrincipalKind::System,
+            Self::Unknown { .. } => PrincipalKind::Other,
+        }
     }
 }
 
@@ -60,11 +108,13 @@ impl From<String> for Principal {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthenticationContext {
     pub principal: Principal,
     pub authentication_method: AuthenticationMethod,
     pub metadata: BTreeMap<String, String>,
+    pub request_id: Option<String>,
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,27 +127,130 @@ pub struct OperationContext {
     pub operation_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+pub enum AuthError {
+    #[error("authentication failed: {0}")]
+    Failed(String),
+    #[error("identity is not trusted: {0}")]
+    UntrustedIdentity(String),
+    #[error("missing identity metadata: {0}")]
+    MissingMetadata(String),
+}
+
+#[async_trait]
 pub trait Authenticator: Send + Sync {
-    fn authenticate(
+    async fn authenticate(
         &self,
         subject: &str,
         metadata: &BTreeMap<String, String>,
-    ) -> Result<AuthenticationContext, String>;
+    ) -> Result<AuthenticationContext, AuthError>;
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct HmacAuthenticator;
 
+#[async_trait]
 impl Authenticator for HmacAuthenticator {
-    fn authenticate(
+    async fn authenticate(
         &self,
         subject: &str,
         metadata: &BTreeMap<String, String>,
-    ) -> Result<AuthenticationContext, String> {
+    ) -> Result<AuthenticationContext, AuthError> {
         Ok(AuthenticationContext {
             principal: Principal::service(subject),
             authentication_method: AuthenticationMethod::Hmac,
             metadata: metadata.clone(),
+            request_id: metadata.get("request_id").cloned(),
+            session_id: metadata.get("session_id").cloned(),
         })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SpiffeAuthenticator;
+
+#[async_trait]
+impl Authenticator for SpiffeAuthenticator {
+    async fn authenticate(
+        &self,
+        subject: &str,
+        metadata: &BTreeMap<String, String>,
+    ) -> Result<AuthenticationContext, AuthError> {
+        if subject.trim().is_empty() {
+            return Err(AuthError::Failed("empty SPIFFE subject".to_string()));
+        }
+
+        let mut principal_metadata = metadata.clone();
+        principal_metadata.insert("identity_source".to_string(), "spiffe".to_string());
+
+        Ok(AuthenticationContext {
+            principal: Principal::spiffe(subject),
+            authentication_method: AuthenticationMethod::Spiffe,
+            metadata: principal_metadata,
+            request_id: metadata.get("request_id").cloned(),
+            session_id: metadata.get("session_id").cloned(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct MtlsAuthenticator;
+
+#[async_trait]
+impl Authenticator for MtlsAuthenticator {
+    async fn authenticate(
+        &self,
+        subject: &str,
+        metadata: &BTreeMap<String, String>,
+    ) -> Result<AuthenticationContext, AuthError> {
+        if subject.trim().is_empty() {
+            return Err(AuthError::UntrustedIdentity("empty mTLS peer identity".to_string()));
+        }
+
+        Ok(AuthenticationContext {
+            principal: Principal::spiffe(subject),
+            authentication_method: AuthenticationMethod::Mtls,
+            metadata: metadata.clone(),
+            request_id: metadata.get("request_id").cloned(),
+            session_id: metadata.get("session_id").cloned(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct TlsIdentity {
+    pub certificate_path: Option<String>,
+    pub key_path: Option<String>,
+    pub trust_bundle_path: Option<String>,
+    pub workload_id: Option<String>,
+    pub spiffe_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WorkloadIdentityConfig {
+    pub enabled: bool,
+    pub trust_domain: Option<String>,
+    pub workload_id: Option<String>,
+    pub spire_agent_socket_path: Option<String>,
+    pub tls_identity: TlsIdentity,
+    pub rotation_interval_secs: u64,
+}
+
+#[async_trait]
+pub trait WorkloadIdentityProvider: Send + Sync {
+    async fn current_principal(&self) -> Result<Principal, AuthError>;
+    async fn tls_identity(&self) -> Result<TlsIdentity, AuthError>;
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct IdentityReloader;
+
+impl IdentityReloader {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn should_reload(&self, _current: &TlsIdentity, _next: &TlsIdentity) -> bool {
+        true
     }
 }
