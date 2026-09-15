@@ -20,6 +20,7 @@ rustls = { version = "0.23.43", default-features = false, features = ["std", "aw
 tower = "0.5"
 tower_governor = "0.8.0"
 tower-http = { version = "0.6", features = ["trace", "cors", "set-header"] }
+tokio-rustls = { version = "0.26.2", default-features = false, features = ["aws_lc_rs"] }
 webpki = { package = "rustls-webpki", version = "0.103.14", default-features = false, features = ["std", "aws-lc-rs"] }
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 
@@ -30,6 +31,9 @@ chrono = { workspace = true }
 clap = { workspace = true }
 hmac = { workspace = true }
 hex = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+http = { workspace = true }
 kms-core = { workspace = true }
 kms-db = { workspace = true }
 serde = { workspace = true, features = ["derive"] }

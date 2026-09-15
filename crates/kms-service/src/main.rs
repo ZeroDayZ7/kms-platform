@@ -99,16 +99,38 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                 .parse()
                 .context("Invalid server address")?;
 
+            if settings.auth.spiffe.enabled
+                && !(settings.auth.spiffe.tls_cert_path.is_some()
+                    && settings.auth.spiffe.tls_key_path.is_some()
+                    && settings.auth.spiffe.trust_bundle_path.is_some())
+            {
+                anyhow::bail!(
+                    "SPIFFE is enabled but mTLS TLS configuration is incomplete: cert, key, and trust bundle are required"
+                );
+            }
+
             let app = server::router(state.clone());
             info!("🚀 Server starting on {}", addr);
-            server::http::serve(
-                app,
-                addr,
-                settings.server.shutdown_timeout,
-                shutdown_token.clone(),
-            )
-            .await
-            .context("HTTP server crashed")?;
+            if settings.auth.spiffe.enabled {
+                server::http::serve_mtls(
+                    app,
+                    addr,
+                    settings.clone(),
+                    settings.server.shutdown_timeout,
+                    shutdown_token.clone(),
+                )
+                .await
+                .context("mTLS HTTP server crashed")?;
+            } else {
+                server::http::serve(
+                    app,
+                    addr,
+                    settings.server.shutdown_timeout,
+                    shutdown_token.clone(),
+                )
+                .await
+                .context("HTTP server crashed")?;
+            }
 
             state.shutdown().await;
             info!("✅ Server shutdown complete");
