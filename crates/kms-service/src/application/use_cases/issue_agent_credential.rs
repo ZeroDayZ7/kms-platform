@@ -164,7 +164,13 @@ impl IssueAgentCredentialUseCase {
             }
         };
 
-        tracing::debug!(operation = "[DBG] fetched_target_resource", target_service = %input.target_service, target_id = %target_id, conn_encrypted_len = conn_encrypted.len(), sample_hex = %hex::encode(&conn_encrypted[..std::cmp::min(conn_encrypted.len(), 32)]));
+        tracing::debug!(
+            operation = "fetch_target_resource",
+            target_service = %input.target_service,
+            target_id = %target_id,
+            conn_encrypted_len = conn_encrypted.len(),
+            "Fetched target resource metadata for credential provisioning"
+        );
 
         let admin_conn_bytes = match state.crypto_service.decrypt_bytes(&conn_encrypted).await {
             Ok(b) => b,
@@ -185,7 +191,13 @@ impl IssueAgentCredentialUseCase {
             }
         };
 
-        tracing::debug!(operation = "[DBG] decrypted_target_conn", target_service = %input.target_service, target_id = %target_id, plaintext_len = admin_conn_bytes.len(), plaintext_sample_hex = %hex::encode(&admin_conn_bytes[..std::cmp::min(admin_conn_bytes.len(), 32)]));
+        tracing::debug!(
+            operation = "decrypted_target_conn",
+            target_service = %input.target_service,
+            target_id = %target_id,
+            plaintext_len = admin_conn_bytes.len(),
+            "Target connection string was decrypted successfully"
+        );
 
         let admin_conn = match String::from_utf8(admin_conn_bytes) {
             Ok(s) => s,
@@ -221,7 +233,13 @@ impl IssueAgentCredentialUseCase {
                 "[Idempotency] Found existing active provisioned credential for caller+target; returning it"
             );
 
-            tracing::debug!(operation = "[DBG] decrypt_existing_credential", service = %input.caller_service, target_id = %target_id, encrypted_len = active_encrypted_blob.len(), sample_hex = %hex::encode(&active_encrypted_blob[..std::cmp::min(active_encrypted_blob.len(), 32)]));
+            tracing::debug!(
+                operation = "decrypt_existing_credential",
+                service = %input.caller_service,
+                target_id = %target_id,
+                encrypted_len = active_encrypted_blob.len(),
+                "Checking existing provisioned credential metadata"
+            );
 
             let plaintext_bytes = match state
                 .crypto_service
@@ -238,7 +256,13 @@ impl IssueAgentCredentialUseCase {
                 }
             };
 
-            tracing::debug!(operation = "[DBG] decrypted_existing_credential", service = %input.caller_service, target_id = %target_id, plaintext_len = plaintext_bytes.len(), plaintext_sample_hex = %hex::encode(&plaintext_bytes[..std::cmp::min(plaintext_bytes.len(), 32)]));
+            tracing::debug!(
+                operation = "decrypted_existing_credential",
+                service = %input.caller_service,
+                target_id = %target_id,
+                plaintext_len = plaintext_bytes.len(),
+                "Existing credential decrypt succeeded"
+            );
 
             // Parse JSON payload {u: username, p: password}
             #[derive(serde::Deserialize)]

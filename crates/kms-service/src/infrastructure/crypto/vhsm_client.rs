@@ -1,6 +1,11 @@
 use crate::errors::{AppError, AppResult};
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
+/// vHSM boundary is a local Unix domain socket trust boundary. The socket path is not an
+/// authenticated channel; it relies on filesystem permissions and process confinement. We keep
+/// this boundary explicit here to avoid accidentally treating the socket as a remote network
+/// trust boundary or embedding caller identity into the protocol before cryptographic
+/// authentication is established.
 #[allow(dead_code)]
 #[derive(Clone)]
 pub struct VhsmClient {

@@ -13,7 +13,10 @@ use tower::ServiceBuilder;
 use tower::layer::util::{Identity, Stack};
 use tower_http::set_header::SetResponseHeaderLayer;
 
-use crate::{domain::keys::models::ServiceId, server::state::AppState};
+use crate::{
+    domain::{auth::Principal, keys::models::ServiceId},
+    server::state::AppState,
+};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -206,8 +209,11 @@ pub async fn hmac_security_middleware(
 
     tracing::debug!(service = %service_name, "HMAC verification succeeded");
 
-    // Insert verified ServiceId into request extensions for downstream extractors
+    // Keep the legacy ServiceId extraction for current call sites, but also materialize the
+    // new principal abstraction so future SPIFFE/mTLS identity can be layered in without
+    // refactoring every use case.
     parts.extensions.insert(ServiceId(service_name.to_string()));
+    parts.extensions.insert(Principal::service(service_name));
 
     let request = Request::from_parts(parts, Body::from(body_bytes));
     next.run(request).await

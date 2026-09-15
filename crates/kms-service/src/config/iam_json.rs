@@ -45,11 +45,10 @@ impl IamCredentialPolicy {
     }
 
     pub fn is_action_allowed(&self, role: &str, action: &str, resource: &str) -> bool {
-        for stmt in &self.statements {
-            if stmt.effect != "Allow" {
-                continue;
-            }
+        let mut matched_allow = false;
+        let mut matched_deny = false;
 
+        for stmt in &self.statements {
             let role_matches = stmt.roles.iter().any(|r| r == "*" || r == role);
             if !role_matches {
                 continue;
@@ -61,11 +60,22 @@ impl IamCredentialPolicy {
             }
 
             let resource_matches = stmt.resources.iter().any(|r| match_pattern(r, resource));
-            if resource_matches {
-                return true;
+            if !resource_matches {
+                continue;
+            }
+
+            match stmt.effect.as_str() {
+                "Deny" => matched_deny = true,
+                "Allow" => matched_allow = true,
+                _ => {}
             }
         }
-        false
+
+        if matched_deny {
+            return false;
+        }
+
+        matched_allow
     }
 }
 
@@ -88,7 +98,7 @@ fn match_pattern(pattern: &str, candidate: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::IamCredentialPolicy;
+    use super::{IamCredentialPolicy, IamStatement};
 
     #[test]
     fn parses_default_policy_and_allows_provision() {
@@ -103,6 +113,35 @@ mod tests {
             "provisioner-service",
             "kms:credentials:delete",
             "arn:kms:postgres:db-auth",
+        ));
+    }
+
+    #[test]
+    fn explicit_deny_overrides_matching_allow() {
+        let policy = IamCredentialPolicy {
+            version: "test".to_string(),
+            statements: vec![
+                IamStatement {
+                    sid: "allow-db-auth".to_string(),
+                    effect: "Allow".to_string(),
+                    roles: vec!["auth-service".to_string()],
+                    actions: vec!["kms:credentials:provision:database".to_string()],
+                    resources: vec!["arn:kms:database:auth_db".to_string()],
+                },
+                IamStatement {
+                    sid: "deny-db-auth".to_string(),
+                    effect: "Deny".to_string(),
+                    roles: vec!["auth-service".to_string()],
+                    actions: vec!["kms:credentials:provision:database".to_string()],
+                    resources: vec!["arn:kms:database:auth_db".to_string()],
+                },
+            ],
+        };
+
+        assert!(!policy.is_action_allowed(
+            "auth-service",
+            "kms:credentials:provision:database",
+            "arn:kms:database:auth_db",
         ));
     }
 }
