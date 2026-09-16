@@ -36,12 +36,59 @@ services:
           "pg_isready -U ${DATABASE__ROOT_USER:-kms_root_user} -d ${DATABASE__NAME:-kms_db}",
         ]
 
+  kms-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: kms_migrate
+    entrypoint: []
+    environment:
+      - RUST_LOG=${RUST_LOG:-debug}
+      - DATABASE__HOST=postgres
+      - DATABASE__PORT=5432
+      - DATABASE__NAME=${DATABASE__NAME:-kms_db}
+      - DATABASE__USER=${DATABASE__MIGRATOR_USER:-kms_migrator_user}
+      - DATABASE__PASSWORD_FILE=/run/secrets/kms_migrator_db_pass
+      - MIGRATIONS_DIR=/app/crates/kms-migrate/migrations
+    secrets:
+      - kms_migrator_db_pass
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+    networks:
+      - kms-internal-net
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  vhsm-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: vhsm_daemon
+    entrypoint: []
+    command: cargo run -p vhsm-daemon --bin vhsm-daemon
+    environment:
+      - RUST_LOG=${LOG__LEVEL:-debug}
+      - LOG__FORMAT=${LOG__FORMAT:-pretty}
+      - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+      - vhsm_sockets:/run/vhsm
+
 volumes:
   postgres_data:
     driver: local
   kms_ceremony_data:
     driver: local
   vhsm_sockets:
+    driver: local
+  cargo_cache:
+    driver: local
+  target_cache:
     driver: local
 
 secrets:
@@ -55,10 +102,10 @@ secrets:
 networks:
   kms-internal-net:
     name: kms_internal_net
-    driver: bridge
+    external: true
   sec-net:
     name: kms_sec_net
-    driver: bridge
+    external: true
   target-admin-net:
     name: kms_target_admin_net
-    driver: bridge
+    external: true

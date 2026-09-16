@@ -1,54 +1,6 @@
 # docker-compose.dev.yml
 
 services:
-  postgres:
-    extends:
-      file: docker-compose.yml
-      service: postgres
-
-  kms-migrate:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    container_name: kms_migrate_dev
-    entrypoint: []
-    environment:
-      - RUST_LOG=${RUST_LOG:-debug}
-      - DATABASE__HOST=postgres
-      - DATABASE__PORT=5432
-      - DATABASE__NAME=${DATABASE__NAME:-kms_db}
-      - DATABASE__USER=${DATABASE__MIGRATOR_USER:-kms_migrator_user}
-      - DATABASE__PASSWORD_FILE=/run/secrets/kms_migrator_db_pass
-      - MIGRATIONS_DIR=/app/crates/kms-migrate/migrations
-    secrets:
-      - kms_migrator_db_pass
-    volumes:
-      - .:/app
-      - cargo_cache:/usr/local/cargo/registry
-      - target_cache:/app/target
-    networks:
-      - kms-internal-net
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  vhsm-daemon:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    container_name: vhsm_daemon_dev
-    entrypoint: []
-    command: cargo run -p vhsm-daemon --bin vhsm-daemon
-    environment:
-      - RUST_LOG=${LOG__LEVEL:-debug}
-      - LOG__FORMAT=${LOG__FORMAT:-pretty}
-      - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock
-    volumes:
-      - .:/app
-      - cargo_cache:/usr/local/cargo/registry
-      - target_cache:/app/target
-      - vhsm_sockets:/run/vhsm
-
   kms-service:
     build:
       context: .
@@ -86,7 +38,3 @@ services:
         condition: service_healthy
       vhsm-daemon:
         condition: service_started
-
-volumes:
-  cargo_cache:
-  target_cache:
