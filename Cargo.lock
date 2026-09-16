@@ -2083,6 +2083,7 @@ dependencies = [
  "pem",
  "pkcs8",
  "rand 0.8.7",
+ "reqwest",
  "rustls",
  "rustls-webpki",
  "serde",

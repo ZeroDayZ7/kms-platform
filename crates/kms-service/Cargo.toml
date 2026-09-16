@@ -16,6 +16,7 @@ governor = "0.10.4"
 pem = "3.0"
 pkcs8 = { version = "0.10", features = ["pem", "std"] }
 rand = "0.8"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
 rustls = { version = "0.23.43", default-features = false, features = ["std", "aws_lc_rs"] }
 tower = "0.5"
 tower_governor = "0.8.0"
