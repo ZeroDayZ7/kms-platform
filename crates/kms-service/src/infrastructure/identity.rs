@@ -13,7 +13,7 @@ use webpki::{ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage};
 #[cfg(unix)]
 use http::StatusCode;
 #[cfg(unix)]
-use http_body_util::Full;
+use http_body_util::{BodyExt, Full};
 #[cfg(unix)]
 use hyper::Request;
 #[cfg(unix)]
@@ -280,14 +280,11 @@ impl SpireWorkloadApiClient {
                     ))
                 })?;
 
-            let (sender, connection) =
-                http2::handshake(TokioIo::new(&mut stream))
-                    .await
-                    .map_err(|err| {
-                        AuthError::Failed(format!(
-                            "failed to establish HTTP/2 connection to SPIRE Workload API: {err}"
-                        ))
-                    })?;
+            let (sender, connection) = http2::handshake(TokioIo::new(stream)).await.map_err(|err| {
+                AuthError::Failed(format!(
+                    "failed to establish HTTP/2 connection to SPIRE Workload API: {err}"
+                ))
+            })?;
 
             tokio::spawn(async move {
                 if let Err(err) = connection.await {
@@ -337,25 +334,20 @@ impl SpireWorkloadApiClient {
             }
 
             let mut chunks = Vec::new();
-            let mut body = response.into_body();
-            while let Some(chunk) = body.data().await {
-                let chunk = chunk.map_err(|err| {
-                    AuthError::Failed(format!(
-                        "failed to read SPIRE Workload API response body: {err}"
-                    ))
-                })?;
-                if chunk.is_empty() {
-                    continue;
-                }
-                chunks.extend_from_slice(&chunk);
-                if let Ok(frames) = parse_grpc_frames(&chunks) {
-                    if let Some(message) = frames.into_iter().find(|frame| !frame.is_empty()) {
-                        return decode_x509_svid_response(&message).map_err(|err| {
-                            AuthError::Failed(format!(
-                                "invalid SPIRE Workload API X509SVID response: {err}"
-                            ))
-                        });
-                    }
+            let body = response.into_body();
+            let collected = body.collect().await.map_err(|err| {
+                AuthError::Failed(format!(
+                    "failed to read SPIRE Workload API response body: {err}"
+                ))
+            })?;
+            chunks.extend_from_slice(&collected.to_bytes());
+            if let Ok(frames) = parse_grpc_frames(&chunks) {
+                if let Some(message) = frames.into_iter().find(|frame| !frame.is_empty()) {
+                    return decode_x509_svid_response(&message).map_err(|err| {
+                        AuthError::Failed(format!(
+                            "invalid SPIRE Workload API X509SVID response: {err}"
+                        ))
+                    });
                 }
             }
 

@@ -2076,6 +2076,7 @@ dependencies = [
  "hex",
  "hmac",
  "http",
+ "http-body-util",
  "hyper",
  "hyper-util",
  "kms-core",

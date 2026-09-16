@@ -35,6 +35,7 @@ hex = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
 http = { workspace = true }
+http-body-util = "0.1"
 kms-core = { workspace = true }
 kms-db = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
