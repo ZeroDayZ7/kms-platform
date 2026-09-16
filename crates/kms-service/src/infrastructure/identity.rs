@@ -4,8 +4,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(unix)]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use pkcs8::{PrivateKeyInfo, SubjectPublicKeyInfoRef};
 use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, UnixTime, pem::PemObject};
+use subtle::ConstantTimeEq;
 use webpki::{ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage};
 
 #[cfg(unix)]
@@ -340,7 +342,19 @@ impl SpireWorkloadApiClient {
                         "failed to read SPIRE Workload API response body: {err}"
                     ))
                 })?;
+                if chunk.is_empty() {
+                    continue;
+                }
                 chunks.extend_from_slice(&chunk);
+                if let Ok(frames) = parse_grpc_frames(&chunks) {
+                    if let Some(message) = frames.into_iter().find(|frame| !frame.is_empty()) {
+                        return decode_x509_svid_response(&message).map_err(|err| {
+                            AuthError::Failed(format!(
+                                "invalid SPIRE Workload API X509SVID response: {err}"
+                            ))
+                        });
+                    }
+                }
             }
 
             let frames = parse_grpc_frames(&chunks)?;
@@ -405,27 +419,30 @@ impl SpiffeX509IdentityProvider {
         }
 
         let uri = self.extract_spiffe_uri_from_cert(cert_bytes)?;
+        let expected = self.expected_spiffe_uri()?;
 
-        if let Some(trust_domain) = &self.config.trust_domain {
-            let expected_prefix = format!("spiffe://{trust_domain}");
-            if !uri.starts_with(&expected_prefix) {
-                return Err(AuthError::UntrustedIdentity(format!(
-                    "SPIFFE trust domain mismatch: certificate URI '{uri}' does not match expected trust domain '{trust_domain}'"
-                )));
-            }
-        }
-
-        if let Some(expected_workload_id) = &self.config.workload_id {
-            let expected = normalize_workload_id(expected_workload_id);
-            let actual = normalize_workload_id(&uri);
-            if actual != expected && !actual.starts_with(&format!("{expected}/")) {
-                return Err(AuthError::UntrustedIdentity(format!(
-                    "SPIFFE workload mismatch: expected '{expected_workload_id}' but certificate identified '{uri}'"
-                )));
-            }
+        if uri != expected {
+            return Err(AuthError::UntrustedIdentity(format!(
+                "SPIFFE identity mismatch: expected '{expected}' but certificate identified '{uri}'"
+            )));
         }
 
         Ok(Principal::spiffe(uri))
+    }
+
+    fn expected_spiffe_uri(&self) -> Result<String, AuthError> {
+        let trust_domain = self.config.trust_domain.as_deref().ok_or_else(|| {
+            AuthError::MissingMetadata("SPIFFE trust domain is not configured".to_string())
+        })?;
+        let workload_id = self.config.workload_id.as_deref().ok_or_else(|| {
+            AuthError::MissingMetadata("SPIFFE workload ID is not configured".to_string())
+        })?;
+
+        let normalized_workload = normalize_workload_id(workload_id);
+        if normalized_workload == "/" {
+            return Ok(format!("spiffe://{trust_domain}"));
+        }
+        Ok(format!("spiffe://{trust_domain}{normalized_workload}"))
     }
 
     pub fn validate_certificate_chain(
@@ -459,6 +476,76 @@ impl SpiffeX509IdentityProvider {
         })?;
 
         Ok(())
+    }
+
+    pub fn validate_private_key_matches_cert(
+        &self,
+        cert_pem: &[u8],
+        key_bytes: &[u8],
+    ) -> Result<(), AuthError> {
+        let cert_der = parse_leaf_certificate(cert_pem)?;
+        let cert_public = EndEntityCert::try_from(&cert_der)
+            .map_err(|err| {
+                AuthError::UntrustedIdentity(format!(
+                    "invalid certificate for private-key validation: {err}"
+                ))
+            })?
+            .subject_public_key_info();
+        let cert_public = SubjectPublicKeyInfoRef::try_from(cert_public.as_ref()).map_err(|err| {
+            AuthError::UntrustedIdentity(format!(
+                "failed to decode certificate public key info: {err}"
+            ))
+        })?;
+        let cert_public_bytes = cert_public
+            .subject_public_key
+            .as_bytes()
+            .ok_or_else(|| {
+                AuthError::UntrustedIdentity(
+                    "certificate public key is malformed; reject identity snapshot".to_string(),
+                )
+            })?;
+
+        let private_public = Self::pkcs8_public_key_from_private_key(key_bytes)?;
+
+        if cert_public_bytes.ct_eq(&private_public).into() {
+            Ok(())
+        } else {
+            Err(AuthError::UntrustedIdentity(
+                "certificate and private key do not match; reject identity snapshot".to_string(),
+            ))
+        }
+    }
+
+    fn pkcs8_public_key_from_private_key(key_bytes: &[u8]) -> Result<Vec<u8>, AuthError> {
+        match PrivateKeyInfo::try_from(key_bytes) {
+            Ok(key_info) => key_info.public_key.map(|bytes| bytes.to_vec()).ok_or_else(|| {
+                AuthError::UntrustedIdentity(
+                    "private key is missing its embedded public key; reject identity snapshot"
+                        .to_string(),
+                )
+            }),
+            Err(_) => {
+                let pem = std::str::from_utf8(key_bytes).map_err(|err| {
+                    AuthError::UntrustedIdentity(format!("invalid private key payload: {err}"))
+                })?;
+                let (_, document) = pkcs8::der::Document::from_pem(pem).map_err(|err| {
+                    AuthError::UntrustedIdentity(format!(
+                        "invalid private key for certificate validation: {err}"
+                    ))
+                })?;
+                let key_info = PrivateKeyInfo::try_from(document.as_bytes()).map_err(|err| {
+                    AuthError::UntrustedIdentity(format!(
+                        "invalid PKCS#8 private key for certificate validation: {err}"
+                    ))
+                })?;
+                key_info.public_key.map(|bytes| bytes.to_vec()).ok_or_else(|| {
+                    AuthError::UntrustedIdentity(
+                        "private key is missing its embedded public key; reject identity snapshot"
+                            .to_string(),
+                    )
+                })
+            }
+        }
     }
 
     pub fn load_pem_from_file(path: impl AsRef<Path>) -> Result<Vec<u8>, AuthError> {
@@ -509,88 +596,101 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
     }
 
     async fn fetch_identity(&self) -> Result<crate::domain::auth::TlsIdentitySnapshot, AuthError> {
-        // Determine certificate chain PEM: prefer configured file, otherwise the SPIRE Workload API
-        let cert_pem: Vec<u8> = match &self.config.tls_identity.certificate_path {
-            Some(path) => Self::load_pem_from_file(path.clone())?,
-            #[cfg(unix)]
-            None => {
-                let socket_path = self
-                    .config
-                    .spire_agent_socket_path
-                    .clone()
-                    .ok_or_else(|| {
-                        AuthError::MissingMetadata(
-                            "SPIRE agent socket path is not configured and no certificate_path provided".to_string(),
-                        )
-                    })?;
-                let client = SpireWorkloadApiClient::new(socket_path);
-                client.fetch_workload_svid().await?
-            }
-            #[cfg(not(unix))]
-            None => {
-                return Err(AuthError::MissingMetadata(
-                    "SPIRE Workload API socket fallback is unavailable on this platform; provide a certificate file".to_string(),
-                ));
-            }
-        };
+        let _expected_spiffe = self.expected_spiffe_uri()?;
 
-        // Determine trust bundle PEM
-        let trust_pem: Vec<u8> = match &self.config.tls_identity.trust_bundle_path {
-            Some(path) => Self::load_pem_from_file(path.clone())?,
-            #[cfg(unix)]
-            None => {
-                let socket_path = self
-                    .config
-                    .spire_agent_socket_path
-                    .clone()
-                    .ok_or_else(|| {
-                        AuthError::MissingMetadata(
-                            "SPIRE agent socket path is not configured and no trust_bundle_path provided".to_string(),
-                        )
-                    })?;
-                let client = SpireWorkloadApiClient::new(socket_path);
-                client.fetch_trust_bundle().await?
-            }
-            #[cfg(not(unix))]
-            None => {
-                return Err(AuthError::MissingMetadata(
-                    "SPIRE Workload API socket fallback is unavailable on this platform; provide a trust bundle file".to_string(),
-                ));
-            }
-        };
-
-        // Load private key bytes from configured path
-        let key_bytes: Vec<u8> = match &self.config.tls_identity.key_path {
-            Some(path) => Self::load_pem_from_file(path.clone())?,
-            None => {
-                return Err(AuthError::MissingMetadata(
-                    "TLS private key path is not configured; cannot build runtime identity"
+        #[cfg(unix)]
+        let (cert_pem, trust_pem, key_bytes, spiffe_id) = {
+            let socket_path = self.config.spire_agent_socket_path.clone().ok_or_else(|| {
+                AuthError::MissingMetadata(
+                    "SPIRE agent socket path is not configured for authoritative identity"
                         .to_string(),
-                ));
+                )
+            })?;
+
+            let client = SpireWorkloadApiClient::new(socket_path);
+            let response = client.fetch_x509_svid_response().await?;
+            let exact_match = response
+                .svids
+                .iter()
+                .filter(|svid| svid.spiffe_id == expected_spiffe)
+                .collect::<Vec<_>>();
+
+            if exact_match.len() != 1 {
+                return Err(AuthError::UntrustedIdentity(format!(
+                    "authoritative SPIRE identity mismatch: expected exactly one SVID for '{expected_spiffe}' but found {}",
+                    exact_match.len()
+                )));
             }
+
+            let svid = exact_match[0];
+            let cert_pem = der_to_pem(&svid.x509_svid, "CERTIFICATE");
+            let trust_pem = der_to_pem(&svid.bundle, "CERTIFICATE");
+            let key_bytes = svid.x509_svid_key.clone();
+            self.validate_private_key_matches_cert(&cert_pem, &key_bytes)?;
+            self.validate_certificate_chain(&cert_pem, &trust_pem)?;
+            let spiffe_id = self.extract_spiffe_uri_from_cert(&cert_pem)?;
+            if spiffe_id != expected_spiffe {
+                return Err(AuthError::UntrustedIdentity(format!(
+                    "authoritative SPIRE SVID mismatch: expected '{expected_spiffe}' but got '{spiffe_id}'"
+                )));
+            }
+            (cert_pem, trust_pem, key_bytes, spiffe_id)
         };
 
-        // Validate certificate chain against trust bundle
+        #[cfg(not(unix))]
+        let (cert_pem, trust_pem, key_bytes, spiffe_id) = {
+            let cert_pem = self
+                .config
+                .tls_identity
+                .certificate_path
+                .as_ref()
+                .map(|path| Self::load_pem_from_file(path.clone()))
+                .transpose()?
+                .ok_or_else(|| {
+                    AuthError::MissingMetadata("TLS certificate path is not configured".to_string())
+                })?;
+            let trust_pem = self
+                .config
+                .tls_identity
+                .trust_bundle_path
+                .as_ref()
+                .map(|path| Self::load_pem_from_file(path.clone()))
+                .transpose()?
+                .ok_or_else(|| {
+                    AuthError::MissingMetadata(
+                        "TLS trust bundle path is not configured".to_string(),
+                    )
+                })?;
+            let key_bytes = self
+                .config
+                .tls_identity
+                .key_path
+                .as_ref()
+                .map(|path| Self::load_pem_from_file(path.clone()))
+                .transpose()?
+                .ok_or_else(|| {
+                    AuthError::MissingMetadata("TLS private key path is not configured".to_string())
+                })?;
+            let spiffe_id = self.extract_spiffe_uri_from_cert(&cert_pem)?;
+            (cert_pem, trust_pem, key_bytes, spiffe_id)
+        };
+
         self.validate_certificate_chain(&cert_pem, &trust_pem)?;
+        self.validate_private_key_matches_cert(&cert_pem, &key_bytes)?;
 
-        // Extract SPIFFE ID
-        let spiffe = self.extract_spiffe_uri_from_cert(&cert_pem)?;
-
-        // Build snapshot with conservative validity window (best-effort)
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs() as i64;
         let not_before = now - 60;
-        let not_after = now + 86400; // 24h as a default window
-
+        let not_after = now + 86400;
         let generation = now as u64;
 
         Ok(crate::domain::auth::TlsIdentitySnapshot {
             certificate_chain_pem: cert_pem,
             private_key: crate::domain::crypto::SecretBytes::new(key_bytes),
             trust_bundle_pem: trust_pem,
-            spiffe_id: spiffe,
+            spiffe_id,
             not_before,
             not_after,
             generation,
