@@ -2,6 +2,9 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use crate::domain::crypto::SecretBytes;
+use zeroize::Zeroize;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthenticationMethod {
@@ -217,6 +220,7 @@ impl Authenticator for MtlsAuthenticator {
     }
 }
 
+// Configuration-level TLS identity (file paths / admin-configured)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TlsIdentity {
     pub certificate_path: Option<String>,
@@ -224,6 +228,35 @@ pub struct TlsIdentity {
     pub trust_bundle_path: Option<String>,
     pub workload_id: Option<String>,
     pub spiffe_id: Option<String>,
+}
+
+// Runtime immutable identity snapshot containing the complete SVID, private key (secret), and trust bundle.
+#[derive(Clone)]
+pub struct TlsIdentitySnapshot {
+    // PEM-encoded certificate chain (leaf first)
+    pub certificate_chain_pem: Vec<u8>,
+    // Private key bytes kept in a secret wrapper
+    pub private_key: SecretBytes,
+    // PEM-encoded trust bundle
+    pub trust_bundle_pem: Vec<u8>,
+    // SPIFFE ID extracted from cert
+    pub spiffe_id: String,
+    // validity window (unix seconds)
+    pub not_before: i64,
+    pub not_after: i64,
+    // monotonic generation/version for auditing
+    pub generation: u64,
+}
+
+impl std::fmt::Debug for TlsIdentitySnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TlsIdentitySnapshot")
+            .field("spiffe_id", &self.spiffe_id)
+            .field("not_before", &self.not_before)
+            .field("not_after", &self.not_after)
+            .field("generation", &self.generation)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -239,7 +272,10 @@ pub struct WorkloadIdentityConfig {
 #[async_trait]
 pub trait WorkloadIdentityProvider: Send + Sync {
     async fn current_principal(&self) -> Result<Principal, AuthError>;
+    /// Return the configured TLS identity (paths/config) when applicable.
     async fn tls_identity(&self) -> Result<TlsIdentity, AuthError>;
+    /// Atomically fetch a complete runtime identity snapshot (certificate chain, private key, trust bundle).
+    async fn fetch_identity(&self) -> Result<TlsIdentitySnapshot, AuthError>;
 }
 
 #[derive(Debug, Clone, Default)]

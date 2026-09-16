@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, UnixTime, pem::PemObject};
@@ -335,6 +336,77 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
 
     async fn tls_identity(&self) -> Result<TlsIdentity, AuthError> {
         Ok(self.config.tls_identity.clone())
+    }
+
+    async fn fetch_identity(&self) -> Result<crate::domain::auth::TlsIdentitySnapshot, AuthError> {
+        // Determine certificate chain PEM: prefer configured file, otherwise the SPIRE Workload API
+        let cert_pem: Vec<u8> = match &self.config.tls_identity.certificate_path {
+            Some(path) => Self::load_pem_from_file(path.clone())?,
+            None => {
+                let socket_path = self
+                    .config
+                    .spire_agent_socket_path
+                    .clone()
+                    .ok_or_else(|| {
+                        AuthError::MissingMetadata(
+                            "SPIRE agent socket path is not configured and no certificate_path provided".to_string(),
+                        )
+                    })?;
+                let client = SpireWorkloadApiClient::new(socket_path);
+                client.fetch_workload_svid().await?
+            }
+        };
+
+        // Determine trust bundle PEM
+        let trust_pem: Vec<u8> = match &self.config.tls_identity.trust_bundle_path {
+            Some(path) => Self::load_pem_from_file(path.clone())?,
+            None => {
+                let socket_path = self
+                    .config
+                    .spire_agent_socket_path
+                    .clone()
+                    .ok_or_else(|| {
+                        AuthError::MissingMetadata(
+                            "SPIRE agent socket path is not configured and no trust_bundle_path provided".to_string(),
+                        )
+                    })?;
+                let client = SpireWorkloadApiClient::new(socket_path);
+                client.fetch_trust_bundle().await?
+            }
+        };
+
+        // Load private key bytes from configured path
+        let key_bytes: Vec<u8> = match &self.config.tls_identity.key_path {
+            Some(path) => Self::load_pem_from_file(path.clone())?,
+            None => {
+                return Err(AuthError::MissingMetadata(
+                    "TLS private key path is not configured; cannot build runtime identity".to_string(),
+                ));
+            }
+        };
+
+        // Validate certificate chain against trust bundle
+        self.validate_certificate_chain(&cert_pem, &trust_pem)?;
+
+        // Extract SPIFFE ID
+        let spiffe = self.extract_spiffe_uri_from_cert(&cert_pem)?;
+
+        // Build snapshot with conservative validity window (best-effort)
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+        let not_before = now - 60;
+        let not_after = now + 86400; // 24h as a default window
+
+        let generation = now as u64;
+
+        Ok(crate::domain::auth::TlsIdentitySnapshot {
+            certificate_chain_pem: cert_pem,
+            private_key: crate::domain::crypto::SecretBytes::new(key_bytes),
+            trust_bundle_pem: trust_pem,
+            spiffe_id: spiffe,
+            not_before,
+            not_after,
+            generation,
+        })
     }
 }
 
