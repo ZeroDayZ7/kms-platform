@@ -1,11 +1,9 @@
-version: "3.9"
-
 services:
   spire-server:
     image: ghcr.io/spiffe/spire-server:1.11.1
     container_name: spire-server
     hostname: spire-server
-    command: ["-config", "/opt/spire/conf/server/server.conf"]
+    command: ["run", "-config", "/opt/spire/conf/server/server.conf"]
     volumes:
       - ./spire/server:/opt/spire/conf/server:ro
       - spire-server-data:/run/spire/data
@@ -14,7 +12,7 @@ services:
     ports:
       - "8081:8081"
     healthcheck:
-      test: ["CMD-SHELL", "/usr/local/bin/spire-server healthcheck || exit 1"]
+      test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck"]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -27,7 +25,11 @@ services:
     depends_on:
       spire-server:
         condition: service_healthy
-    command: ["-config", "/opt/spire/conf/agent/agent.conf"]
+    command:
+      - -config
+      - /opt/spire/conf/agent/agent.conf
+      - -joinToken
+      - "28e3b60f-35c7-4c8f-bc13-dd8a65da5044"
     volumes:
       - ./spire/agent:/opt/spire/conf/agent:ro
       - spire-agent-data:/run/spire/data
@@ -37,7 +39,14 @@ services:
     privileged: true
     pid: "host"
     healthcheck:
-      test: ["CMD-SHELL", "/usr/local/bin/spire-agent healthcheck || exit 1"]
+      test:
+        [
+          "CMD",
+          "/opt/spire/bin/spire-agent",
+          "healthcheck",
+          "-socketPath",
+          "/tmp/spire-agent.sock",
+        ]
       interval: 10s
       timeout: 5s
       retries: 12
@@ -46,17 +55,10 @@ services:
   kms-service:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: kms-service
+      dockerfile: Dockerfile.dev
     container_name: kms-spire-service
     hostname: kms-spire-service
-    command:
-      - /bin/sh
-      - -c
-      - |
-        mkdir -p /tmp/spire-kms && \
-        /usr/local/bin/spire-agent api fetch x509 -socketPath /tmp/spire-agent.sock -write /tmp/spire-kms && \
-        /app/kms-service serve
+    command: cargo run -p kms-service -- serve
     environment:
       - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.toml
       - APP_SERVER__HOST=0.0.0.0
@@ -66,14 +68,14 @@ services:
       - AUTH__SPIFFE__TRUST_DOMAIN=example.org
       - AUTH__SPIFFE__WORKLOAD_ID=/kms
       - AUTH__SPIFFE__SPIRE_AGENT_SOCKET_PATH=/tmp/spire-agent.sock
-      - AUTH__SPIFFE__TLS_CERT_PATH=/tmp/spire-kms/svid.pem
-      - AUTH__SPIFFE__TLS_KEY_PATH=/tmp/spire-kms/key.pem
-      - AUTH__SPIFFE__TRUST_BUNDLE_PATH=/tmp/spire-kms/bundle.pem
       - AUTH__SPIFFE__IDENTITY_MODE=Authoritative
     volumes:
+      - .:/app
+      - cargo-cache:/usr/local/cargo/registry
+      - target-cache:/app/target
       - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - spire-agent-socket:/tmp:ro
-      - spire-kms:/tmp/spire-kms
+      # - spire-kms:/tmp/spire-kms
     networks:
       - spire-net
     depends_on:
@@ -87,16 +89,18 @@ services:
     depends_on:
       spire-agent:
         condition: service_healthy
+    entrypoint: ["/opt/spire/bin/spire-agent"]
     command:
-      - /bin/sh
-      - -c
-      - |
-        mkdir -p /tmp/spire-test-client && \
-        /usr/local/bin/spire-agent api fetch x509 -socketPath /tmp/spire-agent.sock -write /tmp/spire-test-client && \
-        openssl s_client -connect kms-spire-service:8080 -cert /tmp/spire-test-client/svid.pem -key /tmp/spire-test-client/key.pem -CAfile /tmp/spire-test-client/bundle.pem -verify_return_error -quiet
+      - api
+      - fetch
+      - x509
+      - -socketPath
+      - /tmp/spire-agent.sock
+      - -write
+      - /tmp/spire-test-client
     volumes:
       - spire-agent-socket:/tmp:ro
-      - spire-test-client:/tmp/spire-test-client
+      - spire-test-client:/output
     networks:
       - spire-net
 
@@ -106,7 +110,9 @@ networks:
 
 volumes:
   spire-server-data:
-  spire-agent-data:
   spire-agent-socket:
-  spire-kms:
+  # spire-kms:
   spire-test-client:
+  cargo-cache:
+  target-cache:
+  spire-agent-data: {}

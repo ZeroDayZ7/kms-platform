@@ -13,6 +13,8 @@ use webpki::{ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage};
 #[cfg(unix)]
 use http::StatusCode;
 #[cfg(unix)]
+use http_body_util::Full;
+#[cfg(unix)]
 use hyper::Request;
 #[cfg(unix)]
 use hyper::body::Bytes;
@@ -300,7 +302,7 @@ impl SpireWorkloadApiClient {
                 .uri("http://localhost/SpiffeWorkloadAPI/FetchX509SVID")
                 .header("content-type", "application/grpc")
                 .header("te", "trailers")
-                .body(Bytes::from(grpc_body))
+                .body(Full::new(Bytes::from(grpc_body)))
                 .map_err(|err| {
                     AuthError::Failed(format!("failed to build gRPC Workload API request: {err}"))
                 })?;
