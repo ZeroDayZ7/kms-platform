@@ -2,16 +2,22 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use http::StatusCode;
-use hyper::Request;
-use hyper::body::Bytes;
-use hyper::client::conn::http2;
-use hyper_util::rt::TokioIo;
 use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, UnixTime, pem::PemObject};
 use webpki::{ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage};
 
+#[cfg(unix)]
+use http::StatusCode;
+#[cfg(unix)]
+use hyper::Request;
+#[cfg(unix)]
+use hyper::body::Bytes;
+#[cfg(unix)]
+use hyper::client::conn::http2;
+#[cfg(unix)]
+use hyper_util::rt::TokioIo;
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
@@ -19,6 +25,7 @@ use crate::domain::auth::{
     AuthError, Principal, TlsIdentity, WorkloadIdentityConfig, WorkloadIdentityProvider,
 };
 
+#[cfg(unix)]
 #[derive(Debug, Clone, Default)]
 struct X509SVID {
     spiffe_id: String,
@@ -28,12 +35,14 @@ struct X509SVID {
     hint: String,
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone, Default)]
 struct X509SVIDResponse {
     svids: Vec<X509SVID>,
 }
 
-fn decode_varint(mut bytes: &[u8], offset: &mut usize) -> Result<u64, AuthError> {
+#[cfg(unix)]
+fn decode_varint(bytes: &[u8], offset: &mut usize) -> Result<u64, AuthError> {
     let mut result = 0u64;
     let mut shift = 0u32;
     loop {
@@ -57,6 +66,7 @@ fn decode_varint(mut bytes: &[u8], offset: &mut usize) -> Result<u64, AuthError>
     }
 }
 
+#[cfg(unix)]
 fn decode_length_delimited(data: &[u8], offset: &mut usize) -> Result<Vec<u8>, AuthError> {
     let length = decode_varint(data, offset)? as usize;
     if *offset + length > data.len() {
@@ -70,13 +80,17 @@ fn decode_length_delimited(data: &[u8], offset: &mut usize) -> Result<Vec<u8>, A
     Ok(value)
 }
 
+#[cfg(unix)]
 fn decode_string(data: &[u8], offset: &mut usize) -> Result<String, AuthError> {
     let bytes = decode_length_delimited(data, offset)?;
     String::from_utf8(bytes).map_err(|err| {
-        AuthError::Failed(format!("invalid UTF-8 SPIRE Workload API string field: {err}"))
+        AuthError::Failed(format!(
+            "invalid UTF-8 SPIRE Workload API string field: {err}"
+        ))
     })
 }
 
+#[cfg(unix)]
 fn decode_x509_svid_response(data: &[u8]) -> Result<X509SVIDResponse, AuthError> {
     let mut offset = 0usize;
     let mut response = X509SVIDResponse::default();
@@ -93,39 +107,41 @@ fn decode_x509_svid_response(data: &[u8]) -> Result<X509SVIDResponse, AuthError>
             }
             2 => {
                 let value = decode_length_delimited(data, &mut offset)?;
-                match field_number {
-                    1 => {
-                        let mut inner = 0usize;
-                        let mut svid = X509SVID::default();
-                        while inner < value.len() {
-                            let tag = decode_varint(&value, &mut inner)?;
-                            let type_id = tag & 0x07;
-                            let number = (tag >> 3) as u32;
-                            match type_id {
-                                0 => {
-                                    let _ = decode_varint(&value, &mut inner)?;
-                                }
-                                2 => {
-                                    let bytes = decode_length_delimited(&value, &mut inner)?;
-                                    match number {
-                                        1 => svid.spiffe_id = String::from_utf8(bytes).unwrap_or_default(),
-                                        2 => svid.x509_svid = bytes,
-                                        3 => svid.x509_svid_key = bytes,
-                                        4 => svid.bundle = bytes,
-                                        5 => svid.hint = String::from_utf8(bytes).unwrap_or_default(),
-                                        _ => {}
+                if field_number == 1 {
+                    let mut inner = 0usize;
+                    let mut svid = X509SVID::default();
+                    while inner < value.len() {
+                        let tag = decode_varint(&value, &mut inner)?;
+                        let type_id = tag & 0x07;
+                        let number = (tag >> 3) as u32;
+                        match type_id {
+                            0 => {
+                                let _ = decode_varint(&value, &mut inner)?;
+                            }
+                            2 => {
+                                let bytes = decode_length_delimited(&value, &mut inner)?;
+                                match number {
+                                    1 => {
+                                        svid.spiffe_id =
+                                            String::from_utf8(bytes).unwrap_or_default()
                                     }
-                                }
-                                _ => {
-                                    return Err(AuthError::Failed(format!(
-                                        "unsupported SPIRE Workload API wire type {type_id} for field {number}"
-                                    )));
+                                    2 => svid.x509_svid = bytes,
+                                    3 => svid.x509_svid_key = bytes,
+                                    4 => svid.bundle = bytes,
+                                    5 => {
+                                        svid.hint = String::from_utf8(bytes).unwrap_or_default()
+                                    }
+                                    _ => {}
                                 }
                             }
+                            _ => {
+                                return Err(AuthError::Failed(format!(
+                                    "unsupported SPIRE Workload API wire type {type_id} for field {number}"
+                                )));
+                            }
                         }
-                        response.svids.push(svid);
                     }
-                    _ => {}
+                    response.svids.push(svid);
                 }
             }
             5 => {
@@ -141,6 +157,7 @@ fn decode_x509_svid_response(data: &[u8]) -> Result<X509SVIDResponse, AuthError>
     Ok(response)
 }
 
+#[cfg(unix)]
 fn grpc_encode_message(payload: &[u8]) -> Vec<u8> {
     let mut frame = Vec::with_capacity(payload.len() + 5);
     frame.push(0u8);
@@ -149,6 +166,7 @@ fn grpc_encode_message(payload: &[u8]) -> Vec<u8> {
     frame
 }
 
+#[cfg(unix)]
 fn parse_grpc_frames(data: &[u8]) -> Result<Vec<Vec<u8>>, AuthError> {
     let mut frames = Vec::new();
     let mut offset = 0;
@@ -182,6 +200,7 @@ fn parse_grpc_frames(data: &[u8]) -> Result<Vec<Vec<u8>>, AuthError> {
     Ok(frames)
 }
 
+#[cfg(unix)]
 fn der_to_pem(der: &[u8], label: &str) -> Vec<u8> {
     let encoded = STANDARD.encode(der);
     let mut pem = Vec::new();
@@ -194,11 +213,13 @@ fn der_to_pem(der: &[u8], label: &str) -> Vec<u8> {
     pem
 }
 
+#[cfg(unix)]
 #[derive(Debug, Clone)]
 pub struct SpireWorkloadApiClient {
     socket_path: String,
 }
 
+#[cfg(unix)]
 impl SpireWorkloadApiClient {
     pub fn new(socket_path: impl Into<String>) -> Self {
         Self {
@@ -257,9 +278,14 @@ impl SpireWorkloadApiClient {
                     ))
                 })?;
 
-            let (sender, connection) = http2::handshake(TokioIo::new(&mut stream)).await.map_err(|err| {
-                AuthError::Failed(format!("failed to establish HTTP/2 connection to SPIRE Workload API: {err}"))
-            })?;
+            let (sender, connection) =
+                http2::handshake(TokioIo::new(&mut stream))
+                    .await
+                    .map_err(|err| {
+                        AuthError::Failed(format!(
+                            "failed to establish HTTP/2 connection to SPIRE Workload API: {err}"
+                        ))
+                    })?;
 
             tokio::spawn(async move {
                 if let Err(err) = connection.await {
@@ -279,12 +305,11 @@ impl SpireWorkloadApiClient {
                     AuthError::Failed(format!("failed to build gRPC Workload API request: {err}"))
                 })?;
 
-            let response = sender
-                .send_request(request)
-                .await
-                .map_err(|err| {
-                    AuthError::Failed(format!("failed to send SPIRE gRPC FetchX509SVID request: {err}"))
-                })?;
+            let response = sender.send_request(request).await.map_err(|err| {
+                AuthError::Failed(format!(
+                    "failed to send SPIRE gRPC FetchX509SVID request: {err}"
+                ))
+            })?;
 
             if response.status() != StatusCode::OK {
                 return Err(AuthError::Failed(format!(
@@ -313,7 +338,9 @@ impl SpireWorkloadApiClient {
             let mut body = response.into_body();
             while let Some(chunk) = body.data().await {
                 let chunk = chunk.map_err(|err| {
-                    AuthError::Failed(format!("failed to read SPIRE Workload API response body: {err}"))
+                    AuthError::Failed(format!(
+                        "failed to read SPIRE Workload API response body: {err}"
+                    ))
                 })?;
                 chunks.extend_from_slice(&chunk);
             }
@@ -329,7 +356,9 @@ impl SpireWorkloadApiClient {
                 })?;
 
             decode_x509_svid_response(&message).map_err(|err| {
-                AuthError::Failed(format!("invalid SPIRE Workload API X509SVID response: {err}"))
+                AuthError::Failed(format!(
+                    "invalid SPIRE Workload API X509SVID response: {err}"
+                ))
             })
         }
 
@@ -440,6 +469,7 @@ impl SpiffeX509IdentityProvider {
         })
     }
 
+    #[cfg(unix)]
     pub async fn current_runtime_identity(&self) -> Result<Principal, AuthError> {
         let socket_path = self.config.spire_agent_socket_path.clone().ok_or_else(|| {
             AuthError::MissingMetadata(
@@ -450,6 +480,14 @@ impl SpiffeX509IdentityProvider {
         let client = SpireWorkloadApiClient::new(socket_path);
         let certs = client.fetch_workload_svid().await?;
         self.validate_spiffe_identity(&certs)
+    }
+
+    #[cfg(not(unix))]
+    pub async fn current_runtime_identity(&self) -> Result<Principal, AuthError> {
+        Err(AuthError::MissingMetadata(
+            "SPIRE Workload API over Unix domain sockets is not supported on this platform"
+                .to_string(),
+        ))
     }
 }
 
@@ -476,6 +514,7 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
         // Determine certificate chain PEM: prefer configured file, otherwise the SPIRE Workload API
         let cert_pem: Vec<u8> = match &self.config.tls_identity.certificate_path {
             Some(path) => Self::load_pem_from_file(path.clone())?,
+            #[cfg(unix)]
             None => {
                 let socket_path = self
                     .config
@@ -489,11 +528,18 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
                 let client = SpireWorkloadApiClient::new(socket_path);
                 client.fetch_workload_svid().await?
             }
+            #[cfg(not(unix))]
+            None => {
+                return Err(AuthError::MissingMetadata(
+                    "SPIRE Workload API socket fallback is unavailable on this platform; provide a certificate file".to_string(),
+                ));
+            }
         };
 
         // Determine trust bundle PEM
         let trust_pem: Vec<u8> = match &self.config.tls_identity.trust_bundle_path {
             Some(path) => Self::load_pem_from_file(path.clone())?,
+            #[cfg(unix)]
             None => {
                 let socket_path = self
                     .config
@@ -506,6 +552,12 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
                     })?;
                 let client = SpireWorkloadApiClient::new(socket_path);
                 client.fetch_trust_bundle().await?
+            }
+            #[cfg(not(unix))]
+            None => {
+                return Err(AuthError::MissingMetadata(
+                    "SPIRE Workload API socket fallback is unavailable on this platform; provide a trust bundle file".to_string(),
+                ));
             }
         };
 

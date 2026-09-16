@@ -103,9 +103,7 @@ pub async fn serve_mtls_with_config(
                         async move {
                             req.extensions_mut().insert(principal);
                             let req = req.map(AxumBody::new);
-                            router.clone().oneshot(req).await.map_err(|err| {
-                                std::io::Error::new(std::io::ErrorKind::Other, err)
-                            })
+                            router.clone().oneshot(req).await.map_err(std::io::Error::other)
                         }
                     });
                     let hyper_service = TowerToHyperService::new(service);
@@ -167,12 +165,11 @@ fn build_mtls_server_config(settings: &Settings) -> anyhow::Result<Arc<ServerCon
         .build()
         .context("invalid mTLS client certificate verifier configuration")?;
 
-    let config = ServerConfig::builder()
+    ServerConfig::builder()
         .with_client_cert_verifier(verifier)
         .with_single_cert(cert_chain, private_key)
-        .context("failed to configure rustls server certificate and mTLS verifier")?;
-
-    Ok(Arc::new(config))
+        .context("failed to configure rustls server certificate and mTLS verifier")
+        .map(Arc::new)
 }
 
 fn spiffe_provider_from_settings(settings: &Settings) -> SpiffeX509IdentityProvider {
@@ -385,10 +382,10 @@ mod tests {
             .build()
             .context("failed to build client verifier")?;
 
-        Ok(ServerConfig::builder()
+        ServerConfig::builder()
             .with_client_cert_verifier(verifier)
             .with_single_cert(vec![cert_der], key_der)
-            .context("failed to build mTLS server config")?)
+            .context("failed to build mTLS server config")
     }
 
     async fn wait_for_server(addr: SocketAddr) {
