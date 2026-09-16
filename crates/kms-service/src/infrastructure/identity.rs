@@ -21,7 +21,7 @@ use hyper::body::Bytes;
 #[cfg(unix)]
 use hyper::client::conn::http2;
 #[cfg(unix)]
-use hyper_util::rt::TokioIo;
+use hyper_util::rt::{TokioExecutor, TokioIo};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
@@ -271,7 +271,7 @@ impl SpireWorkloadApiClient {
     async fn fetch_x509_svid_response(&self) -> Result<X509SVIDResponse, AuthError> {
         #[cfg(unix)]
         {
-            let mut stream = UnixStream::connect(&self.socket_path)
+            let stream = UnixStream::connect(&self.socket_path)
                 .await
                 .map_err(|err| {
                     AuthError::MissingMetadata(format!(
@@ -280,11 +280,13 @@ impl SpireWorkloadApiClient {
                     ))
                 })?;
 
-            let (sender, connection) = http2::handshake(TokioIo::new(stream)).await.map_err(|err| {
-                AuthError::Failed(format!(
-                    "failed to establish HTTP/2 connection to SPIRE Workload API: {err}"
-                ))
-            })?;
+            let (mut sender, connection) = http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                .await
+                .map_err(|err| {
+                    AuthError::Failed(format!(
+                        "failed to establish HTTP/2 connection to SPIRE Workload API: {err}"
+                    ))
+                })?;
 
             tokio::spawn(async move {
                 if let Err(err) = connection.await {
@@ -594,7 +596,7 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
     }
 
     async fn fetch_identity(&self) -> Result<crate::domain::auth::TlsIdentitySnapshot, AuthError> {
-        let _expected_spiffe = self.expected_spiffe_uri()?;
+        let expected_spiffe = self.expected_spiffe_uri()?;
 
         #[cfg(unix)]
         let (cert_pem, trust_pem, key_bytes, spiffe_id) = {

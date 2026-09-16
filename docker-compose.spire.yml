@@ -1,3 +1,5 @@
+# docker-compose.spire.yml
+
 services:
   spire-server:
     image: ghcr.io/spiffe/spire-server:1.11.1
@@ -10,7 +12,7 @@ services:
     networks:
       - spire-net
     ports:
-      - "8081:8081"
+      - "8082:8081"
     healthcheck:
       test: ["CMD", "/opt/spire/bin/spire-server", "healthcheck"]
       interval: 10s
@@ -52,7 +54,7 @@ services:
       retries: 12
       start_period: 15s
 
-  kms-service:
+  kms-spire-service:
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -63,46 +65,33 @@ services:
       - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.toml
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080
+      - DATABASE__HOST=postgres
+      - DATABASE__PORT=5432
+      - DATABASE__NAME=${DATABASE__NAME:-kms_db}
+      - DATABASE__USER=${DATABASE__USER:-kms_app_user}
+      - DATABASE__PASSWORD_FILE=/run/secrets/kms_app_db_pass
       - RUST_LOG=debug,kms_service=debug
       - AUTH__SPIFFE__ENABLED=true
       - AUTH__SPIFFE__TRUST_DOMAIN=example.org
       - AUTH__SPIFFE__WORKLOAD_ID=/kms
       - AUTH__SPIFFE__SPIRE_AGENT_SOCKET_PATH=/tmp/spire-agent.sock
       - AUTH__SPIFFE__IDENTITY_MODE=Authoritative
+    secrets:
+      - kms_app_db_pass
     volumes:
       - .:/app
-      - cargo-cache:/usr/local/cargo/registry
-      - target-cache:/app/target
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
       - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - spire-agent-socket:/tmp:ro
-      # - spire-kms:/tmp/spire-kms
     networks:
       - spire-net
+      - kms-internal-net
     depends_on:
+      postgres:
+        condition: service_healthy
       spire-agent:
         condition: service_healthy
-
-  test-client:
-    image: ghcr.io/spiffe/spire-agent:1.11.1
-    container_name: spire-test-client
-    hostname: spire-test-client
-    depends_on:
-      spire-agent:
-        condition: service_healthy
-    entrypoint: ["/opt/spire/bin/spire-agent"]
-    command:
-      - api
-      - fetch
-      - x509
-      - -socketPath
-      - /tmp/spire-agent.sock
-      - -write
-      - /tmp/spire-test-client
-    volumes:
-      - spire-agent-socket:/tmp:ro
-      - spire-test-client:/output
-    networks:
-      - spire-net
 
 networks:
   spire-net:
@@ -110,9 +99,5 @@ networks:
 
 volumes:
   spire-server-data:
+  spire-agent-data:
   spire-agent-socket:
-  # spire-kms:
-  spire-test-client:
-  cargo-cache:
-  target-cache:
-  spire-agent-data: {}

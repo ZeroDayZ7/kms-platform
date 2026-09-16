@@ -1,51 +1,15 @@
-# cmdr: docker-compose.dev.yml
+# docker-compose.dev.yml
 
 services:
-  # region POSTGRESQL
   postgres:
     extends:
       file: docker-compose.yml
       service: postgres
 
-  # ---------------------------------------------------------------------------
-  # region KMS CEREMONY CLI (DEV)
-  # ---------------------------------------------------------------------------
-  kms-ceremony-cli:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-      target: ""
-    container_name: kms_ceremony_cli_dev
-    entrypoint: []
-    environment:
-      - RUST_LOG=${RUST_LOG:-debug}
-      - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock
-      - CRYPTO__HSM_SOCKET_PATH=/run/vhsm/vhsm.sock
-      - KMS_CLI__SERVICE_ID=kms-cli
-      - KMS_CLI__SECRET=${ACL__SERVICES__KMS_CLI__SECRET:-super-long-random-secret-for-kms-cli-hmac-64-bytes}
-      - KMS_CLI__SERVICE_URL=http://kms-service:8080
-    volumes:
-      - .:/app
-      - cargo_cache:/usr/local/cargo/registry
-      - target_cache:/app/target
-      - vhsm_sockets:/run/vhsm
-    networks:
-      - kms-internal-net
-    depends_on:
-      kms-service:
-        condition: service_started
-      vhsm-daemon:
-        condition: service_started
-
-  # ---------------------------------------------------------------------------
-  # region MIGRATE
-  # ---------------------------------------------------------------------------
-
   kms-migrate:
     build:
       context: .
       dockerfile: Dockerfile.dev
-      target: ""
     container_name: kms_migrate_dev
     entrypoint: []
     environment:
@@ -68,14 +32,10 @@ services:
       postgres:
         condition: service_healthy
 
-  # ---------------------------------------------------------------------------
-  # region VHSM DAEMON (DEV)
-  # ---------------------------------------------------------------------------
   vhsm-daemon:
     build:
       context: .
       dockerfile: Dockerfile.dev
-      target: ""
     container_name: vhsm_daemon_dev
     entrypoint: []
     command: cargo run -p vhsm-daemon --bin vhsm-daemon
@@ -89,14 +49,10 @@ services:
       - target_cache:/app/target
       - vhsm_sockets:/run/vhsm
 
-  # ---------------------------------------------------------------------------
-  # region KMS SERVICE (DEV)
-  # ---------------------------------------------------------------------------
   kms-service:
     build:
       context: .
       dockerfile: Dockerfile.dev
-      target: ""
     container_name: kms_service_dev
     command: cargo run -p kms-service -- serve
     ports:
@@ -104,7 +60,6 @@ services:
     environment:
       - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.toml
       - RUST_LOG=${LOG__LEVEL:-info},kms_ceremony_cli=debug,kms_core=debug,kms_db=debug,kms_migrate=debug,kms_service=debug
-      # - RUST_LOG=trace,kms_service=trace,tower_http=trace
       - LOG__FORMAT=${LOG__FORMAT:-pretty}
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080
@@ -132,7 +87,6 @@ services:
       vhsm-daemon:
         condition: service_started
 
-# region VOLUMES
 volumes:
   cargo_cache:
   target_cache:
