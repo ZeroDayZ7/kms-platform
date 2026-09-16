@@ -1,0 +1,6 @@
+{
+  "spiffe_id": "spiffe://example.org/kms",
+  "parent_id": "spiffe://example.org/spire/server",
+  "selectors": ["unix:uid:0"],
+  "ttl": 3600
+}

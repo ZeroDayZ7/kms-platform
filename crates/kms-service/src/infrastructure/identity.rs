@@ -491,19 +491,17 @@ impl SpiffeX509IdentityProvider {
                 ))
             })?
             .subject_public_key_info();
-        let cert_public = SubjectPublicKeyInfoRef::try_from(cert_public.as_ref()).map_err(|err| {
-            AuthError::UntrustedIdentity(format!(
-                "failed to decode certificate public key info: {err}"
-            ))
-        })?;
-        let cert_public_bytes = cert_public
-            .subject_public_key
-            .as_bytes()
-            .ok_or_else(|| {
-                AuthError::UntrustedIdentity(
-                    "certificate public key is malformed; reject identity snapshot".to_string(),
-                )
+        let cert_public =
+            SubjectPublicKeyInfoRef::try_from(cert_public.as_ref()).map_err(|err| {
+                AuthError::UntrustedIdentity(format!(
+                    "failed to decode certificate public key info: {err}"
+                ))
             })?;
+        let cert_public_bytes = cert_public.subject_public_key.as_bytes().ok_or_else(|| {
+            AuthError::UntrustedIdentity(
+                "certificate public key is malformed; reject identity snapshot".to_string(),
+            )
+        })?;
 
         let private_public = Self::pkcs8_public_key_from_private_key(key_bytes)?;
 
@@ -518,12 +516,15 @@ impl SpiffeX509IdentityProvider {
 
     fn pkcs8_public_key_from_private_key(key_bytes: &[u8]) -> Result<Vec<u8>, AuthError> {
         match PrivateKeyInfo::try_from(key_bytes) {
-            Ok(key_info) => key_info.public_key.map(|bytes| bytes.to_vec()).ok_or_else(|| {
-                AuthError::UntrustedIdentity(
-                    "private key is missing its embedded public key; reject identity snapshot"
-                        .to_string(),
-                )
-            }),
+            Ok(key_info) => key_info
+                .public_key
+                .map(|bytes| bytes.to_vec())
+                .ok_or_else(|| {
+                    AuthError::UntrustedIdentity(
+                        "private key is missing its embedded public key; reject identity snapshot"
+                            .to_string(),
+                    )
+                }),
             Err(_) => {
                 let pem = std::str::from_utf8(key_bytes).map_err(|err| {
                     AuthError::UntrustedIdentity(format!("invalid private key payload: {err}"))
@@ -538,12 +539,15 @@ impl SpiffeX509IdentityProvider {
                         "invalid PKCS#8 private key for certificate validation: {err}"
                     ))
                 })?;
-                key_info.public_key.map(|bytes| bytes.to_vec()).ok_or_else(|| {
-                    AuthError::UntrustedIdentity(
+                key_info
+                    .public_key
+                    .map(|bytes| bytes.to_vec())
+                    .ok_or_else(|| {
+                        AuthError::UntrustedIdentity(
                         "private key is missing its embedded public key; reject identity snapshot"
                             .to_string(),
                     )
-                })
+                    })
             }
         }
     }
