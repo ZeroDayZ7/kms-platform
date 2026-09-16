@@ -128,9 +128,7 @@ fn decode_x509_svid_response(data: &[u8]) -> Result<X509SVIDResponse, AuthError>
                                     2 => svid.x509_svid = bytes,
                                     3 => svid.x509_svid_key = bytes,
                                     4 => svid.bundle = bytes,
-                                    5 => {
-                                        svid.hint = String::from_utf8(bytes).unwrap_or_default()
-                                    }
+                                    5 => svid.hint = String::from_utf8(bytes).unwrap_or_default(),
                                     _ => {}
                                 }
                             }
