@@ -2,6 +2,12 @@ use std::fs;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use http::StatusCode;
+use hyper::Request;
+use hyper::body::Bytes;
+use hyper::client::conn::http2;
+use hyper_util::rt::TokioIo;
 use rustls::RootCertStore;
 use rustls::pki_types::{CertificateDer, UnixTime, pem::PemObject};
 use webpki::{ALL_VERIFICATION_ALGS, EndEntityCert, KeyUsage};
@@ -12,6 +18,181 @@ use tokio::net::UnixStream;
 use crate::domain::auth::{
     AuthError, Principal, TlsIdentity, WorkloadIdentityConfig, WorkloadIdentityProvider,
 };
+
+#[derive(Debug, Clone, Default)]
+struct X509SVID {
+    spiffe_id: String,
+    x509_svid: Vec<u8>,
+    x509_svid_key: Vec<u8>,
+    bundle: Vec<u8>,
+    hint: String,
+}
+
+#[derive(Debug, Clone, Default)]
+struct X509SVIDResponse {
+    svids: Vec<X509SVID>,
+}
+
+fn decode_varint(mut bytes: &[u8], offset: &mut usize) -> Result<u64, AuthError> {
+    let mut result = 0u64;
+    let mut shift = 0u32;
+    loop {
+        if *offset >= bytes.len() {
+            return Err(AuthError::Failed(
+                "truncated protobuf varint while decoding SPIRE Workload API response".to_string(),
+            ));
+        }
+        let byte = bytes[*offset];
+        *offset += 1;
+        result |= ((byte & 0x7F) as u64) << shift;
+        if byte & 0x80 == 0 {
+            return Ok(result);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err(AuthError::Failed(
+                "overlong protobuf varint while decoding SPIRE Workload API response".to_string(),
+            ));
+        }
+    }
+}
+
+fn decode_length_delimited(data: &[u8], offset: &mut usize) -> Result<Vec<u8>, AuthError> {
+    let length = decode_varint(data, offset)? as usize;
+    if *offset + length > data.len() {
+        return Err(AuthError::Failed(
+            "protobuf length-delimited field exceeds the SPIRE Workload API response size"
+                .to_string(),
+        ));
+    }
+    let value = data[*offset..*offset + length].to_vec();
+    *offset += length;
+    Ok(value)
+}
+
+fn decode_string(data: &[u8], offset: &mut usize) -> Result<String, AuthError> {
+    let bytes = decode_length_delimited(data, offset)?;
+    String::from_utf8(bytes).map_err(|err| {
+        AuthError::Failed(format!("invalid UTF-8 SPIRE Workload API string field: {err}"))
+    })
+}
+
+fn decode_x509_svid_response(data: &[u8]) -> Result<X509SVIDResponse, AuthError> {
+    let mut offset = 0usize;
+    let mut response = X509SVIDResponse::default();
+    while offset < data.len() {
+        let field = decode_varint(data, &mut offset)?;
+        let wire_type = field & 0x07;
+        let field_number = (field >> 3) as u32;
+        match wire_type {
+            0 => {
+                let _ = decode_varint(data, &mut offset)?;
+            }
+            1 => {
+                let _ = decode_length_delimited(data, &mut offset)?;
+            }
+            2 => {
+                let value = decode_length_delimited(data, &mut offset)?;
+                match field_number {
+                    1 => {
+                        let mut inner = 0usize;
+                        let mut svid = X509SVID::default();
+                        while inner < value.len() {
+                            let tag = decode_varint(&value, &mut inner)?;
+                            let type_id = tag & 0x07;
+                            let number = (tag >> 3) as u32;
+                            match type_id {
+                                0 => {
+                                    let _ = decode_varint(&value, &mut inner)?;
+                                }
+                                2 => {
+                                    let bytes = decode_length_delimited(&value, &mut inner)?;
+                                    match number {
+                                        1 => svid.spiffe_id = String::from_utf8(bytes).unwrap_or_default(),
+                                        2 => svid.x509_svid = bytes,
+                                        3 => svid.x509_svid_key = bytes,
+                                        4 => svid.bundle = bytes,
+                                        5 => svid.hint = String::from_utf8(bytes).unwrap_or_default(),
+                                        _ => {}
+                                    }
+                                }
+                                _ => {
+                                    return Err(AuthError::Failed(format!(
+                                        "unsupported SPIRE Workload API wire type {type_id} for field {number}"
+                                    )));
+                                }
+                            }
+                        }
+                        response.svids.push(svid);
+                    }
+                    _ => {}
+                }
+            }
+            5 => {
+                let _ = decode_length_delimited(data, &mut offset)?;
+            }
+            _ => {
+                return Err(AuthError::Failed(format!(
+                    "unsupported SPIRE Workload API protobuf wire type {wire_type} while decoding field {field_number}"
+                )));
+            }
+        }
+    }
+    Ok(response)
+}
+
+fn grpc_encode_message(payload: &[u8]) -> Vec<u8> {
+    let mut frame = Vec::with_capacity(payload.len() + 5);
+    frame.push(0u8);
+    frame.extend_from_slice(&((payload.len() as u32).to_be_bytes()));
+    frame.extend_from_slice(payload);
+    frame
+}
+
+fn parse_grpc_frames(data: &[u8]) -> Result<Vec<Vec<u8>>, AuthError> {
+    let mut frames = Vec::new();
+    let mut offset = 0;
+
+    while offset + 5 <= data.len() {
+        let compressed = data[offset];
+        if compressed != 0 {
+            return Err(AuthError::Failed(
+                "compressed gRPC messages are not supported by this SPIRE Workload API client"
+                    .to_string(),
+            ));
+        }
+
+        let length = u32::from_be_bytes([
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+            data[offset + 4],
+        ]) as usize;
+        offset += 5;
+        if offset + length > data.len() {
+            return Err(AuthError::Failed(
+                "truncated gRPC Workload API response payload received from SPIRE".to_string(),
+            ));
+        }
+
+        frames.push(data[offset..offset + length].to_vec());
+        offset += length;
+    }
+
+    Ok(frames)
+}
+
+fn der_to_pem(der: &[u8], label: &str) -> Vec<u8> {
+    let encoded = STANDARD.encode(der);
+    let mut pem = Vec::new();
+    pem.extend_from_slice(format!("-----BEGIN {label}-----\n").as_bytes());
+    for chunk in encoded.as_bytes().chunks(64) {
+        pem.extend_from_slice(chunk);
+        pem.push(b'\n');
+    }
+    pem.extend_from_slice(format!("-----END {label}-----\n").as_bytes());
+    pem
+}
 
 #[derive(Debug, Clone)]
 pub struct SpireWorkloadApiClient {
@@ -26,114 +207,45 @@ impl SpireWorkloadApiClient {
     }
 
     pub async fn fetch_workload_svid(&self) -> Result<Vec<u8>, AuthError> {
-        let body = self
-            .fetch_http_json("/spire-agent/api/agent/v1/workload/svid")
-            .await?;
-        let response: serde_json::Value = serde_json::from_slice(&body).map_err(|err| {
-            AuthError::Failed(format!("invalid SPIRE Workload API SVID response: {err}"))
-        })?;
+        let response = self.fetch_x509_svid_response().await?;
+        let svid = response
+            .svids
+            .into_iter()
+            .find(|s| !s.spiffe_id.is_empty())
+            .ok_or_else(|| {
+                AuthError::UntrustedIdentity(
+                    "SPIRE Workload API returned no X.509 SVID records for the workload"
+                        .to_string(),
+                )
+            })?;
 
-        let mut x509 = None;
-        if let Some(svids) = response.get("svids").and_then(|v| v.as_array()) {
-            x509 = svids
-                .iter()
-                .filter_map(|entry| {
-                    let maybe = entry
-                        .get("x509_svids")
-                        .and_then(|v| v.as_array())
-                        .and_then(|items| items.first())
-                        .and_then(|v| v.as_object());
-                    maybe.or_else(|| entry.get("x509_svid").and_then(|v| v.as_object()))
-                })
-                .find_map(|entry| {
-                    let empty = Vec::new();
-                    let certs = entry
-                        .get("cert_chain")
-                        .and_then(|v| v.as_array())
-                        .or_else(|| entry.get("certs").and_then(|v| v.as_array()))
-                        .unwrap_or(&empty);
-                    let cert_pem = certs
-                        .iter()
-                        .filter_map(|value| value.as_str())
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if !cert_pem.trim().is_empty() {
-                        Some(format!("{cert_pem}\n").into_bytes())
-                    } else {
-                        None
-                    }
-                });
-        }
-
-        if x509.is_none() {
-            if let Some(entry) = response
-                .get("svid")
-                .and_then(|v| v.as_object())
-                .and_then(|v| v.get("certs"))
-                .and_then(|v| v.as_array())
-            {
-                let cert_pem = entry
-                    .iter()
-                    .filter_map(|value| value.as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if !cert_pem.trim().is_empty() {
-                    x509 = Some(format!("{cert_pem}\n").into_bytes());
-                }
-            }
-        }
-
-        let x509 = x509.ok_or_else(|| {
-            AuthError::UntrustedIdentity(
-                "SPIRE Workload API returned no X.509 SVID certificate chain for the workload"
-                    .to_string(),
-            )
-        })?;
-
-        Ok(x509)
+        Ok(der_to_pem(&svid.x509_svid, "CERTIFICATE"))
     }
 
     pub async fn fetch_trust_bundle(&self) -> Result<Vec<u8>, AuthError> {
-        let body = self
-            .fetch_http_json("/spire-agent/api/agent/v1/bundle")
-            .await?;
+        let response = self.fetch_x509_svid_response().await?;
+        let svid = response
+            .svids
+            .into_iter()
+            .find(|s| !s.spiffe_id.is_empty())
+            .ok_or_else(|| {
+                AuthError::UntrustedIdentity(
+                    "SPIRE Workload API returned no trust bundle for the workload".to_string(),
+                )
+            })?;
 
-        let response: serde_json::Value = serde_json::from_slice(&body).map_err(|err| {
-            AuthError::Failed(format!("invalid SPIRE trust bundle response: {err}"))
-        })?;
-
-        let mut pem = Vec::new();
-        if let Some(bundles) = response.get("bundles").and_then(|v| v.as_object()) {
-            for value in bundles.values() {
-                if let Some(root_certs) = value.get("root_certs").and_then(|v| v.as_array()) {
-                    for cert in root_certs {
-                        if let Some(c) = cert.get("cert").and_then(|v| v.as_str()) {
-                            pem.extend_from_slice(c.as_bytes());
-                            pem.push(b'\n');
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(root_certs) = response.get("root_certs").and_then(|v| v.as_array()) {
-            for cert in root_certs {
-                if let Some(c) = cert.get("cert").and_then(|v| v.as_str()) {
-                    pem.extend_from_slice(c.as_bytes());
-                    pem.push(b'\n');
-                }
-            }
-        }
-
-        if pem.is_empty() {
+        let bundle = if svid.bundle.is_empty() {
             return Err(AuthError::UntrustedIdentity(
                 "SPIRE Workload API returned an empty trust bundle; fail closed".to_string(),
             ));
-        }
+        } else {
+            svid.bundle
+        };
 
-        Ok(pem)
+        Ok(der_to_pem(&bundle, "CERTIFICATE"))
     }
 
-    async fn fetch_http_json(&self, _path: &str) -> Result<Vec<u8>, AuthError> {
+    async fn fetch_x509_svid_response(&self) -> Result<X509SVIDResponse, AuthError> {
         #[cfg(unix)]
         {
             let mut stream = UnixStream::connect(&self.socket_path)
@@ -145,71 +257,89 @@ impl SpireWorkloadApiClient {
                     ))
                 })?;
 
-            let request =
-                format!("GET {path} HTTP/1.1\r\nHost: spire-agent\r\nConnection: close\r\n\r\n");
-
-            stream.write_all(request.as_bytes()).await.map_err(|err| {
-                AuthError::Failed(format!("failed to send SPIRE Workload API request: {err}"))
+            let (sender, connection) = http2::handshake(TokioIo::new(&mut stream)).await.map_err(|err| {
+                AuthError::Failed(format!("failed to establish HTTP/2 connection to SPIRE Workload API: {err}"))
             })?;
 
-            let mut response = Vec::new();
-            let mut buffer = [0u8; 4096];
-            loop {
-                let read = stream.read(&mut buffer).await.map_err(|err| {
-                    AuthError::Failed(format!("failed to read SPIRE Workload API response: {err}"))
+            tokio::spawn(async move {
+                if let Err(err) = connection.await {
+                    tracing::warn!(error = %err, "SPIRE Workload API connection closed");
+                }
+            });
+
+            let request_body = Vec::new();
+            let grpc_body = grpc_encode_message(&request_body);
+            let request = Request::builder()
+                .method(http::Method::POST)
+                .uri("http://localhost/SpiffeWorkloadAPI/FetchX509SVID")
+                .header("content-type", "application/grpc")
+                .header("te", "trailers")
+                .body(Bytes::from(grpc_body))
+                .map_err(|err| {
+                    AuthError::Failed(format!("failed to build gRPC Workload API request: {err}"))
                 })?;
-                if read == 0 {
-                    break;
-                }
-                response.extend_from_slice(&buffer[..read]);
-                if response.windows(4).any(|w| w == b"\r\n\r\n") {
-                    break;
-                }
+
+            let response = sender
+                .send_request(request)
+                .await
+                .map_err(|err| {
+                    AuthError::Failed(format!("failed to send SPIRE gRPC FetchX509SVID request: {err}"))
+                })?;
+
+            if response.status() != StatusCode::OK {
+                return Err(AuthError::Failed(format!(
+                    "SPIRE Workload API rejected FetchX509SVID with HTTP status {}",
+                    response.status()
+                )));
             }
 
-            let payload = String::from_utf8_lossy(&response);
-            let Some((_, body)) = payload.split_once("\r\n\r\n") else {
-                return Err(AuthError::Failed(
-                    "SPIRE Workload API response was incomplete or malformed".to_string(),
-                ));
-            };
-
-            let content_length = payload
-                .lines()
-                .find_map(|line| line.strip_prefix("Content-Length:"))
-                .and_then(|value| value.trim().parse::<usize>().ok())
-                .unwrap_or(body.len());
-
-            let body_bytes = body.as_bytes();
-            if body_bytes.len() < content_length {
-                let mut rest = Vec::new();
-                loop {
-                    let read = stream.read(&mut buffer).await.map_err(|err| {
-                        AuthError::Failed(format!(
-                            "failed to finish reading SPIRE Workload API body: {err}"
-                        ))
-                    })?;
-                    if read == 0 {
-                        break;
-                    }
-                    rest.extend_from_slice(&buffer[..read]);
-                    if rest.len() >= content_length - body_bytes.len() {
-                        break;
-                    }
-                }
-                let mut combined = body.as_bytes().to_vec();
-                combined.extend_from_slice(&rest);
-                return Ok(combined);
+            let status = response
+                .headers()
+                .get("grpc-status")
+                .and_then(|value| value.to_str().ok())
+                .unwrap_or("0");
+            if status != "0" {
+                let message = response
+                    .headers()
+                    .get("grpc-message")
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or("unknown gRPC SPIRE error");
+                return Err(AuthError::Failed(format!(
+                    "SPIRE Workload API returned gRPC status '{status}': {message}"
+                )));
             }
 
-            return Ok(body.as_bytes()[..content_length.min(body.len())].to_vec());
+            let mut chunks = Vec::new();
+            let mut body = response.into_body();
+            while let Some(chunk) = body.data().await {
+                let chunk = chunk.map_err(|err| {
+                    AuthError::Failed(format!("failed to read SPIRE Workload API response body: {err}"))
+                })?;
+                chunks.extend_from_slice(&chunk);
+            }
+
+            let frames = parse_grpc_frames(&chunks)?;
+            let message = frames
+                .into_iter()
+                .find(|frame| !frame.is_empty())
+                .ok_or_else(|| {
+                    AuthError::UntrustedIdentity(
+                        "SPIRE Workload API returned an empty X.509 SVID stream".to_string(),
+                    )
+                })?;
+
+            decode_x509_svid_response(&message).map_err(|err| {
+                AuthError::Failed(format!("invalid SPIRE Workload API X509SVID response: {err}"))
+            })
         }
 
         #[cfg(not(unix))]
-        Err(AuthError::MissingMetadata(
-            "SPIRE Workload API over Unix domain sockets is not supported on this platform"
-                .to_string(),
-        ))
+        {
+            Err(AuthError::MissingMetadata(
+                "SPIRE Workload API over Unix domain sockets is not supported on this platform"
+                    .to_string(),
+            ))
+        }
     }
 }
 

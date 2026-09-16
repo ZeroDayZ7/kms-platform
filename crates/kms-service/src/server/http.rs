@@ -183,6 +183,14 @@ fn spiffe_provider_from_settings(settings: &Settings) -> SpiffeX509IdentityProvi
         spire_agent_socket_path: settings.auth.spiffe.spire_agent_socket_path.clone(),
         tls_identity: Default::default(),
         rotation_interval_secs: settings.auth.spiffe.rotation_interval_secs.unwrap_or(300),
+        identity_mode: match settings.auth.spiffe.identity_mode {
+            crate::config::SpiffeIdentityMode::Authoritative => {
+                crate::domain::auth::SpiffeIdentityMode::Authoritative
+            }
+            crate::config::SpiffeIdentityMode::FileFallback => {
+                crate::domain::auth::SpiffeIdentityMode::FileFallback
+            }
+        },
     })
 }
 

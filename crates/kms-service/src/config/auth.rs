@@ -1,5 +1,12 @@
 use serde::Deserialize;
 
+#[derive(Debug, Deserialize, Clone, Default, PartialEq, Eq)]
+pub enum SpiffeIdentityMode {
+    #[default]
+    Authoritative,
+    FileFallback,
+}
+
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct SpiffeConfig {
     pub enabled: bool,
@@ -10,6 +17,8 @@ pub struct SpiffeConfig {
     pub tls_key_path: Option<String>,
     pub trust_bundle_path: Option<String>,
     pub rotation_interval_secs: Option<u64>,
+    #[serde(default)]
+    pub identity_mode: SpiffeIdentityMode,
 }
 
 #[derive(Debug, Deserialize, Clone)]

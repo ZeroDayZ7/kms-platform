@@ -243,6 +243,14 @@ impl AppState {
                         .spiffe
                         .rotation_interval_secs
                         .unwrap_or(300),
+                    identity_mode: match settings.auth.spiffe.identity_mode {
+                        crate::config::SpiffeIdentityMode::Authoritative => {
+                            crate::domain::auth::SpiffeIdentityMode::Authoritative
+                        }
+                        crate::config::SpiffeIdentityMode::FileFallback => {
+                            crate::domain::auth::SpiffeIdentityMode::FileFallback
+                        }
+                    },
                 },
             )))
         } else {

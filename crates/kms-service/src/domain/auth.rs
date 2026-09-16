@@ -3,8 +3,6 @@ use std::collections::BTreeMap;
 use crate::domain::crypto::SecretBytes;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
-use zeroize::Zeroize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthenticationMethod {
@@ -261,6 +259,13 @@ impl std::fmt::Debug for TlsIdentitySnapshot {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub enum SpiffeIdentityMode {
+    #[default]
+    Authoritative,
+    FileFallback,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkloadIdentityConfig {
     pub enabled: bool,
@@ -269,6 +274,16 @@ pub struct WorkloadIdentityConfig {
     pub spire_agent_socket_path: Option<String>,
     pub tls_identity: TlsIdentity,
     pub rotation_interval_secs: u64,
+    pub identity_mode: SpiffeIdentityMode,
+}
+
+impl WorkloadIdentityConfig {
+    pub fn effective_identity_mode(&self) -> SpiffeIdentityMode {
+        match self.identity_mode {
+            SpiffeIdentityMode::Authoritative => SpiffeIdentityMode::Authoritative,
+            SpiffeIdentityMode::FileFallback => SpiffeIdentityMode::FileFallback,
+        }
+    }
 }
 
 #[async_trait]
