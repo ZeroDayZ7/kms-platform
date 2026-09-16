@@ -1,10 +1,10 @@
 use std::collections::BTreeMap;
 
+use crate::domain::crypto::SecretBytes;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use crate::domain::crypto::SecretBytes;
-use zeroize::Zeroize;
 use std::time::{SystemTime, UNIX_EPOCH};
+use zeroize::Zeroize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AuthenticationMethod {
@@ -207,7 +207,9 @@ impl Authenticator for MtlsAuthenticator {
         metadata: &BTreeMap<String, String>,
     ) -> Result<AuthenticationContext, AuthError> {
         if subject.trim().is_empty() {
-            return Err(AuthError::UntrustedIdentity("empty mTLS peer identity".to_string()));
+            return Err(AuthError::UntrustedIdentity(
+                "empty mTLS peer identity".to_string(),
+            ));
         }
 
         Ok(AuthenticationContext {

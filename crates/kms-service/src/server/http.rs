@@ -1,8 +1,12 @@
+use crate::config::Settings;
+use crate::domain::auth::{Principal, WorkloadIdentityConfig};
+use crate::infrastructure::identity::SpiffeX509IdentityProvider;
 use anyhow::Context;
 use axum::{Router, body::Body as AxumBody};
 use hyper::body::Incoming;
 use hyper::server::conn::http1;
 use hyper_util::rt::TokioIo;
+use hyper_util::service::TowerToHyperService;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use rustls::{RootCertStore, ServerConfig, server::WebPkiClientVerifier};
 use std::net::SocketAddr;
@@ -12,10 +16,6 @@ use tokio_rustls::TlsAcceptor;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceExt;
 use tracing::{error, info, warn};
-use hyper_util::service::TowerToHyperService;
-use crate::config::Settings;
-use crate::domain::auth::{Principal, WorkloadIdentityConfig};
-use crate::infrastructure::identity::SpiffeX509IdentityProvider;
 
 pub async fn serve(
     router: Router,
@@ -51,7 +51,15 @@ pub async fn serve_mtls(
 ) -> anyhow::Result<()> {
     let tls_config = build_mtls_server_config(&settings)?;
     let provider = spiffe_provider_from_settings(&settings);
-    serve_mtls_with_config(router, addr, tls_config, provider, shutdown_timeout, shutdown_token).await
+    serve_mtls_with_config(
+        router,
+        addr,
+        tls_config,
+        provider,
+        shutdown_timeout,
+        shutdown_token,
+    )
+    .await
 }
 
 pub async fn serve_mtls_with_config(
@@ -174,11 +182,7 @@ fn spiffe_provider_from_settings(settings: &Settings) -> SpiffeX509IdentityProvi
         workload_id: settings.auth.spiffe.workload_id.clone(),
         spire_agent_socket_path: settings.auth.spiffe.spire_agent_socket_path.clone(),
         tls_identity: Default::default(),
-        rotation_interval_secs: settings
-            .auth
-            .spiffe
-            .rotation_interval_secs
-            .unwrap_or(300),
+        rotation_interval_secs: settings.auth.spiffe.rotation_interval_secs.unwrap_or(300),
     })
 }
 
@@ -358,7 +362,11 @@ mod tests {
         ))
     }
 
-    fn build_server_config(ca_pem: &str, cert_pem: &str, key_pem: &str) -> anyhow::Result<ServerConfig> {
+    fn build_server_config(
+        ca_pem: &str,
+        cert_pem: &str,
+        key_pem: &str,
+    ) -> anyhow::Result<ServerConfig> {
         let cert_der = CertificateDer::from_pem_slice(cert_pem.as_bytes())?;
         let key_der = PrivateKeyDer::from_pem_slice(key_pem.as_bytes())?;
         let ca_der = CertificateDer::from_pem_slice(ca_pem.as_bytes())?;
@@ -384,11 +392,17 @@ mod tests {
         }
     }
 
-    fn make_client_with_identity(root_pem: &str, cert_pem: &str, key_pem: &str) -> anyhow::Result<Client> {
+    fn make_client_with_identity(
+        root_pem: &str,
+        cert_pem: &str,
+        key_pem: &str,
+    ) -> anyhow::Result<Client> {
         Ok(Client::builder()
             .use_rustls_tls()
             .add_root_certificate(Certificate::from_pem(root_pem.as_bytes())?)
-            .identity(Identity::from_pem(format!("{cert_pem}{key_pem}").as_bytes())?)
+            .identity(Identity::from_pem(
+                format!("{cert_pem}{key_pem}").as_bytes(),
+            )?)
             .build()?)
     }
 
@@ -408,7 +422,11 @@ mod tests {
         let addr = listener.local_addr()?;
         drop(listener);
 
-        let server_config = Arc::new(build_server_config(&ca_pem, &server_cert_pem, &server_key_pem)?);
+        let server_config = Arc::new(build_server_config(
+            &ca_pem,
+            &server_cert_pem,
+            &server_key_pem,
+        )?);
         let provider = SpiffeX509IdentityProvider::new(WorkloadIdentityConfig {
             enabled: true,
             trust_domain: Some("example.org".to_string()),
@@ -418,7 +436,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let server_cancel = cancel.clone();
         let server = tokio::spawn(async move {
-            let _ = serve_mtls_with_config(app, addr, server_config, provider, 1, server_cancel).await;
+            let _ =
+                serve_mtls_with_config(app, addr, server_config, provider, 1, server_cancel).await;
         });
 
         wait_for_server(addr).await;
@@ -451,7 +470,11 @@ mod tests {
         let addr = listener.local_addr()?;
         drop(listener);
 
-        let server_config = Arc::new(build_server_config(&ca_pem, &server_cert_pem, &server_key_pem)?);
+        let server_config = Arc::new(build_server_config(
+            &ca_pem,
+            &server_cert_pem,
+            &server_key_pem,
+        )?);
         let provider = SpiffeX509IdentityProvider::new(WorkloadIdentityConfig {
             enabled: true,
             trust_domain: Some("example.org".to_string()),
@@ -461,7 +484,8 @@ mod tests {
         let cancel = CancellationToken::new();
         let server_cancel = cancel.clone();
         let server = tokio::spawn(async move {
-            let _ = serve_mtls_with_config(app, addr, server_config, provider, 1, server_cancel).await;
+            let _ =
+                serve_mtls_with_config(app, addr, server_config, provider, 1, server_cancel).await;
         });
 
         wait_for_server(addr).await;

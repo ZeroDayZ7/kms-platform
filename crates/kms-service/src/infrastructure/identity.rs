@@ -29,15 +29,17 @@ impl SpireWorkloadApiClient {
         let body = self
             .fetch_http_json("/spire-agent/api/agent/v1/workload/svid")
             .await?;
-        let response: serde_json::Value = serde_json::from_slice(&body)
-            .map_err(|err| AuthError::Failed(format!("invalid SPIRE Workload API SVID response: {err}")))?;
+        let response: serde_json::Value = serde_json::from_slice(&body).map_err(|err| {
+            AuthError::Failed(format!("invalid SPIRE Workload API SVID response: {err}"))
+        })?;
 
         let mut x509 = None;
         if let Some(svids) = response.get("svids").and_then(|v| v.as_array()) {
             x509 = svids
                 .iter()
                 .filter_map(|entry| {
-                    let maybe = entry.get("x509_svids")
+                    let maybe = entry
+                        .get("x509_svids")
                         .and_then(|v| v.as_array())
                         .and_then(|items| items.first())
                         .and_then(|v| v.as_object());
@@ -64,7 +66,8 @@ impl SpireWorkloadApiClient {
         }
 
         if x509.is_none() {
-            if let Some(entry) = response.get("svid")
+            if let Some(entry) = response
+                .get("svid")
                 .and_then(|v| v.as_object())
                 .and_then(|v| v.get("certs"))
                 .and_then(|v| v.as_array())
@@ -82,7 +85,8 @@ impl SpireWorkloadApiClient {
 
         let x509 = x509.ok_or_else(|| {
             AuthError::UntrustedIdentity(
-                "SPIRE Workload API returned no X.509 SVID certificate chain for the workload".to_string(),
+                "SPIRE Workload API returned no X.509 SVID certificate chain for the workload"
+                    .to_string(),
             )
         })?;
 
@@ -94,15 +98,16 @@ impl SpireWorkloadApiClient {
             .fetch_http_json("/spire-agent/api/agent/v1/bundle")
             .await?;
 
-        let response: serde_json::Value = serde_json::from_slice(&body)
-            .map_err(|err| AuthError::Failed(format!("invalid SPIRE trust bundle response: {err}")))?;
+        let response: serde_json::Value = serde_json::from_slice(&body).map_err(|err| {
+            AuthError::Failed(format!("invalid SPIRE trust bundle response: {err}"))
+        })?;
 
         let mut pem = Vec::new();
         if let Some(bundles) = response.get("bundles").and_then(|v| v.as_object()) {
             for value in bundles.values() {
                 if let Some(root_certs) = value.get("root_certs").and_then(|v| v.as_array()) {
                     for cert in root_certs {
-                        if let Some(c) = cert.get("cert") .and_then(|v| v.as_str()) {
+                        if let Some(c) = cert.get("cert").and_then(|v| v.as_str()) {
                             pem.extend_from_slice(c.as_bytes());
                             pem.push(b'\n');
                         }
@@ -140,22 +145,19 @@ impl SpireWorkloadApiClient {
                     ))
                 })?;
 
-            let request = format!(
-                "GET {path} HTTP/1.1\r\nHost: spire-agent\r\nConnection: close\r\n\r\n"
-            );
+            let request =
+                format!("GET {path} HTTP/1.1\r\nHost: spire-agent\r\nConnection: close\r\n\r\n");
 
-            stream
-                .write_all(request.as_bytes())
-                .await
-                .map_err(|err| AuthError::Failed(format!("failed to send SPIRE Workload API request: {err}")))?;
+            stream.write_all(request.as_bytes()).await.map_err(|err| {
+                AuthError::Failed(format!("failed to send SPIRE Workload API request: {err}"))
+            })?;
 
             let mut response = Vec::new();
             let mut buffer = [0u8; 4096];
             loop {
-                let read = stream
-                    .read(&mut buffer)
-                    .await
-                    .map_err(|err| AuthError::Failed(format!("failed to read SPIRE Workload API response: {err}")))?;
+                let read = stream.read(&mut buffer).await.map_err(|err| {
+                    AuthError::Failed(format!("failed to read SPIRE Workload API response: {err}"))
+                })?;
                 if read == 0 {
                     break;
                 }
@@ -182,10 +184,11 @@ impl SpireWorkloadApiClient {
             if body_bytes.len() < content_length {
                 let mut rest = Vec::new();
                 loop {
-                    let read = stream
-                        .read(&mut buffer)
-                        .await
-                        .map_err(|err| AuthError::Failed(format!("failed to finish reading SPIRE Workload API body: {err}")))?;
+                    let read = stream.read(&mut buffer).await.map_err(|err| {
+                        AuthError::Failed(format!(
+                            "failed to finish reading SPIRE Workload API body: {err}"
+                        ))
+                    })?;
                     if read == 0 {
                         break;
                     }
@@ -204,7 +207,8 @@ impl SpireWorkloadApiClient {
 
         #[cfg(not(unix))]
         Err(AuthError::MissingMetadata(
-            "SPIRE Workload API over Unix domain sockets is not supported on this platform".to_string(),
+            "SPIRE Workload API over Unix domain sockets is not supported on this platform"
+                .to_string(),
         ))
     }
 }
@@ -221,8 +225,9 @@ impl SpiffeX509IdentityProvider {
 
     pub fn extract_spiffe_uri_from_cert(&self, cert_bytes: &[u8]) -> Result<String, AuthError> {
         let cert_der = parse_leaf_certificate(cert_bytes)?;
-        let end_entity = EndEntityCert::try_from(&cert_der)
-            .map_err(|err| AuthError::UntrustedIdentity(format!("invalid X.509 certificate: {err}")))?;
+        let end_entity = EndEntityCert::try_from(&cert_der).map_err(|err| {
+            AuthError::UntrustedIdentity(format!("invalid X.509 certificate: {err}"))
+        })?;
 
         end_entity
             .valid_uri_names()
@@ -279,8 +284,9 @@ impl SpiffeX509IdentityProvider {
             ));
         }
 
-        let leaf = EndEntityCert::try_from(&leaf_cert)
-            .map_err(|err| AuthError::UntrustedIdentity(format!("invalid leaf certificate: {err}")))?;
+        let leaf = EndEntityCert::try_from(&leaf_cert).map_err(|err| {
+            AuthError::UntrustedIdentity(format!("invalid leaf certificate: {err}"))
+        })?;
 
         leaf.verify_for_usage(
             ALL_VERIFICATION_ALGS,
@@ -291,7 +297,9 @@ impl SpiffeX509IdentityProvider {
             None,
             None,
         )
-        .map_err(|err| AuthError::UntrustedIdentity(format!("certificate chain validation failed: {err}")))?;
+        .map_err(|err| {
+            AuthError::UntrustedIdentity(format!("certificate chain validation failed: {err}"))
+        })?;
 
         Ok(())
     }
@@ -303,15 +311,11 @@ impl SpiffeX509IdentityProvider {
     }
 
     pub async fn current_runtime_identity(&self) -> Result<Principal, AuthError> {
-        let socket_path = self
-            .config
-            .spire_agent_socket_path
-            .clone()
-            .ok_or_else(|| {
-                AuthError::MissingMetadata(
-                    "SPIRE agent socket path is not configured for workload identity".to_string(),
-                )
-            })?;
+        let socket_path = self.config.spire_agent_socket_path.clone().ok_or_else(|| {
+            AuthError::MissingMetadata(
+                "SPIRE agent socket path is not configured for workload identity".to_string(),
+            )
+        })?;
 
         let client = SpireWorkloadApiClient::new(socket_path);
         let certs = client.fetch_workload_svid().await?;
@@ -380,7 +384,8 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
             Some(path) => Self::load_pem_from_file(path.clone())?,
             None => {
                 return Err(AuthError::MissingMetadata(
-                    "TLS private key path is not configured; cannot build runtime identity".to_string(),
+                    "TLS private key path is not configured; cannot build runtime identity"
+                        .to_string(),
                 ));
             }
         };
@@ -392,7 +397,10 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
         let spiffe = self.extract_spiffe_uri_from_cert(&cert_pem)?;
 
         // Build snapshot with conservative validity window (best-effort)
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
         let not_before = now - 60;
         let not_after = now + 86400; // 24h as a default window
 
@@ -435,12 +443,12 @@ fn parse_leaf_certificate(cert_bytes: &[u8]) -> Result<CertificateDer<'static>, 
     Ok(cert)
 }
 
-fn load_trust_anchors(trust_bundle_pem: &[u8]) -> Result<Vec<rustls::pki_types::TrustAnchor<'static>>, AuthError> {
+fn load_trust_anchors(
+    trust_bundle_pem: &[u8],
+) -> Result<Vec<rustls::pki_types::TrustAnchor<'static>>, AuthError> {
     let certs: Vec<_> = CertificateDer::pem_slice_iter(trust_bundle_pem)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|err| {
-            AuthError::UntrustedIdentity(format!("invalid trust bundle PEM: {err}"))
-        })?;
+        .map_err(|err| AuthError::UntrustedIdentity(format!("invalid trust bundle PEM: {err}")))?;
 
     if certs.is_empty() {
         return Err(AuthError::UntrustedIdentity(
@@ -463,7 +471,9 @@ mod tests {
     #[test]
     fn parses_spiiffe_uri_san_from_pem() {
         let provider = SpiffeX509IdentityProvider::new(WorkloadIdentityConfig::default());
-        let result = provider.extract_spiffe_uri_from_cert(CERT_PEM.as_bytes()).unwrap();
+        let result = provider
+            .extract_spiffe_uri_from_cert(CERT_PEM.as_bytes())
+            .unwrap();
         assert_eq!(result, "spiffe://example.org/ns/default/workload/kms");
     }
 
@@ -476,7 +486,12 @@ mod tests {
             ..Default::default()
         });
 
-        let err = provider.validate_spiffe_identity(CERT_PEM.as_bytes()).unwrap_err();
-        assert!(matches!(err, crate::domain::auth::AuthError::UntrustedIdentity(_)));
+        let err = provider
+            .validate_spiffe_identity(CERT_PEM.as_bytes())
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            crate::domain::auth::AuthError::UntrustedIdentity(_)
+        ));
     }
 }
