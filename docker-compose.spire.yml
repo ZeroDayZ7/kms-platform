@@ -36,6 +36,7 @@ services:
       - ./spire/agent:/opt/spire/conf/agent:ro
       - spire-agent-data:/run/spire/data
       - spire-agent-socket:/tmp
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - spire-net
     privileged: true
@@ -53,6 +54,27 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
+
+  spire-entries-init:
+    image: ghcr.io/spiffe/spire-server:1.11.1
+    container_name: spire-entries-init
+    depends_on:
+      spire-server:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        /opt/spire/bin/spire-server entry create \
+          -config /opt/spire/conf/server/server.conf \
+          -spiffeID spiffe://example.org/kms \
+          -parentID spiffe://example.org/spire/agent/join_token/28e3b60f-35c7-4c8f-bc13-dd8a65da5044 \
+          -selector docker:container_name:kms-spire-service || true
+    volumes:
+      - ./spire/server:/opt/spire/conf/server:ro
+      - spire-server-data:/run/spire/data
+    networks:
+      - spire-net
 
   kms-spire-service:
     build:
@@ -95,6 +117,8 @@ services:
         condition: service_healthy
       spire-agent:
         condition: service_healthy
+      spire-entries-init:
+        condition: service_completed_successfully
       vhsm-daemon:
         condition: service_started
 

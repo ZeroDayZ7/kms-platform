@@ -122,20 +122,16 @@ fn decode_x509_svid_response(data: &[u8]) -> Result<X509SVIDResponse, AuthError>
                             0 => {
                                 let _ = decode_varint(&value, &mut inner)?;
                             }
-                            2 => {
-                                let bytes = decode_length_delimited(&value, &mut inner)?;
-                                match number {
-                                    1 => {
-                                        svid.spiffe_id =
-                                            String::from_utf8(bytes).unwrap_or_default()
-                                    }
-                                    2 => svid.x509_svid = bytes,
-                                    3 => svid.x509_svid_key = bytes,
-                                    4 => svid.bundle = bytes,
-                                    5 => svid.hint = String::from_utf8(bytes).unwrap_or_default(),
-                                    _ => {}
+                            2 => match number {
+                                1 => svid.spiffe_id = decode_string(&value, &mut inner)?,
+                                2 => svid.x509_svid = decode_length_delimited(&value, &mut inner)?,
+                                3 => svid.x509_svid_key = decode_length_delimited(&value, &mut inner)?,
+                                4 => svid.bundle = decode_length_delimited(&value, &mut inner)?,
+                                5 => svid.hint = decode_string(&value, &mut inner)?,
+                                _ => {
+                                    let _ = decode_length_delimited(&value, &mut inner)?;
                                 }
-                            }
+                            },
                             _ => {
                                 return Err(AuthError::Failed(format!(
                                     "unsupported SPIRE Workload API wire type {type_id} for field {number}"
@@ -343,15 +339,6 @@ impl SpireWorkloadApiClient {
                 ))
             })?;
             chunks.extend_from_slice(&collected.to_bytes());
-            if let Ok(frames) = parse_grpc_frames(&chunks) {
-                if let Some(message) = frames.into_iter().find(|frame| !frame.is_empty()) {
-                    return decode_x509_svid_response(&message).map_err(|err| {
-                        AuthError::Failed(format!(
-                            "invalid SPIRE Workload API X509SVID response: {err}"
-                        ))
-                    });
-                }
-            }
 
             let frames = parse_grpc_frames(&chunks)?;
             let message = frames
@@ -596,6 +583,7 @@ impl WorkloadIdentityProvider for SpiffeX509IdentityProvider {
     }
 
     async fn fetch_identity(&self) -> Result<crate::domain::auth::TlsIdentitySnapshot, AuthError> {
+        #[cfg(unix)]
         let expected_spiffe = self.expected_spiffe_uri()?;
 
         #[cfg(unix)]
