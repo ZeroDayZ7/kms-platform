@@ -25,17 +25,21 @@ services:
     container_name: spire-agent
     hostname: spire-agent
     depends_on:
-      spire-server:
-        condition: service_healthy
+      spire-agent-init:
+        condition: service_completed_successfully
+    entrypoint:
+      - /opt/spire/bin/spire-agent
     command:
+      - run
       - -config
       - /opt/spire/conf/agent/agent.conf
-      - -joinToken
-      - "28e3b60f-35c7-4c8f-bc13-dd8a65da5044"
+      - -joinTokenPath
+      - /run/spire/tokens/agent_token
     volumes:
       - ./spire/agent:/opt/spire/conf/agent:ro
       - spire-agent-data:/run/spire/data
       - spire-agent-socket:/tmp
+      - spire-agent-token:/run/spire/tokens:ro
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks:
       - spire-net
@@ -59,17 +63,21 @@ services:
     image: ghcr.io/spiffe/spire-server:1.11.1
     container_name: spire-entries-init
     depends_on:
-      spire-server:
+      spire-agent:
         condition: service_healthy
     entrypoint:
-      - /bin/sh
-      - -c
-      - |
-        /opt/spire/bin/spire-server entry create \
-          -config /opt/spire/conf/server/server.conf \
-          -spiffeID spiffe://example.org/kms \
-          -parentID spiffe://example.org/spire/agent/join_token/28e3b60f-35c7-4c8f-bc13-dd8a65da5044 \
-          -selector docker:container_name:kms-spire-service || true
+      - /opt/spire/bin/spire-server
+    command:
+      - entry
+      - create
+      - -config
+      - /opt/spire/conf/server/server.conf
+      - -spiffeID
+      - spiffe://example.org/kms
+      - -parentID
+      - spiffe://example.org/spire/agent/join_token/kms-agent
+      - -selector
+      - docker:container_name:kms-spire-service
     volumes:
       - ./spire/server:/opt/spire/conf/server:ro
       - spire-server-data:/run/spire/data
@@ -109,6 +117,7 @@ services:
       - vhsm_sockets:/run/vhsm
       - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - spire-agent-socket:/tmp:ro
+      - spire-agent-token:/run/spire/tokens:ro
     networks:
       - spire-net
       - kms-internal-net
@@ -122,6 +131,30 @@ services:
       vhsm-daemon:
         condition: service_started
 
+  spire-agent-init:
+    image: ghcr.io/spiffe/spire-server:1.11.1
+    container_name: spire-agent-init
+    depends_on:
+      spire-server:
+        condition: service_healthy
+    entrypoint:
+      - /opt/spire/bin/spire-server
+    command:
+      - token
+      - generate
+      - -spiffeID
+      - spiffe://example.org/spire/agent/join_token/kms-agent
+      - -config
+      - /opt/spire/conf/server/server.conf
+      - -write
+      - /run/spire/tokens/agent_token
+    volumes:
+      - ./spire/server:/opt/spire/conf/server:ro
+      - spire-server-data:/run/spire/data
+      - spire-agent-token:/run/spire/tokens
+    networks:
+      - spire-net
+
 networks:
   spire-net:
     driver: bridge
@@ -130,3 +163,4 @@ volumes:
   spire-server-data:
   spire-agent-data:
   spire-agent-socket:
+  spire-agent-token:
