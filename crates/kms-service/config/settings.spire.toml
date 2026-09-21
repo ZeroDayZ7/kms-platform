@@ -48,11 +48,11 @@ enabled = true
 trust_domain = "example.org"
 workload_id = "/kms"
 spire_agent_socket_path = "/tmp/spire-agent.sock"
-tls_cert_path = "/tmp/spire-kms/svid.pem"
-tls_key_path = "/tmp/spire-kms/key.pem"
-trust_bundle_path = "/tmp/spire-kms/bundle.pem"
 rotation_interval_secs = 60
 identity_mode = "Authoritative"
+tls_cert_path = ""
+tls_key_path = ""
+trust_bundle_path = ""
 
 [crypto]
 hsm_socket_path = "/run/vhsm/vhsm.sock"

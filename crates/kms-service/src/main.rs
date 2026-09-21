@@ -99,11 +99,26 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                 .parse()
                 .context("Invalid server address")?;
 
+            info!(
+                spiffe_enabled = settings.auth.spiffe.enabled,
+                tls_cert_path = ?settings.auth.spiffe.tls_cert_path,
+                tls_key_path = ?settings.auth.spiffe.tls_key_path,
+                trust_bundle_path = ?settings.auth.spiffe.trust_bundle_path,
+                "🔍 Weryfikacja parametrów mTLS dla SPIFFE"
+            );
+
             if settings.auth.spiffe.enabled
                 && !(settings.auth.spiffe.tls_cert_path.is_some()
                     && settings.auth.spiffe.tls_key_path.is_some()
                     && settings.auth.spiffe.trust_bundle_path.is_some())
             {
+                error!(
+                    cert_missing = settings.auth.spiffe.tls_cert_path.is_none(),
+                    key_missing = settings.auth.spiffe.tls_key_path.is_none(),
+                    trust_bundle_missing = settings.auth.spiffe.trust_bundle_path.is_none(),
+                    "❌ Konfiguracja mTLS jest niekompletna"
+                );
+
                 anyhow::bail!(
                     "SPIFFE is enabled but mTLS TLS configuration is incomplete: cert, key, and trust bundle are required"
                 );

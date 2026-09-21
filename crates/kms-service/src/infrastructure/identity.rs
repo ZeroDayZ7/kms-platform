@@ -125,7 +125,10 @@ fn decode_x509_svid_response(data: &[u8]) -> Result<X509SVIDResponse, AuthError>
                             2 => match number {
                                 1 => svid.spiffe_id = decode_string(&value, &mut inner)?,
                                 2 => svid.x509_svid = decode_length_delimited(&value, &mut inner)?,
-                                3 => svid.x509_svid_key = decode_length_delimited(&value, &mut inner)?,
+                                3 => {
+                                    svid.x509_svid_key =
+                                        decode_length_delimited(&value, &mut inner)?
+                                }
                                 4 => svid.bundle = decode_length_delimited(&value, &mut inner)?,
                                 5 => svid.hint = decode_string(&value, &mut inner)?,
                                 _ => {
@@ -276,13 +279,14 @@ impl SpireWorkloadApiClient {
                     ))
                 })?;
 
-            let (mut sender, connection) = http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
-                .await
-                .map_err(|err| {
-                    AuthError::Failed(format!(
-                        "failed to establish HTTP/2 connection to SPIRE Workload API: {err}"
-                    ))
-                })?;
+            let (mut sender, connection) =
+                http2::handshake(TokioExecutor::new(), TokioIo::new(stream))
+                    .await
+                    .map_err(|err| {
+                        AuthError::Failed(format!(
+                            "failed to establish HTTP/2 connection to SPIRE Workload API: {err}"
+                        ))
+                    })?;
 
             tokio::spawn(async move {
                 if let Err(err) = connection.await {
