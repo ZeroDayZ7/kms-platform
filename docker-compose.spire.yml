@@ -151,16 +151,16 @@ services:
 
         # Normalize SPIRE output to stable names expected by the KMS service.
         find /run/spire/workload -maxdepth 1 -type f | while read -r file; do
-          case "$file" in
+          case "$$file" in
             *bundle*.pem|*bundle*.crt)
-              cp "$file" /run/spire/workload/bundle.pem
+              cp "$$file" /run/spire/workload/bundle.pem
               ;;
             *svid_key*.pem|*key*.pem)
-              cp "$file" /run/spire/workload/svid_key.pem
+              cp "$$file" /run/spire/workload/svid_key.pem
               ;;
             *svid*.pem)
               if [ ! -f /run/spire/workload/svid.pem ]; then
-                cp "$file" /run/spire/workload/svid.pem
+                cp "$$file" /run/spire/workload/svid.pem
               fi
               ;;
           esac
