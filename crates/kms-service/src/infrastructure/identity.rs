@@ -301,6 +301,7 @@ impl SpireWorkloadApiClient {
                 .uri("http://localhost/SpiffeWorkloadAPI/FetchX509SVID")
                 .header("content-type", "application/grpc")
                 .header("te", "trailers")
+                .header("workload.spiffe.io", "true")
                 .body(Full::new(Bytes::from(grpc_body)))
                 .map_err(|err| {
                     AuthError::Failed(format!("failed to build gRPC Workload API request: {err}"))
