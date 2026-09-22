@@ -50,9 +50,9 @@ workload_id = "/kms"
 spire_agent_socket_path = "/tmp/spire-agent.sock"
 rotation_interval_secs = 60
 identity_mode = "Authoritative"
-tls_cert_path = ""
-tls_key_path = ""
-trust_bundle_path = ""
+tls_cert_path = "/run/spire/workload/svid.pem"
+tls_key_path = "/run/spire/workload/svid_key.pem"
+trust_bundle_path = "/run/spire/workload/bundle.pem"
 
 [crypto]
 hsm_socket_path = "/run/vhsm/vhsm.sock"

@@ -127,6 +127,52 @@ services:
     networks:
       - spire-net
 
+  # region spire-workload-init
+  spire-workload-init:
+    image: ghcr.io/spiffe/spire-agent:1.11.1
+    container_name: spire-workload-init
+    depends_on:
+      spire-agent:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+    command:
+      - |
+        set -eu
+        mkdir -p /run/spire/workload
+        until [ -S /tmp/spire-agent.sock ]; do
+          sleep 0.5
+        done
+
+        /opt/spire/bin/spire-agent api fetch x509 \
+          -socketPath /tmp/spire-agent.sock \
+          -write /run/spire/workload
+
+        # Normalize SPIRE output to stable names expected by the KMS service.
+        find /run/spire/workload -maxdepth 1 -type f | while read -r file; do
+          case "$file" in
+            *bundle*.pem|*bundle*.crt)
+              cp "$file" /run/spire/workload/bundle.pem
+              ;;
+            *svid_key*.pem|*key*.pem)
+              cp "$file" /run/spire/workload/svid_key.pem
+              ;;
+            *svid*.pem)
+              if [ ! -f /run/spire/workload/svid.pem ]; then
+                cp "$file" /run/spire/workload/svid.pem
+              fi
+              ;;
+          esac
+        done
+
+        ls -l /run/spire/workload
+    volumes:
+      - spire-agent-socket:/tmp:ro
+      - spire-workload:/run/spire/workload
+    networks:
+      - spire-net
+
   # region kms-spire-service
   kms-spire-service:
     build:
@@ -139,7 +185,7 @@ services:
       - "8081:8080"
     environment:
       - CARGO_BUILD_JOBS=2
-      - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.toml
+      - APP_CONFIG_PATH=/app/crates/kms-service/config/settings.spire.toml
       - APP_SERVER__HOST=0.0.0.0
       - APP_SERVER__PORT=8080
       - DATABASE__HOST=postgres
@@ -153,9 +199,9 @@ services:
       - APP_AUTH__SPIFFE__WORKLOAD_ID=/kms
       - APP_AUTH__SPIFFE__SPIRE_AGENT_SOCKET_PATH=/tmp/spire-agent.sock
       - APP_AUTH__SPIFFE__IDENTITY_MODE=Authoritative
-      - APP_AUTH__SPIFFE__TLS_CERT_PATH=
-      - APP_AUTH__SPIFFE__TLS_KEY_PATH=
-      - APP_AUTH__SPIFFE__TRUST_BUNDLE_PATH=
+      - APP_AUTH__SPIFFE__TLS_CERT_PATH=/run/spire/workload/svid.pem
+      - APP_AUTH__SPIFFE__TLS_KEY_PATH=/run/spire/workload/svid_key.pem
+      - APP_AUTH__SPIFFE__TRUST_BUNDLE_PATH=/run/spire/workload/bundle.pem
     secrets:
       - kms_app_db_pass
     volumes:
@@ -166,6 +212,7 @@ services:
       - ./crates/kms-service/config:/app/crates/kms-service/config:ro
       - spire-agent-socket:/tmp:ro
       - spire-agent-token:/run/spire/tokens:ro
+      - spire-workload:/run/spire/workload:ro
     networks:
       - spire-net
       - kms-internal-net
@@ -174,7 +221,7 @@ services:
         condition: service_healthy
       spire-agent:
         condition: service_healthy
-      kms-migrate:
+      spire-workload-init:
         condition: service_completed_successfully
       spire-entries-init:
         condition: service_completed_successfully
@@ -247,3 +294,4 @@ volumes:
   spire-agent-token:
   spire-server-socket:
   spire-bundle:
+  spire-workload:

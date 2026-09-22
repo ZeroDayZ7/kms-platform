@@ -7,6 +7,7 @@ x-common-healthcheck: &common-healthcheck
   start_period: 15s
 
 services:
+  # region postgres
   postgres:
     image: postgres:18.3-alpine
     container_name: kms_db
@@ -36,7 +37,9 @@ services:
           "pg_isready -U ${DATABASE__ROOT_USER:-kms_root_user} -d ${DATABASE__NAME:-kms_db}",
         ]
 
+  # region kms-migrate
   kms-migrate:
+    profiles: ["tools"]
     build:
       context: .
       dockerfile: Dockerfile.dev
@@ -62,6 +65,7 @@ services:
       postgres:
         condition: service_healthy
 
+  # region vhsm-daemon
   vhsm-daemon:
     build:
       context: .
@@ -79,6 +83,35 @@ services:
       - target_cache:/app/target
       - vhsm_sockets:/run/vhsm
 
+  # region kms-ceremony-cli
+  kms-ceremony-cli:
+    profiles: ["tools"]
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: kms_ceremony_cli
+    entrypoint: []
+    command: cargo run -p kms-ceremony-cli --bin kms-ceremony-cli
+    environment:
+      - RUST_LOG=${RUST_LOG:-debug}
+      - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock
+      - CRYPTO__HSM_SOCKET_PATH=/run/vhsm/vhsm.sock
+      - KMS_CLI__SERVICE_ID=kms-cli
+      - KMS_CLI__SECRET=${ACL__SERVICES__KMS_CLI__SECRET:-super-long-random-secret-for-kms-cli-hmac-64-bytes}
+      - KMS_CLI__SERVICE_URL=http://kms-service:8080
+    volumes:
+      - .:/app
+      - cargo_cache:/usr/local/cargo/registry
+      - target_cache:/app/target
+      - kms_ceremony_data:/app/ceremony
+      - vhsm_sockets:/run/vhsm
+      - ./out:/app/out
+    networks:
+      - kms-internal-net
+    depends_on:
+      vhsm-daemon:
+        condition: service_started
+# region volumes
 volumes:
   postgres_data:
     driver: local
@@ -91,6 +124,7 @@ volumes:
   target_cache:
     driver: local
 
+# region secrets
 secrets:
   db_root_pass:
     file: ./secrets/.db_root_password
@@ -99,6 +133,7 @@ secrets:
   kms_migrator_db_pass:
     file: ./secrets/.kms_migrator_password
 
+# region networks
 networks:
   kms-internal-net:
     name: kms_internal_net
