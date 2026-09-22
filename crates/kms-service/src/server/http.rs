@@ -1,5 +1,5 @@
 use crate::config::Settings;
-use crate::domain::auth::{Principal, WorkloadIdentityConfig};
+use crate::domain::auth::{Principal, WorkloadIdentityConfig, WorkloadIdentityProvider};
 use crate::infrastructure::identity::SpiffeX509IdentityProvider;
 use anyhow::Context;
 use axum::{Router, body::Body as AxumBody};
@@ -49,8 +49,8 @@ pub async fn serve_mtls(
     shutdown_timeout: u64,
     shutdown_token: CancellationToken,
 ) -> anyhow::Result<()> {
-    let tls_config = build_mtls_server_config(&settings)?;
     let provider = spiffe_provider_from_settings(&settings);
+    let tls_config = build_mtls_server_config_async(&settings, &provider).await?;
     serve_mtls_with_config(
         router,
         addr,
@@ -121,44 +121,56 @@ pub async fn serve_mtls_with_config(
     Ok(())
 }
 
-fn build_mtls_server_config(settings: &Settings) -> anyhow::Result<Arc<ServerConfig>> {
-    let cert_path = settings
-        .auth
-        .spiffe
-        .tls_cert_path
-        .as_deref()
-        .context("SPIFFE TLS certificate path is missing")?;
-    let key_path = settings
-        .auth
-        .spiffe
-        .tls_key_path
-        .as_deref()
-        .context("SPIFFE TLS private key path is missing")?;
-    let bundle_path = settings
-        .auth
-        .spiffe
-        .trust_bundle_path
-        .as_deref()
-        .context("SPIFFE trust bundle path is missing")?;
+async fn build_mtls_server_config_async(
+    settings: &Settings,
+    provider: &SpiffeX509IdentityProvider,
+) -> anyhow::Result<Arc<ServerConfig>> {
+    // Try to load from configured file paths first. If any read fails with NotFound
+    // (or paths not configured), fallback to Workload API via provider.fetch_identity().
+    let cert_path_opt = settings.auth.spiffe.tls_cert_path.clone();
+    let key_path_opt = settings.auth.spiffe.tls_key_path.clone();
+    let bundle_path_opt = settings.auth.spiffe.trust_bundle_path.clone();
 
-    let cert_pem = std::fs::read(cert_path)
-        .with_context(|| format!("failed to read server certificate from {}", cert_path))?;
-    let key_pem = std::fs::read(key_path)
-        .with_context(|| format!("failed to read server private key from {}", key_path))?;
-    let bundle_pem = std::fs::read(bundle_path)
-        .with_context(|| format!("failed to read trust bundle from {}", bundle_path))?;
+    let (cert_pem, key_pem, bundle_pem) = match (cert_path_opt, key_path_opt, bundle_path_opt) {
+        (Some(cert_path), Some(key_path), Some(bundle_path)) => {
+            match (
+                std::fs::read(&cert_path),
+                std::fs::read(&key_path),
+                std::fs::read(&bundle_path),
+            ) {
+                (Ok(cp), Ok(kp), Ok(bp)) => (cp, kp, bp),
+                _ => {
+                    // fallback to Workload API
+                    let snapshot = provider.fetch_identity().await?;
+                    (
+                        snapshot.certificate_chain_pem,
+                        snapshot.private_key.clone().into_vec(),
+                        snapshot.trust_bundle_pem,
+                    )
+                }
+            }
+        }
+        _ => {
+            // paths not fully configured -> fallback to Workload API
+            let snapshot = provider.fetch_identity().await?;
+            (
+                snapshot.certificate_chain_pem,
+                snapshot.private_key.clone().into_vec(),
+                snapshot.trust_bundle_pem,
+            )
+        }
+    };
 
     let cert_chain = CertificateDer::pem_slice_iter(&cert_pem)
         .collect::<Result<Vec<_>, _>>()
-        .with_context(|| format!("invalid server certificate PEM from {}", cert_path))?;
+        .context("invalid server certificate PEM from workload snapshot or file")?;
     let private_key = PrivateKeyDer::from_pem_slice(&key_pem)
-        .with_context(|| format!("invalid private key PEM from {}", key_path))?;
+        .context("invalid private key PEM from workload snapshot or file")?;
 
-    let roots = RootCertStore::empty();
-    let mut root_store = roots;
+    let mut root_store = RootCertStore::empty();
     let client_anchors = CertificateDer::pem_slice_iter(&bundle_pem)
         .collect::<Result<Vec<_>, _>>()
-        .with_context(|| format!("invalid client trust bundle PEM from {}", bundle_path))?;
+        .context("invalid client trust bundle PEM from workload snapshot or file")?;
     root_store.add_parsable_certificates(client_anchors);
 
     let verifier = WebPkiClientVerifier::builder(root_store.into())
