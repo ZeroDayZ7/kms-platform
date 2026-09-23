@@ -131,20 +131,3 @@ prod: net-up
 
 dev-recreate: net-up
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate kms-service
-
-# --- ZARZĄDZANIE ŚRODOWISKIEM SPIRE ---
-spire-reset:
-	@echo "===> Czyszczenie środowiska SPIRE..."
-	docker compose -f docker-compose.yml -f docker-compose.spire.yml down
-	rm -rf spire/server/data/*
-	-docker volume rm \
-		kms_service_spire-agent-data \
-		kms_service_spire-agent-socket \
-		kms_service_spire-agent-token \
-		kms_service_spire-bundle \
-		kms_service_spire-server-data \
-		kms_service_spire-server-socket 2>/dev/null || true
-
-spire-recreate: net-up spire-reset
-	@echo "===> Uruchamianie środowiska SPIRE na nowo..."
-	docker compose -f docker-compose.yml -f docker-compose.spire.yml up -d
