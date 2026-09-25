@@ -6,6 +6,7 @@ pub mod crypto;
 pub mod health;
 pub mod keys;
 pub mod ceremonies;
+pub mod ca;
 
 pub use admin::*;
 pub use agent::*;
@@ -13,3 +14,4 @@ pub use audit::*;
 pub use health::*;
 pub use keys::*;
 pub use ceremonies::*;
+pub use ca::*;

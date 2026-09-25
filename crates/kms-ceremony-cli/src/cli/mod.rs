@@ -1,5 +1,6 @@
 pub mod args;
 pub mod ca_init;
+pub mod ca_load;
 pub mod ceremony;
 pub mod crypto_ops;
 pub mod hmac;

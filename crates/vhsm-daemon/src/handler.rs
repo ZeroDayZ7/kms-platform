@@ -477,18 +477,36 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
         }
 
         HsmRequest::SignIntermediateCa { ca_tag, csr_pem, validity_days } => {
-            // Check that the CA key is loaded
+            // Ensure CA is loaded
             let guard = state.read().await;
-            let opt = guard.active_ca_keys.get(&ca_tag).cloned();
-            let root_key_version = guard.active_key_version;
+            let key_opt = guard.active_ca_keys.get(&ca_tag).cloned();
+            drop(guard);
 
-            if opt.is_none() {
-                return HsmResponse::Error { code: 404, message: format!("CA with tag '{}' not loaded", ca_tag) };
+            let sk_bytes = match key_opt {
+                Some(z) => z,
+                None => return HsmResponse::Error { code: 404, message: format!("CA with tag '{}' not loaded", ca_tag) },
+            };
+
+            // Parse CSR PEM to extract public key and subject (use x509-parser or rcgen if available)
+            // We'll use rcgen if feature enabled for simplicity, else attempt minimal parsing.
+            #[cfg(feature = "use_rcgen")]
+            {
+                use rcgen::CertificateParams;
+                use x509_parser::pem::parse_x509_pem;
+                use x509_parser::csr::parse_x509_p10;
+
+                // parse PEM
+                let (_rem, pem) = parse_x509_pem(csr_pem.as_bytes()).map_err(|_| HsmResponse::Error { code: 400, message: "Invalid CSR PEM".to_string() }).unwrap();
+                let csr = parse_x509_p10(&pem.contents).map_err(|_| HsmResponse::Error { code: 400, message: "Invalid CSR ASN.1".to_string() }).unwrap();
+
+                // Build certificate params and sign with private key bytes
+                let mut params = CertificateParams::from_ca_cert_pem("", vec![]);
+                // TODO: fill in params from CSR properly - this is non-trivial; fallback to not implemented
+                return HsmResponse::Error { code: 501, message: "SignIntermediateCa CSR handling not fully implemented".to_string() };
             }
 
-            // For now, implement a simple ECDSA signing of the CSR's public key by reconstructing keys.
-            // A full CSR parser and TBSCertificate builder is out of scope here; return NotImplemented for now.
-            return HsmResponse::Error { code: 501, message: "SignIntermediateCa not implemented in this change".to_string() };
+            // Without rcgen: return not implemented to avoid incorrect cert creation
+            return HsmResponse::Error { code: 501, message: "SignIntermediateCa not implemented in this build".to_string() };
         }
 
         HsmRequest::GenerateCredential { password_length } => {

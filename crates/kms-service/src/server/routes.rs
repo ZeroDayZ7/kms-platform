@@ -10,6 +10,7 @@ use axum::{
 pub fn router(state: AppState) -> Router {
     let cors = middleware::create_cors_layer(&state.settings);
     let security = middleware::create_security_headers_layer().into_inner();
+    // CA management routes will be added to router below after rate_limits is created
     let rate_limits = RateLimitLayers::new(&state.settings, state.rate_limiter.clone());
 
     let redis_mw = axum::middleware::from_fn_with_state(
@@ -85,6 +86,17 @@ pub fn router(state: AppState) -> Router {
         "/api/v1/ceremonies",
         post(crate::handlers::ceremonies::register_ceremony_handler).layer(rate_limits.auth.clone()),
     );
+
+    // Add CA management routes
+    router = router
+        .route(
+            "/api/v1/ca/load",
+            post(crate::handlers::ca::post_ca_load).layer(rate_limits.auth.clone()),
+        )
+        .route(
+            "/api/v1/ca/sign-intermediate",
+            post(crate::handlers::ca::post_sign_intermediate).layer(rate_limits.auth.clone()),
+        );
 
     if enable_rewrap {
         router = router.route(

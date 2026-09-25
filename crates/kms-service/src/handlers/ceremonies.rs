@@ -1,12 +1,12 @@
 use axum::{extract::State, Json};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::server::state::AppState;
 use kms_db::repositories::{AuditQueries, RootCaQueries};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub struct CeremonyRequest {
     pub operation: String,
     // For CA init
@@ -48,7 +48,7 @@ pub async fn register_ceremony_handler(
         // Acquire advisory lock to prevent races
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
             .bind(&ca_tag)
-            .execute(&mut tx)
+            .execute(&mut *tx)
             .await
             .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("lock error: {}", e)))?;
 
@@ -57,7 +57,7 @@ pub async fn register_ceremony_handler(
             "SELECT EXISTS(SELECT 1 FROM root_cas WHERE ca_tag = $1)",
         )
         .bind(&ca_tag)
-        .fetch_one(&mut tx)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("exists check: {}", e)))?;
 
@@ -124,12 +124,12 @@ pub async fn register_ceremony_handler(
             .bind(&manifest)
             .bind("RECORDED")
             .bind(chrono::Utc::now())
-            .execute(&mut tx)
+            .execute(&mut *tx)
             .await
             .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("insert ceremony: {}", e)))?;
 
         // Insert audit log (simplified placeholder values)
-        let audit_row = kms_db::repositories::AuditInsert {
+            let audit_row = kms_db::repositories::AuditInsert {
             id: Uuid::new_v4(),
             caller_service: "kms-ceremony-cli".to_string(),
             target_service: "kms-service".to_string(),
@@ -141,8 +141,8 @@ pub async fn register_ceremony_handler(
             hash: "".to_string(),
             signature: None,
             request_id: None,
-            operation_id: Some(ceremony_id.to_string()),
-            target_id: Some(root_ca_id),
+                operation_id: Some(ceremony_id.to_string()),
+                target_id: Some(root_ca_id.to_string()),
             metadata: payload.metadata.as_ref().map(|v| v.to_string()),
             created_at: chrono::Utc::now(),
         };
@@ -165,7 +165,7 @@ pub async fn register_ceremony_handler(
             .bind(&manifest)
             .bind("RECORDED")
             .bind(chrono::Utc::now())
-            .execute(&mut tx)
+            .execute(&mut *tx)
             .await
             .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("insert ceremony: {}", e)))?;
     }
