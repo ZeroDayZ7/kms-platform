@@ -67,12 +67,15 @@ pub async fn register_ceremony_handler(
         }
 
         let algorithm = payload.algorithm.clone().unwrap_or_else(|| "ECDSA_P256".to_string());
-        let public_key = base64::decode(payload.public_key_b64.as_deref().ok_or_else(|| {
+        use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
+        use base64::Engine as _;
+
+        let public_key = BASE64_ENGINE.decode(payload.public_key_b64.as_deref().ok_or_else(|| {
             (axum::http::StatusCode::BAD_REQUEST, "missing public_key_b64".to_string())
         })?)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("public key decode: {}", e)))?;
 
-        let encrypted_private_key = base64::decode(payload.encrypted_private_key_b64.as_deref().ok_or_else(|| {
+        let encrypted_private_key = BASE64_ENGINE.decode(payload.encrypted_private_key_b64.as_deref().ok_or_else(|| {
             (axum::http::StatusCode::BAD_REQUEST, "missing encrypted_private_key_b64".to_string())
         })?)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("encrypted key decode: {}", e)))?;

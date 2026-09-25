@@ -1,6 +1,8 @@
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use kms_core::hsm::client::generate_root_ca_via_hsm;
+use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
+use base64::Engine as _;
 use kms_db::repositories::{CredentialQueries, RootCaQueries};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
@@ -96,8 +98,8 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
         "root_ca_id": id,
         "kek_id": kek_id,
         "algorithm": algorithm,
-        "public_key_b64": base64::encode(&public_key),
-        "encrypted_private_key_b64": base64::encode(&encrypted_private_key),
+        "public_key_b64": BASE64_ENGINE.encode(&public_key),
+        "encrypted_private_key_b64": BASE64_ENGINE.encode(&encrypted_private_key),
         "kek_version": master_key_version as i32,
         "certificate_pem": cert_pem,
         "serial": serial,
@@ -155,7 +157,7 @@ fn generate_self_signed_cert_pem(
         // Create a minimal PEM placeholder containing the public key bytes encoded in base64.
         // This is a pragmatic placeholder so the certificate_pem field is populated while the
         // proper X.509 signing flow (HSM signing) is implemented in a follow-up change.
-        let b64 = base64::encode(public_key_sec1);
+        let b64 = BASE64_ENGINE.encode(public_key_sec1);
         let mut pem = String::new();
         pem.push_str("-----BEGIN CERTIFICATE-----\n");
         // Insert CA tag as a comment for human readability

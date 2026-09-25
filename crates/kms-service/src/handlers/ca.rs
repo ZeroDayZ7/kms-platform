@@ -2,7 +2,6 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 
 use crate::server::state::AppState;
-use crate::errors::AppResult;
 
 #[derive(Deserialize)]
 pub struct LoadCaRequest {
@@ -22,7 +21,10 @@ pub async fn post_ca_load(
     Json(payload): Json<LoadCaRequest>,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let socket = &state.settings.crypto.hsm_socket_path;
-    let encrypted = base64::decode(&payload.encrypted_private_key_b64)
+    use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
+    use base64::Engine as _;
+
+    let encrypted = BASE64_ENGINE.decode(&payload.encrypted_private_key_b64)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("invalid base64: {}", e)))?;
 
     crate::hsm::client::load_root_ca(socket, &payload.ca_tag, &encrypted, None)
