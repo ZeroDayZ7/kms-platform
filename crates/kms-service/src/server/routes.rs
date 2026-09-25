@@ -81,6 +81,11 @@ pub fn router(state: AppState) -> Router {
             get(audit::audit_logs_handler).layer(rate_limits.auth.clone()),
         );
 
+    router = router.route(
+        "/api/v1/ceremonies",
+        post(crate::handlers::ceremonies::register_ceremony_handler).layer(rate_limits.auth.clone()),
+    );
+
     if enable_rewrap {
         router = router.route(
             "/api/v1/admin/kms/rewrap",

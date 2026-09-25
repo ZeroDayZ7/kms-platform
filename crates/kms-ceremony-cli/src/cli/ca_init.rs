@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use kms_core::hsm::client::generate_root_ca_via_hsm;
-use kms_db::repositories::{ceremonies::PgCeremonyRepository, CredentialQueries, RootCaQueries};
+use kms_db::repositories::{CredentialQueries, RootCaQueries};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -87,17 +87,32 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
         return Ok(());
     }
 
-    // Record ceremony event in the DB using repository abstraction
-    let repo = PgCeremonyRepository::new(pool.clone());
+    // Send ceremony registration to kms-service instead of writing directly to DB
+    let service_url = std::env::var("KMS_SERVICE_URL").unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
+    let client = reqwest::Client::new();
     let manifest = serde_json::json!({
         "operation": "ca_init",
         "ca_tag": ca_tag,
         "root_ca_id": id,
         "kek_id": kek_id,
         "algorithm": algorithm,
+        "public_key_b64": base64::encode(&public_key),
+        "encrypted_private_key_b64": base64::encode(&encrypted_private_key),
+        "kek_version": master_key_version as i32,
+        "certificate_pem": cert_pem,
+        "serial": serial,
+        "status": status,
     });
-    let payload = manifest.to_string().into_bytes();
-    let _ceremony_id = repo.insert_ceremony("ca_init", &payload).await?;
+
+    let resp = client
+        .post(format!("{}/api/v1/ceremonies", service_url))
+        .json(&manifest)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        anyhow::bail!("kms-service returned error: {}", resp.text().await.unwrap_or_default())
+    }
 
     tx.commit().await?;
 
