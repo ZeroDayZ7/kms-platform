@@ -26,3 +26,5 @@ uuid = { workspace = true }
 zeroize = { workspace = true, features = ["zeroize_derive"] }
 kms-db = { workspace = true }
 sqlx = { workspace = true }
+base64 = { workspace = true }
+# Keep dependencies vendored-only; avoid adding rcgen since vendor doesn't include it.

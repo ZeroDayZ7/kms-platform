@@ -1,8 +1,8 @@
 pub mod args;
+pub mod ca_init;
 pub mod ceremony;
 pub mod crypto_ops;
 pub mod hmac;
 pub mod import_bootstrap;
 pub mod unseal;
 pub mod verify_audit;
-pub mod ca_init;
