@@ -1,19 +1,19 @@
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 use std::collections::HashSet;
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 use aes_gcm::{
     Aes256Gcm, KeyInit, Nonce,
     aead::{Aead, OsRng, rand_core::RngCore},
 };
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 use kms_core::crypto::sss::{SecretShare, combine_shares, split_shares};
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 use zeroize::{Zeroize, Zeroizing};
 
-#[cfg(unix)]
+#[cfg(any(unix, test))]
 //#region generate_and_split_master_key
 pub fn generate_and_split_master_key(
     total: u8,
@@ -28,8 +28,8 @@ pub fn generate_and_split_master_key(
     Ok((raw_bytes, shares))
 }
 
-#[cfg(unix)]
-//#region reconstruct_master_key
+#[cfg(any(unix, test))]
+//#[region reconstruct_master_key
 pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Zeroizing<Vec<u8>>, String> {
     if shares.is_empty() {
         return Err("At least one share is required".to_string());
@@ -66,8 +66,8 @@ pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Zeroizing<Vec<u
     Ok(recovered)
 }
 
-#[cfg(unix)]
-//#region encrypt_bytes
+#[cfg(any(unix, test))]
+//#[region encrypt_bytes
 pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|err| format!("Failed to initialize AES-GCM: {err}"))?;
@@ -87,8 +87,8 @@ pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     Ok(payload)
 }
 
-#[cfg(unix)]
-//#region decrypt_bytes
+#[cfg(any(unix, test))]
+//#[region decrypt_bytes
 pub fn decrypt_bytes(key: &[u8], payload: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
     if payload.len() < 12 {
         return Err("Ciphertext payload too short".to_string());
