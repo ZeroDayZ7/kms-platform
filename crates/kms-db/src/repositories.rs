@@ -469,6 +469,10 @@ impl BootstrapQueries {
     }
 }
 
+// Re-export ceremonies module for external use
+pub mod ceremonies;
+
+
 #[derive(Debug, Clone, FromRow)]
 pub struct KeyDbRow {
     pub id: Uuid,

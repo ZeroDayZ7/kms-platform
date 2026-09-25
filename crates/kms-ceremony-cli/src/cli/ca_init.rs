@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::{Duration, Utc};
 use kms_core::hsm::client::generate_root_ca_via_hsm;
-use kms_db::repositories::{CredentialQueries, RootCaQueries};
+use kms_db::repositories::{ceremonies::PgCeremonyRepository, CredentialQueries, RootCaQueries};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -86,6 +86,18 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
         );
         return Ok(());
     }
+
+    // Record ceremony event in the DB using repository abstraction
+    let repo = PgCeremonyRepository::new(pool.clone());
+    let manifest = serde_json::json!({
+        "operation": "ca_init",
+        "ca_tag": ca_tag,
+        "root_ca_id": id,
+        "kek_id": kek_id,
+        "algorithm": algorithm,
+    });
+    let payload = manifest.to_string().into_bytes();
+    let _ceremony_id = repo.insert_ceremony("ca_init", &payload).await?;
 
     tx.commit().await?;
 
