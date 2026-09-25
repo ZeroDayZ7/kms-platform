@@ -2039,6 +2039,7 @@ dependencies = [
  "rand 0.8.7",
  "serde",
  "sqlx",
+ "tokio",
  "tracing",
  "uuid",
  "zeroize",
