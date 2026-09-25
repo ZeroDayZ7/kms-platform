@@ -1,6 +1,7 @@
 // crates/kms-service/src/hsm/client.rs
 use kms_core::hsm::client::{
     decrypt_via_hsm as core_decrypt, encrypt_via_hsm as core_encrypt, send_hsm_request as core_send,
+    load_root_ca_via_hsm as core_load_root_ca,
 };
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
@@ -37,6 +38,17 @@ pub async fn decrypt_via_hsm(
     timeout: Option<Duration>,
 ) -> AppResult<Vec<u8>> {
     core_decrypt(socket_path, key_id, key_version, ciphertext, timeout)
+        .await
+        .map_err(Into::into)
+}
+
+pub async fn load_root_ca(
+    socket_path: &str,
+    ca_tag: &str,
+    encrypted_private_key: &[u8],
+    timeout: Option<Duration>,
+) -> AppResult<()> {
+    core_load_root_ca(socket_path, ca_tag, encrypted_private_key, timeout)
         .await
         .map_err(Into::into)
 }

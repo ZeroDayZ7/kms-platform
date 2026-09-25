@@ -347,6 +347,150 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             HsmResponse::RandomBytesGenerated { random_bytes }
         }
 
+        HsmRequest::InitRootCa {
+            ca_tag,
+            common_name,
+            validity_days,
+            algorithm,
+        } => {
+            // Ensure vHSM is unsealed
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(k) => k,
+                None => {
+                    return HsmResponse::Error {
+                        code: 403,
+                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                    };
+                }
+            };
+            drop(guard);
+
+            // Only support ECDSA P-256 for now
+            if algorithm.trim() != "ECDSA_P256" {
+                return HsmResponse::Error {
+                    code: 400,
+                    message: "Unsupported algorithm for InitRootCa".to_string(),
+                };
+            }
+
+            use p256::ecdsa::SigningKey;
+            use p256::elliptic_curve::sec1::ToEncodedPoint;
+            use rand::rngs::OsRng;
+
+            // Generate signing key inside vHSM
+            let signing_key = SigningKey::random(&mut OsRng);
+            let private_bytes = signing_key.to_bytes();
+            let private_vec = Zeroizing::new(private_bytes.to_vec());
+
+            // Build public key and a simple self-signed cert using rcgen if available
+            let verifying_key = signing_key.verifying_key();
+            let public_key_sec1 = verifying_key.to_encoded_point(false).as_bytes().to_vec();
+
+            // Create a minimal self-signed cert PEM using rcgen if possible
+            let cert_pem = match (|| -> Result<String, String> {
+                // attempt to create proper X.509 if rcgen is enabled
+                #[cfg(feature = "use_rcgen")]
+                {
+                    use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, IsCa, BasicConstraints};
+                    let mut params = CertificateParams::new(vec![common_name.clone()]);
+                    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+                    params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
+                    params.public_key = Some(public_key_sec1.clone());
+                    params.distinguished_name = DistinguishedName::new();
+                    params
+                        .distinguished_name
+                        .push(DnType::CommonName, common_name.clone());
+                    let cert = Certificate::from_params(params).map_err(|e| e.to_string())?;
+                    let pem = cert.serialize_pem().map_err(|e| e.to_string())?;
+                    Ok(pem)
+                }
+                #[cfg(not(feature = "use_rcgen"))]
+                {
+                    // Fallback minimal PEM placeholder
+                    let b64 = BASE64_STANDARD.encode(&public_key_sec1);
+                    let mut pem = String::new();
+                    pem.push_str("-----BEGIN CERTIFICATE-----\n");
+                    pem.push_str(&format!("# CN={}\n", common_name));
+                    for chunk in b64.as_bytes().chunks(64) {
+                        pem.push_str(&format!("{}\n", std::str::from_utf8(chunk).unwrap()));
+                    }
+                    pem.push_str("-----END CERTIFICATE-----\n");
+                    Ok(pem)
+                }
+            })() {
+                Ok(v) => v,
+                Err(e) => {
+                    return HsmResponse::Error { code: 500, message: e };
+                }
+            };
+
+            // Encrypt private key bytes with master root key
+            let guard2 = state.read().await;
+            let root_key2 = guard2.master_key.as_ref().unwrap();
+            let wrapped = match crypto::encrypt_bytes(root_key2.as_ref(), private_vec.as_ref()) {
+                Ok(v) => v,
+                Err(msg) => {
+                    return HsmResponse::Error { code: 500, message: msg };
+                }
+            };
+
+            // Keep encrypted blob only; do not store plaintext in KMS process
+            let version = guard2.active_key_version;
+
+            HsmResponse::RootCaKeyGenerated {
+                encrypted_private_key: wrapped,
+                public_key: public_key_sec1,
+                master_key_version: version,
+                algorithm: algorithm.clone(),
+            }
+        }
+
+        HsmRequest::LoadRootCa { ca_tag, encrypted_private_key } => {
+            // Ensure unsealed
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(k) => k,
+                None => {
+                    return HsmResponse::Error {
+                        code: 403,
+                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                    };
+                }
+            };
+            let version = guard.active_key_version;
+            drop(guard);
+
+            // Decrypt the encrypted_private_key into RAM (Zeroizing)
+            let decrypted = match crypto::decrypt_bytes(root_key.as_ref(), &encrypted_private_key) {
+                Ok(z) => z,
+                Err(msg) => return HsmResponse::Error { code: 422, message: format!("Failed to decrypt provided CA blob: {}", msg) },
+            };
+
+            // Store loaded key in state.active_ca_keys
+            let mut guard_w = state.write().await;
+            guard_w
+                .active_ca_keys
+                .insert(ca_tag.clone(), Zeroizing::new(decrypted.to_vec()));
+
+            HsmResponse::MasterKeyInitialized
+        }
+
+        HsmRequest::SignIntermediateCa { ca_tag, csr_pem, validity_days } => {
+            // Check that the CA key is loaded
+            let guard = state.read().await;
+            let opt = guard.active_ca_keys.get(&ca_tag).cloned();
+            let root_key_version = guard.active_key_version;
+
+            if opt.is_none() {
+                return HsmResponse::Error { code: 404, message: format!("CA with tag '{}' not loaded", ca_tag) };
+            }
+
+            // For now, implement a simple ECDSA signing of the CSR's public key by reconstructing keys.
+            // A full CSR parser and TBSCertificate builder is out of scope here; return NotImplemented for now.
+            return HsmResponse::Error { code: 501, message: "SignIntermediateCa not implemented in this change".to_string() };
+        }
+
         HsmRequest::GenerateCredential { password_length } => {
             let (root_key, key_version) = {
                 let guard = state.read().await;

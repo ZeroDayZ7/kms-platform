@@ -28,6 +28,26 @@ pub enum HsmRequest {
     GenerateCredential {
         password_length: usize,
     },
+    /// Initialize a Root CA fully inside vHSM: generate keypair, build & sign self-signed cert,
+    /// encrypt private key with master/root key and return encrypted blob + public cert material.
+    InitRootCa {
+        ca_tag: String,
+        common_name: String,
+        validity_days: u32,
+        algorithm: String,
+    },
+    /// Load an encrypted Root CA private key into vHSM RAM (after unseal). The encrypted blob
+    /// must have been produced by `InitRootCa` or a compatible wrapping operation.
+    LoadRootCa {
+        ca_tag: String,
+        encrypted_private_key: Vec<u8>,
+    },
+    /// Sign an intermediate CSR using a loaded Root CA identified by `ca_tag`.
+    SignIntermediateCa {
+        ca_tag: String,
+        csr_pem: String,
+        validity_days: u32,
+    },
     /// Generate a Root CA private/public keypair inside vHSM. Returns only encrypted private key and public data.
     GenerateRootCaKey {
         algorithm: String,

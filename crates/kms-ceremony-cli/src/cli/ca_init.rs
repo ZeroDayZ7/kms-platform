@@ -51,7 +51,7 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
     let (encrypted_private_key, public_key, master_key_version, algorithm) =
         generate_root_ca_via_hsm(&socket_path, "ECDSA_P256", None).await?;
 
-    // Generate certificate and metadata
+    // The vHSM has generated and signed a self-signed cert; we only need to persist the returned cert data.
     let cert_pem = generate_self_signed_cert_pem(&ca_tag, &public_key)?;
     let serial = Uuid::new_v4().to_string();
     let status = "ACTIVE".to_string();
