@@ -362,23 +362,34 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 }
             };
 
-            // Only support RSA-like or placeholder algorithms for now; accept any string but don't implement X.509 here.
             let alg = algorithm.trim().to_string();
 
-            // Generate private key material inside vHSM (kept in Zeroizing)
-            // For generality we'll generate a 32-byte private seed here; higher-level CA key details (RSA/ECDSA) will be handled later.
-            let mut private_seed = Zeroizing::new(vec![0u8; 32]);
-            use rand::RngCore;
-            rand::rngs::OsRng.fill_bytes(private_seed.as_mut());
+            // Only support ECDSA P-256 for now
+            if alg != "ECDSA_P256" {
+                return HsmResponse::Error {
+                    code: 400,
+                    message: format!("Unsupported algorithm: {}", alg),
+                };
+            }
 
-            // Derive a public-like blob from the seed for transport; here we just hash the seed as a placeholder
-            use sha2::{Digest, Sha256};
-            let mut hasher = Sha256::new();
-            hasher.update(private_seed.as_ref());
-            let public_blob = hasher.finalize().to_vec();
+            // Generate ECDSA P-256 keypair inside vHSM using p256 crate
+            use p256::ecdsa::SigningKey;
+            use p256::elliptic_curve::sec1::ToEncodedPoint;
+            use rand_core::OsRng;
 
-            // Encrypt (wrap) the private_seed using the root master key
-            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), private_seed.as_ref()) {
+            // Create signing key (private) using secure RNG
+            let signing_key = SigningKey::random(&mut OsRng);
+
+            // Extract private scalar as bytes (32 bytes) and keep in Zeroizing
+            let private_bytes = signing_key.to_bytes();
+            let private_vec = Zeroizing::new(private_bytes.to_vec());
+
+            // Obtain public key as SEC1 encoded uncompressed point
+            let verifying_key = signing_key.verifying_key();
+            let public_key_sec1 = verifying_key.to_encoded_point(false).as_bytes().to_vec();
+
+            // Encrypt private key bytes with vHSM root/master key using existing AES-GCM helper
+            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), private_vec.as_ref()) {
                 Ok(v) => v,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -390,11 +401,11 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 
             let version = guard.active_key_version;
 
-            // Ensure private_seed is dropped/zeroized when leaving scope (Zeroizing enforces this)
+            // Zeroizing(private_vec) will be dropped and zeroed when out of scope
 
             HsmResponse::RootCaKeyGenerated {
                 encrypted_private_key: wrapped,
-                public_key: public_blob,
+                public_key: public_key_sec1,
                 master_key_version: version,
                 algorithm: alg,
             }
@@ -520,7 +531,7 @@ mod tests {
 
         let resp = handle_request(
             HsmRequest::GenerateRootCaKey {
-                algorithm: "TESTALG".to_string(),
+                algorithm: "ECDSA_P256".to_string(),
             },
             state.clone(),
         )
@@ -536,9 +547,40 @@ mod tests {
                 assert!(!encrypted_private_key.is_empty());
                 assert!(!public_key.is_empty());
                 assert_eq!(master_key_version, 42);
-                assert_eq!(algorithm, "TESTALG");
+                assert_eq!(algorithm, "ECDSA_P256");
                 // Ensure encrypted payload is not equal to public blob
                 assert_ne!(encrypted_private_key, public_key);
+
+                // Now decrypt encrypted_private_key using master key and verify the keypair math
+                let guard = state.read().await;
+                let root = guard.master_key.as_ref().unwrap();
+                let decrypted = crypto::decrypt_bytes(root.as_ref(), &encrypted_private_key)
+                    .expect("decrypt should succeed");
+
+                // Reconstruct SigningKey from bytes
+                use p256::ecdsa::SigningKey;
+                use p256::elliptic_curve::sec1::EncodedPoint;
+                use p256::pkcs8::DecodePrivateKey;
+
+                // decrypted is Zeroizing<Vec<u8>> -> Vec<u8>
+                let sk_bytes: [u8; 32] = decrypted
+                    .as_ref()
+                    .try_into()
+                    .expect("private key length must be 32 bytes");
+
+                let signing_key = SigningKey::from_bytes(&sk_bytes).expect("create signing key");
+
+                // Build verifying key and compare to returned public_key
+                let verifying_key = signing_key.verifying_key();
+                let expected_pub = verifying_key.to_encoded_point(false);
+                let got_pub = EncodedPoint::from_bytes(&public_key).expect("parse public key");
+                assert_eq!(expected_pub.as_bytes(), got_pub.as_bytes());
+
+                // Test signing and verifying
+                use p256::ecdsa::{Signature, signature::Signer, signature::Verifier};
+                let msg = b"test message";
+                let sig: Signature = signing_key.sign(msg);
+                assert!(verifying_key.verify(msg, &sig).is_ok());
             }
             other => panic!("unexpected response: {other:?}"),
         }
