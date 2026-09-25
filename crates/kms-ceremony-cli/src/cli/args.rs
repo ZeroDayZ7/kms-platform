@@ -129,6 +129,20 @@ pub enum Commands {
         #[arg(short = 'F', long = "full")]
         full: bool,
     },
+    /// Initialize Root CA (idempotent)
+    CaInit {
+        #[arg(
+            short,
+            long,
+            help = "Ścieżka do gniazda Unix vHSM",
+            env = "CRYPTO__HSM_SOCKET_PATH",
+            default_value = "/run/vhsm/vhsm.sock"
+        )]
+        socket_path: String,
+
+        #[arg(short, long, help = "CA tag (identifier)", default_value = "root")]
+        ca_tag: String,
+    },
     /// Import encrypted bootstrap secrets file and send into KMS
     ImportBootstrap {
         #[arg(short, long, help = "Path to encrypted bootstrap file")]

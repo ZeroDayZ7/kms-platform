@@ -753,6 +753,7 @@ pub struct RootCaRow {
     pub id: Uuid,
     pub ca_tag: String,
     pub algorithm: String,
+    pub public_key: Vec<u8>,
     pub encrypted_private_key: Vec<u8>,
     pub kek_id: Uuid,
     pub kek_version: i32,
@@ -771,7 +772,7 @@ impl RootCaQueries {
         ca_tag: &str,
     ) -> Result<Option<RootCaRow>, sqlx::Error> {
         sqlx::query_as::<_, RootCaRow>(
-            "SELECT id, ca_tag, algorithm, encrypted_private_key, kek_id, kek_version, certificate_pem, serial_number, status, created_at, expires_at FROM root_cas WHERE ca_tag = $1 LIMIT 1",
+            "SELECT id, ca_tag, algorithm, public_key, encrypted_private_key, kek_id, kek_version, certificate_pem, serial_number, status, created_at, expires_at FROM root_cas WHERE ca_tag = $1 LIMIT 1",
         )
         .bind(ca_tag)
         .fetch_optional(pool)
@@ -791,6 +792,7 @@ impl RootCaQueries {
         id: Uuid,
         ca_tag: &str,
         algorithm: &str,
+        public_key: &[u8],
         encrypted_private_key: &[u8],
         kek_id: Uuid,
         kek_version: i32,
@@ -803,14 +805,15 @@ impl RootCaQueries {
         let res = sqlx::query(
             r#"
             INSERT INTO root_cas
-                (id, ca_tag, algorithm, encrypted_private_key, kek_id, kek_version, certificate_pem, serial_number, status, created_at, expires_at)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-            ON CONFLICT (id) DO NOTHING
+                (id, ca_tag, algorithm, public_key, encrypted_private_key, kek_id, kek_version, certificate_pem, serial_number, status, created_at, expires_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            ON CONFLICT (ca_tag) DO NOTHING
             "#,
         )
         .bind(id)
         .bind(ca_tag)
         .bind(algorithm)
+        .bind(public_key)
         .bind(encrypted_private_key)
         .bind(kek_id)
         .bind(kek_version)

@@ -25,8 +25,8 @@ mod local_crypto {
             aead::{Aead, OsRng, rand_core::RngCore},
         };
         use kms_core::crypto::sss::{SecretShare, combine_shares, split_shares};
-        use zeroize::{Zeroize, Zeroizing};
         use std::collections::HashSet;
+        use zeroize::{Zeroize, Zeroizing};
 
         pub fn generate_and_split_master_key(
             total: u8,
@@ -41,7 +41,9 @@ mod local_crypto {
             Ok((raw_bytes, shares))
         }
 
-        pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Zeroizing<Vec<u8>>, String> {
+        pub fn reconstruct_master_key(
+            shares: &[(u8, String)],
+        ) -> Result<Zeroizing<Vec<u8>>, String> {
             if shares.is_empty() {
                 return Err("At least one share is required".to_string());
             }
@@ -574,14 +576,14 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 #[cfg(test)]
 mod tests {
     use super::handle_request;
+    use crate::handler::BASE64_STANDARD;
+    use crate::handler::crypto;
     use crate::state::VhsmState;
+    use base64::Engine;
     use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
     use std::sync::Arc;
     use tokio::sync::RwLock;
     use zeroize::Zeroizing;
-    use crate::handler::crypto;
-    use crate::handler::BASE64_STANDARD;
-    use base64::Engine;
 
     #[tokio::test]
     async fn encrypt_returns_active_key_version() {
@@ -664,8 +666,8 @@ mod tests {
                     .expect("decrypt should succeed");
 
                 // Reconstruct SigningKey from bytes
-                use p256::ecdsa::SigningKey;
                 use p256::EncodedPoint;
+                use p256::ecdsa::SigningKey;
 
                 // decrypted is Zeroizing<Vec<u8>> -> Vec<u8>
                 let sk_vec: &Vec<u8> = decrypted.as_ref();
