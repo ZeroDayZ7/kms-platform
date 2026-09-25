@@ -28,6 +28,10 @@ pub enum HsmRequest {
     GenerateCredential {
         password_length: usize,
     },
+    /// Generate a Root CA private/public keypair inside vHSM. Returns only encrypted private key and public data.
+    GenerateRootCaKey {
+        algorithm: String,
+    },
     Encrypt {
         key_id: String,
         key_version: Option<u32>,
@@ -80,6 +84,13 @@ pub enum HsmResponse {
         password: String,
         wrapped_password: Vec<u8>,
         key_version: u32,
+    },
+    /// Response when a Root CA key was generated inside vHSM.
+    RootCaKeyGenerated {
+        encrypted_private_key: Vec<u8>,
+        public_key: Vec<u8>,
+        master_key_version: u32,
+        algorithm: String,
     },
     Error {
         code: u16,

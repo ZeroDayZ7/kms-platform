@@ -4567,6 +4567,7 @@ dependencies = [
  "kms-core",
  "rand 0.8.7",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
  "tracing-subscriber",

@@ -349,6 +349,57 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
+        HsmRequest::GenerateRootCaKey { algorithm } => {
+            let guard = state.read().await;
+            let root_key = match guard.master_key.as_ref() {
+                Some(key) => key,
+                None => {
+                    return HsmResponse::Error {
+                        code: 403,
+                        message: "vHSM is locked. Master key must be initialized first."
+                            .to_string(),
+                    };
+                }
+            };
+
+            // Only support RSA-like or placeholder algorithms for now; accept any string but don't implement X.509 here.
+            let alg = algorithm.trim().to_string();
+
+            // Generate private key material inside vHSM (kept in Zeroizing)
+            // For generality we'll generate a 32-byte private seed here; higher-level CA key details (RSA/ECDSA) will be handled later.
+            let mut private_seed = Zeroizing::new(vec![0u8; 32]);
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(private_seed.as_mut());
+
+            // Derive a public-like blob from the seed for transport; here we just hash the seed as a placeholder
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(private_seed.as_ref());
+            let public_blob = hasher.finalize().to_vec();
+
+            // Encrypt (wrap) the private_seed using the root master key
+            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), private_seed.as_ref()) {
+                Ok(v) => v,
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: msg,
+                    };
+                }
+            };
+
+            let version = guard.active_key_version;
+
+            // Ensure private_seed is dropped/zeroized when leaving scope (Zeroizing enforces this)
+
+            HsmResponse::RootCaKeyGenerated {
+                encrypted_private_key: wrapped,
+                public_key: public_blob,
+                master_key_version: version,
+                algorithm: alg,
+            }
+        }
+
         HsmRequest::Decrypt {
             key_id,
             key_version,
@@ -437,6 +488,58 @@ mod tests {
 
         match result {
             HsmResponse::Encrypted { key_version, .. } => assert_eq!(key_version, 7),
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn generate_root_ca_key_returns_encrypted_only_and_respects_sealed_state() {
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+
+        // When sealed -> should return 403
+        let resp_sealed = handle_request(
+            HsmRequest::GenerateRootCaKey {
+                algorithm: "TESTALG".to_string(),
+            },
+            state.clone(),
+        )
+        .await;
+
+        match resp_sealed {
+            HsmResponse::Error { code, .. } => assert_eq!(code, 403),
+            other => panic!("unexpected response when sealed: {other:?}"),
+        }
+
+        // Unseal
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 42;
+            guard.master_key = Some(Zeroizing::new(vec![3u8; 32]));
+        }
+
+        let resp = handle_request(
+            HsmRequest::GenerateRootCaKey {
+                algorithm: "TESTALG".to_string(),
+            },
+            state.clone(),
+        )
+        .await;
+
+        match resp {
+            HsmResponse::RootCaKeyGenerated {
+                encrypted_private_key,
+                public_key,
+                master_key_version,
+                algorithm,
+            } => {
+                assert!(!encrypted_private_key.is_empty());
+                assert!(!public_key.is_empty());
+                assert_eq!(master_key_version, 42);
+                assert_eq!(algorithm, "TESTALG");
+                // Ensure encrypted payload is not equal to public blob
+                assert_ne!(encrypted_private_key, public_key);
+            }
             other => panic!("unexpected response: {other:?}"),
         }
     }

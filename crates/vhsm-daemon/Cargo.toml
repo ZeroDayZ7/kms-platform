@@ -10,6 +10,7 @@ aes-gcm = "0.10.3"
 base64 = "0.23.1"
 hex = "0.4"
 rand = "0.8"
+sha2 = "0.10"
 
 # Shared dependencies inherited from the workspace
 kms-core = { workspace = true }

@@ -228,6 +228,34 @@ pub async fn generate_random_bytes_via_hsm(
     }
 }
 
+pub async fn generate_root_ca_via_hsm(
+    socket_path: &str,
+    algorithm: &str,
+    timeout: Option<Duration>,
+) -> HsmResult<(Vec<u8>, Vec<u8>, u32, String)> {
+    let req = HsmRequest::GenerateRootCaKey {
+        algorithm: algorithm.to_string(),
+    };
+
+    match send_hsm_request(socket_path, &req, timeout).await? {
+        HsmResponse::RootCaKeyGenerated {
+            encrypted_private_key,
+            public_key,
+            master_key_version,
+            algorithm,
+        } => Ok((
+            encrypted_private_key,
+            public_key,
+            master_key_version,
+            algorithm,
+        )),
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
+            "vHSM generate Root CA failed ({code}): {message}"
+        ))),
+        _ => Err(HsmClientError::InvalidResponse),
+    }
+}
+
 // Helper to validate key version consistency and detect downgrade attacks.
 fn validate_key_version(requested: Option<u32>, response_version: u32) -> HsmResult<()> {
     if let Some(req_v) = requested {
