@@ -135,32 +135,17 @@ fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
     }
 }
 
-fn extract_spki_from_csr(csr_der: &[u8]) -> Result<Vec<u8>, String> {
-    // Try parse PEM first (using pem crate), else assume DER
-    match pem::parse(csr_der) {
-        Ok(block) => {
-            // Search for BIT STRING tag (0x03) which starts SubjectPublicKeyInfo bitstring
-            let contents = block.contents();
-            if let Some(pos) = contents.windows(1).position(|w| w[0] == 0x03) {
-                // Return the remainder starting at the BIT STRING
-                return Ok(contents[pos..].to_vec());
-            }
-            Err("Could not locate SPKI BIT STRING in CSR PEM".to_string())
-        }
-        Err(_) => {
-            // DER input: search for 0x03 tag
-            if let Some(pos) = csr_der.windows(1).position(|w| w[0] == 0x03) {
-                return Ok(csr_der[pos..].to_vec());
-            }
-            Err("Could not locate SPKI BIT STRING in CSR DER".to_string())
-        }
-    }
-}
+// Deprecated: heuristic extraction removed. Use x509-parser to parse CSRs.
+// extract_spki_from_csr was removed to avoid fragile byte-scanning heuristics.
 
-fn build_and_sign_certificate(ca_sk_bytes: &[u8], csr_der_or_spki: &[u8], validity_days: u32, is_csr: bool) -> Result<String, String> {
-    // TODO: implement full TBSCertificate construction and internal signing in vHSM.
-    // For now, return an explicit error so callers can handle the unimplemented state.
-    Err("build_and_sign_certificate: not implemented inside vHSM; requires internal TBSCert signing".to_string())
+fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _validity_days: u32, _is_csr: bool) -> Result<String, String> {
+    // Placeholder kept for the TBSCertificate builder which will be implemented
+    // after adding an internal SignWithCaKey operation. Do not implement here
+    // in a way that exports private keys. The real implementation will:
+    //  - build TBSCertificate DER using yasna/rcgen writer helpers
+    //  - call an internal signing function to sign the tbs bytes
+    //  - assemble final certificate and pem-encode it
+    Err("build_and_sign_certificate: not implemented inside vHSM; implement with internal signing operation".to_string())
 }
 
 #[cfg(any(unix, test))]
@@ -501,30 +486,36 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 None => return HsmResponse::Error { code: 404, message: format!("CA with tag '{}' not loaded", ca_tag) },
             };
 
-            // Parse CSR PEM to extract public key and subject (use x509-parser or rcgen if available)
-            // We'll use rcgen if feature enabled for simplicity, else attempt minimal parsing.
-            // Parse CSR PEM manually using PEM boundary and minimal ASN.1 parsing with pkcs8
-            // Expect PEM header/footer and base64 body
+            // Parse CSR PEM/DER using x509-parser and verify signature
             let csr_der = match parse_pem_to_der(&csr_pem) {
                 Ok(d) => d,
                 Err(msg) => return HsmResponse::Error { code: 400, message: msg },
             };
 
-            // Minimal CSR parsing: extract subject and public key info using simple offsets.
-            // We will attempt to find the SubjectPublicKeyInfo sequence by searching for the ASN.1 BIT STRING tag (0x03)
-            // This is a pragmatic approach in absence of full x509 parser in vendor.
-            let spki = match extract_spki_from_csr(&csr_der) {
-                Ok(v) => v,
-                Err(msg) => return HsmResponse::Error { code: 400, message: msg },
-            };
+            // Use x509-parser to parse CSR and verify signature
+            match x509_parser::certification_request::X509CertificationRequest::from_der(&csr_der) {
+                Ok((_, csr)) => {
+                    // Verify CSR signature (requires x509-parser 'verify' feature)
+                    if let Err(_e) = csr.verify_signature() {
+                        return HsmResponse::Error { code: 422, message: "CSR signature verification failed".to_string() };
+                    }
 
-            // Build a minimal TBSCertificate structure and sign it with loaded CA private key
-            let cert_pem = match build_and_sign_certificate(&sk_bytes, &spki, validity_days) {
-                Ok(pem) => pem,
-                Err(msg) => return HsmResponse::Error { code: 500, message: msg },
-            };
+                    // Extract subject and subject public key info for later TBSCertificate building
+                    // subject: csr.certification_request_info.subject
+                    // spki: csr.certification_request_info.subject_pki.subject_public_key.data
 
-            HsmResponse::SignedIntermediate { certificate_pem: cert_pem }
+                    // For now, call build_and_sign_certificate placeholder (real implementation will
+                    // construct TBSCertificate and call internal sign operation)
+                    let spki_bytes = csr.certification_request_info.subject_pki.subject_public_key.data.to_vec();
+                    let cert_pem = match build_and_sign_certificate(&sk_bytes, &spki_bytes, validity_days, true) {
+                        Ok(pem) => pem,
+                        Err(msg) => return HsmResponse::Error { code: 500, message: msg },
+                    };
+
+                    HsmResponse::SignedIntermediate { certificate_pem: cert_pem }
+                }
+                Err(_e) => return HsmResponse::Error { code: 400, message: "Failed to parse CSR as PKCS#10".to_string() },
+            }
         }
 
         HsmRequest::GenerateCredential { password_length } => {
