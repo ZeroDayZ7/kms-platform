@@ -253,7 +253,7 @@ pub async fn generate_root_ca_via_hsm(
     socket_path: &str,
     algorithm: &str,
     timeout: Option<Duration>,
-) -> HsmResult<(Vec<u8>, Vec<u8>, u32, String)> {
+) -> HsmResult<(Vec<u8>, Vec<u8>, u32, String, Option<String>)> {
     let req = HsmRequest::InitRootCa {
         ca_tag: "root".to_string(),
         common_name: "kms-root-ca".to_string(),
@@ -262,19 +262,7 @@ pub async fn generate_root_ca_via_hsm(
     };
 
     match send_hsm_request(socket_path, &req, timeout).await? {
-        HsmResponse::RootCaKeyGenerated {
-            encrypted_private_key,
-            public_key,
-            master_key_version,
-            algorithm,
-            certificate_pem,
-        } => Ok((
-            encrypted_private_key,
-            public_key,
-            master_key_version,
-            algorithm,
-            certificate_pem,
-        )),
+        HsmResponse::RootCaKeyGenerated { encrypted_private_key, public_key, master_key_version, algorithm, certificate_pem, } => Ok((encrypted_private_key, public_key, master_key_version, algorithm, certificate_pem)),
         HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "vHSM InitRootCa failed ({code}): {message}"
         ))),

@@ -130,96 +130,37 @@ use rand::RngCore;
 fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
     // Use pem crate to decode PEM blocks robustly
     match pem::parse(pem) {
-        Ok(block) => Ok(block.contents),
+        Ok(block) => Ok(block.contents().to_vec()),
         Err(e) => Err(format!("PEM parse error: {}", e)),
     }
 }
 
 fn extract_spki_from_csr(csr_der: &[u8]) -> Result<Vec<u8>, String> {
-    // Use x509-parser to parse PKCS#10 CSR and extract SubjectPublicKeyInfo
-    use x509_parser::pem::Pem;
-    use x509_parser::prelude::*;
-
-    let parse_res = if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(csr_der) {
-        // Input was PEM containing CSR
-        x509_parser::csr::parse_x509_p10_der(&pem.contents)
-    } else {
-        // Try parsing DER directly
-        x509_parser::csr::parse_x509_p10_der(csr_der)
-    };
-
-    match parse_res {
-        Ok((_, csr)) => Ok(csr.subject_pki.raw.to_vec()),
-        Err(e) => Err(format!("Failed to parse CSR: {}", e)),
+    // Try parse PEM first (using pem crate), else assume DER
+    match pem::parse(csr_der) {
+        Ok(block) => {
+            // Search for BIT STRING tag (0x03) which starts SubjectPublicKeyInfo bitstring
+            let contents = block.contents();
+            if let Some(pos) = contents.windows(1).position(|w| w[0] == 0x03) {
+                // Return the remainder starting at the BIT STRING
+                return Ok(contents[pos..].to_vec());
+            }
+            Err("Could not locate SPKI BIT STRING in CSR PEM".to_string())
+        }
+        Err(_) => {
+            // DER input: search for 0x03 tag
+            if let Some(pos) = csr_der.windows(1).position(|w| w[0] == 0x03) {
+                return Ok(csr_der[pos..].to_vec());
+            }
+            Err("Could not locate SPKI BIT STRING in CSR DER".to_string())
+        }
     }
 }
 
 fn build_and_sign_certificate(ca_sk_bytes: &[u8], csr_der_or_spki: &[u8], validity_days: u32, is_csr: bool) -> Result<String, String> {
-    // Use rcgen to construct and sign proper X.509 certificates. If input is CSR DER/PEM, parse it
-    // with x509-parser to extract subject and public key.
-    use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, BasicConstraints, IsCa};
-    use x509_parser::prelude::*;
-
-    // Parse CA signing key
-    use p256::ecdsa::SigningKey;
-    let ca_sk = SigningKey::from_bytes(ca_sk_bytes).map_err(|e| format!("invalid CA private key: {}", e))?;
-
-    // Build certificate params
-    let mut params = CertificateParams::new(vec![]);
-    params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
-    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.serial_number = Some(rand::random::<u128>().into());
-
-    if is_csr {
-        // Try parse CSR
-        let parse_res = if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(csr_der_or_spki) {
-            x509_parser::csr::parse_x509_p10_der(&pem.contents)
-        } else {
-            x509_parser::csr::parse_x509_p10_der(csr_der_or_spki)
-        };
-
-        let csr = parse_res.map_err(|e| format!("Failed to parse CSR: {}", e))?.1;
-
-        // Subject
-        let mut dn = DistinguishedName::new();
-        // copy CN if present as convenience
-        for rdn in csr.certification_request_info.subject.iter() {
-            for attr in rdn.set.iter() {
-                if attr.attr_type == oid_registry::OID_AT_COMMON_NAME {
-                    if let Ok(s) = attr.attr_value.as_str() {
-                        dn.push(DnType::CommonName, s.to_string());
-                    }
-                }
-            }
-        }
-        params.distinguished_name = dn;
-
-        // public key: use the raw SubjectPublicKeyInfo
-        params.public_key = Some(csr.subject_pki.raw.to_vec());
-    } else {
-        // If caller provided SPKI directly, wrap it
-        params.public_key = Some(csr_der_or_spki.to_vec());
-    }
-
-    // validity
-    use chrono::Utc;
-    params.not_before = Utc::now().naive_utc();
-    params.not_after = (Utc::now() + chrono::Duration::days(validity_days as i64)).naive_utc();
-
-    // Key usage for CA
-    params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign, rcgen::KeyUsagePurpose::CrlSign];
-
-    let cert = Certificate::from_params(params).map_err(|e| format!("rcgen error: {}", e))?;
-
-    // rcgen uses its own key for signing; we need to sign using CA private key inside vHSM.
-    // Build TBSCert and sign with CA private key manually: rcgen can serialize TBS but does not accept external signer easily.
-    // Simpler approach: use rcgen to generate cert signed by an in-memory CA that we reconstruct from CA public key.
-    // However, to keep signing inside vHSM, we will serialize TBSCert via rcgen and then sign TBS with p256 SigningKey.
-
-    let tbs = cert.serialize_der_with_signer(&cert).map_err(|e| format!("serialize tbs error: {}", e))?;
-    // Note: serialize_der_with_signer above uses cert's private key; this is a placeholder — in vHSM we should
-    // build TBSCert and sign it with internal key. For now, return error to force implementing full internal signing.
-    Err("build_and_sign_certificate: external signing not implemented; migrate to vHSM internal signing using rcgen/tbs".to_string())
+    // TODO: implement full TBSCertificate construction and internal signing in vHSM.
+    // For now, return an explicit error so callers can handle the unimplemented state.
+    Err("build_and_sign_certificate: not implemented inside vHSM; requires internal TBSCert signing".to_string())
 }
 
 #[cfg(any(unix, test))]

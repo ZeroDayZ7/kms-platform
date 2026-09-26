@@ -4875,9 +4875,11 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "base64 0.23.1",
+ "chrono",
  "hex",
  "kms-core",
  "p256",
+ "pem 3.0.6",
  "rand 0.8.7",
  "rcgen",
  "serde_json",
