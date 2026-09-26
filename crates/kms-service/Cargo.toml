@@ -46,6 +46,8 @@ subtle = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal", "time", "net", "io-util"] }
 tokio-util = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }

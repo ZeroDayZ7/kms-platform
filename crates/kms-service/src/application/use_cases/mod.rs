@@ -12,6 +12,7 @@ pub mod issue_agent_credential;
 pub mod rewrap_keys;
 pub mod rotate_key;
 pub mod sign_data;
+pub mod sign_intermediate_ca;
 
 pub use decrypt_data::*;
 pub use encrypt_data::*;
@@ -24,3 +25,4 @@ pub use issue_agent_credential::*;
 pub use rewrap_keys::*;
 pub use rotate_key::*;
 pub use sign_data::*;
+pub use sign_intermediate_ca::*;

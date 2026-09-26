@@ -32,6 +32,7 @@ pub enum AuditAction {
     MasterKeySealed,
     MasterKeyOperationFailed,
     AuditVerification,
+    CaSignIntermediate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

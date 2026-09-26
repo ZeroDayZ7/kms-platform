@@ -66,6 +66,8 @@ pub enum ControlAction {
     AuditRead,
     #[serde(alias = "BootstrapImport")]
     BootstrapImport,
+    #[serde(alias = "CA_SIGN_INTERMEDIATE")]
+    CaSignIntermediate,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
