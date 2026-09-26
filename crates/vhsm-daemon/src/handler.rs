@@ -125,6 +125,9 @@ use crate::state::VhsmState;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use rand::RngCore;
+use x509_parser::prelude::FromDer;
+use sha2::Digest;
+use p256::ecdsa::signature::DigestSigner;
 
 // --- Minimal helpers for PEM/DER and cert building without external x509 crates ---
 fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
@@ -440,6 +443,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 public_key: public_key_sec1,
                 master_key_version: version,
                 algorithm: algorithm.clone(),
+                certificate_pem: None,
             }
         }
 
@@ -684,6 +688,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 public_key: public_key_sec1,
                 master_key_version: version,
                 algorithm: alg,
+                certificate_pem: None,
             }
         }
 
@@ -740,6 +745,49 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     message: msg,
                 },
             }
+        }
+
+        HsmRequest::SignWithCaKey { ca_tag, algorithm, tbs } => {
+            // Ensure CA is loaded in RAM
+            let guard = state.read().await;
+            let key_opt = guard.active_ca_keys.get(&ca_tag).cloned();
+            drop(guard);
+
+            let sk_bytes = match key_opt {
+                Some(z) => z,
+                None => return HsmResponse::Error { code: 404, message: format!("CA with tag '{}' not loaded", ca_tag) },
+            };
+
+            // Only support ECDSA P-256 + SHA-256 for now
+            if !matches!(algorithm.as_str(), "ECDSA_P256" | "ECDSA_P256_SHA256" | "ECDSA_P256-SHA256") {
+                return HsmResponse::Error { code: 400, message: "Unsupported signing algorithm".to_string() };
+            }
+
+            // Construct SigningKey from raw scalar bytes kept in memory (Zeroizing)
+            use p256::ecdsa::SigningKey;
+            use sha2::Sha256;
+
+            let sk_vec: &Vec<u8> = sk_bytes.as_ref();
+            let sk_arr: [u8; 32] = match sk_vec.as_slice().try_into() {
+                Ok(a) => a,
+                Err(_) => return HsmResponse::Error { code: 500, message: "Invalid CA private key length".to_string() },
+            };
+
+            let signing_key = match SigningKey::from_bytes(&sk_arr) {
+                Ok(k) => k,
+                Err(_) => return HsmResponse::Error { code: 500, message: "Failed to construct signing key".to_string() },
+            };
+
+            // Sign the TBS using SHA-256 digest (sign_digest performs the correct pre-hash signing)
+            let mut hasher = Sha256::new();
+            hasher.update(&tbs);
+            let signature = signing_key.sign_digest(hasher);
+
+            // Convert signature to ASN.1 DER (r,s) sequence bytes
+            let der_sig = signature.to_der().as_bytes().to_vec();
+
+            // Clear any temporary sensitive material by dropping Zeroizing guard when out of scope
+            HsmResponse::Signature { signature: der_sig }
         }
     }
 }
@@ -817,12 +865,7 @@ mod tests {
         .await;
 
         match resp {
-            HsmResponse::RootCaKeyGenerated {
-                encrypted_private_key,
-                public_key,
-                master_key_version,
-                algorithm,
-            } => {
+            HsmResponse::RootCaKeyGenerated { encrypted_private_key, public_key, master_key_version, algorithm, certificate_pem: _ } => {
                 assert!(!encrypted_private_key.is_empty());
                 assert!(!public_key.is_empty());
                 assert_eq!(master_key_version, 42);
