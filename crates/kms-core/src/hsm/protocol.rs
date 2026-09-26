@@ -48,6 +48,14 @@ pub enum HsmRequest {
         csr_pem: String,
         validity_days: u32,
     },
+    /// Sign arbitrary TBS bytes with a loaded CA key inside vHSM. The signature bytes
+    /// are returned. This is an internal operation used by KMS when the TBS is
+    /// constructed outside of vHSM but signing must occur inside.
+    SignWithCaKey {
+        ca_tag: String,
+        algorithm: String,
+        tbs: Vec<u8>,
+    },
     /// Generate a Root CA private/public keypair inside vHSM. Returns only encrypted private key and public data.
     GenerateRootCaKey {
         algorithm: String,
@@ -116,6 +124,10 @@ pub enum HsmResponse {
     /// Signed intermediate certificate PEM produced by a CA key loaded into vHSM
     SignedIntermediate {
         certificate_pem: String,
+    },
+    /// Response for SignWithCaKey returning raw signature bytes (ASN.1/DER or raw depending on algorithm)
+    Signature {
+        signature: Vec<u8>,
     },
     Error {
         code: u16,
