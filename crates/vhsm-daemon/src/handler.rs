@@ -643,7 +643,7 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 Err(msg) => return HsmResponse::Error { code: 400, message: msg },
             };
 
-            // Use x509-parser to parse CSR and verify signature
+            // Use x509-parser to parse CSR and verify signature, then build & sign intermediate
             match x509_parser::certification_request::X509CertificationRequest::from_der(&csr_der) {
                 Ok((_, csr)) => {
                     // Verify CSR signature (requires x509-parser 'verify' feature)
@@ -651,14 +651,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                         return HsmResponse::Error { code: 422, message: "CSR signature verification failed".to_string() };
                     }
 
-                    // Extract subject and subject public key info for later TBSCertificate building
-                    // subject: csr.certification_request_info.subject
-                    // spki: csr.certification_request_info.subject_pki.subject_public_key.data
-
-                    // For now, call build_and_sign_certificate placeholder (real implementation will
-                    // construct TBSCertificate and call internal sign operation)
-                    let spki_bytes = csr.certification_request_info.subject_pki.subject_public_key.data.to_vec();
-                    let cert_pem = match build_and_sign_certificate(&sk_bytes, &spki_bytes, validity_days, true) {
+                    // Pass full CSR DER to builder which will extract subject and SPKI
+                    let cert_pem = match build_and_sign_certificate(&sk_bytes, &csr_der, validity_days, true) {
                         Ok(pem) => pem,
                         Err(msg) => return HsmResponse::Error { code: 500, message: msg },
                     };
