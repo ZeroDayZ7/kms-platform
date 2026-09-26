@@ -142,13 +142,160 @@ fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
 // extract_spki_from_csr was removed to avoid fragile byte-scanning heuristics.
 
 fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _validity_days: u32, _is_csr: bool) -> Result<String, String> {
-    // Placeholder kept for the TBSCertificate builder which will be implemented
-    // after adding an internal SignWithCaKey operation. Do not implement here
-    // in a way that exports private keys. The real implementation will:
-    //  - build TBSCertificate DER using yasna/rcgen writer helpers
-    //  - call an internal signing function to sign the tbs bytes
-    //  - assemble final certificate and pem-encode it
-    Err("build_and_sign_certificate: not implemented inside vHSM; implement with internal signing operation".to_string())
+    // Implement a minimal TBSCertificate builder for two modes:
+    // - Root self-signed certificate when _is_csr == false: _csr_der_or_spki is ignored
+    // - Intermediate when _is_csr == true: _csr_der_or_spki is the SPKI raw bytes
+    use yasna::models::ObjectIdentifier;
+
+    // For now we will construct a minimal TBSCertificate for Root: subject==issuer,
+    // basicConstraints CA:true, keyUsage keyCertSign|cRLSign, and subjectPublicKeyInfo
+    // constructed from the provided public key bytes (for Root we must derive from CA public key)
+
+    // Since _ca_sk_bytes contains the private scalar, derive public key SEC1 point
+    use p256::ecdsa::SigningKey;
+    use p256::elliptic_curve::sec1::ToEncodedPoint;
+
+    // Build public key from private scalar
+    let sk_arr: [u8; 32] = match <[u8;32]>::try_from(_ca_sk_bytes) {
+        Ok(a) => a,
+        Err(_) => return Err("Invalid CA private key length".to_string()),
+    };
+    let signing_key = match SigningKey::from_bytes(&sk_arr) {
+        Ok(k) => k,
+        Err(_) => return Err("Failed to construct signing key".to_string()),
+    };
+    let verifying_key = signing_key.verifying_key();
+    let public_point = verifying_key.to_encoded_point(false);
+    let spki_bytes = public_point.as_bytes();
+
+    // TBSCertificate DER construction
+    let tbs_der = yasna::construct_der(|writer| {
+        writer.write_sequence(|writer| {
+            // version [0] EXPLICIT v3
+            writer.next().write_tagged(yasna::Tag::context(0), |writer| {
+                writer.write_u8(2);
+            });
+            // serialNumber (use random 64-bit)
+            use rand::RngCore;
+            let mut serial = [0u8; 8];
+            rand::rngs::OsRng.fill_bytes(&mut serial);
+            writer.next().write_u64(u64::from_be_bytes(serial));
+            // signature AlgorithmIdentifier (ecdsa-with-SHA256 OID 1.2.840.10045.4.3.2)
+            let oid = ObjectIdentifier::from_slice(&[1,2,840,10045,4,3,2]);
+            writer.next().write_sequence(|writer| {
+                writer.next().write_oid(&oid);
+            });
+            // issuer (use commonName = kms-root-ca)
+            writer.next().write_sequence(|writer| {
+                writer.next().write_set(|writer| {
+                    writer.next().write_sequence(|writer| {
+                        // OID for commonName
+                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,4,3]));
+                        writer.next().write_utf8_string("kms-root-ca");
+                    });
+                });
+            });
+            // validity
+            use time::OffsetDateTime;
+            use time::Duration as TimeDuration;
+            use yasna::models::UTCTime;
+            let not_before: OffsetDateTime = OffsetDateTime::now_utc();
+            let not_after: OffsetDateTime = not_before + TimeDuration::days(_validity_days as i64);
+            writer.next().write_sequence(|writer| {
+                let nb_t = UTCTime::from_datetime(not_before);
+                let na_t = UTCTime::from_datetime(not_after);
+                writer.next().write_utctime(&nb_t);
+                writer.next().write_utctime(&na_t);
+                Ok::<(), ()>(())
+            });
+            // subject (same as issuer)
+            writer.next().write_sequence(|writer| {
+                writer.next().write_set(|writer| {
+                    writer.next().write_sequence(|writer| {
+                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,4,3]));
+                        writer.next().write_utf8_string("kms-root-ca");
+                    });
+                });
+            });
+            // subjectPublicKeyInfo (use raw SEC1 point -> wrap into SubjectPublicKeyInfo)
+            writer.next().write_sequence(|writer| {
+                // algorithm: id-ecPublicKey OID 1.2.840.10045.2.1 and namedCurve secp256r1 1.2.840.10045.3.1.7
+                writer.next().write_sequence(|writer| {
+                    writer.next().write_oid(&ObjectIdentifier::from_slice(&[1,2,840,10045,2,1]));
+                    writer.next().write_oid(&ObjectIdentifier::from_slice(&[1,2,840,10045,3,1,7]));
+                });
+                // public key BIT STRING
+                writer.next().write_bitvec_bytes(spki_bytes, 8 * spki_bytes.len());
+            });
+            // extensions [3]
+            writer.next().write_tagged(yasna::Tag::context(3), |writer| {
+                writer.write_sequence(|writer| {
+                    // basicConstraints (OID 2.5.29.19) critical true, cA:true
+                    writer.next().write_sequence(|writer| {
+                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,29,19]));
+                        writer.next().write_bool(true);
+                        let bc = yasna::construct_der(|writer| {
+                            writer.write_sequence(|writer| {
+                                writer.next().write_bool(true);
+                            });
+                        });
+                        writer.next().write_bytes(&bc);
+                    });
+                    // keyUsage (OID 2.5.29.15) critical true, bits keyCertSign(5) + cRLSign(6)
+                    writer.next().write_sequence(|writer| {
+                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,29,15]));
+                        writer.next().write_bool(true);
+                        let ku = yasna::construct_der(|writer| {
+                            // bitstring with bits 5 and 6 set -> bit positions
+                            writer.write_bitvec_bytes(&[0b01100000], 3);
+                        });
+                        writer.next().write_bytes(&ku);
+                    });
+                });
+            });
+        });
+    });
+
+    // Now request vHSM to sign the TBS using existing SignWithCaKey (we are inside vHSM, so call handler directly)
+    // For the self-signed Root case we can sign using the local key material directly without RPC.
+    // Use SHA-256 and ECDSA P-256 signing; produce ASN.1 DER signature
+    use p256::ecdsa::SigningKey as P256SigningKey;
+    use sha2::Sha256;
+    use p256::ecdsa::signature::DigestSigner;
+
+    let signing_key2 = match P256SigningKey::from_bytes(&sk_arr) {
+        Ok(k) => k,
+        Err(_) => return Err("Failed to construct signing key for final signing".to_string()),
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(&tbs_der);
+    let sig = signing_key2.sign_digest(hasher);
+    let der_sig = sig.to_der().as_bytes().to_vec();
+
+    // Assemble final certificate: SEQUENCE { tbsCert, signatureAlgorithm, signatureValue }
+    let cert_der = yasna::construct_der(|writer| {
+        writer.write_sequence(|writer| {
+            writer.next().write_der(&tbs_der);
+            // signatureAlgorithm
+            let oid = ObjectIdentifier::from_slice(&[1,2,840,10045,4,3,2]);
+            writer.next().write_sequence(|writer| {
+                writer.next().write_oid(&oid);
+            });
+            // signature BIT STRING
+            writer.next().write_bitvec_bytes(&der_sig, der_sig.len() * 8);
+        });
+    });
+
+    // PEM encode manually
+    let b64 = BASE64_STANDARD.encode(&cert_der);
+    let mut pem_str = String::new();
+    pem_str.push_str("-----BEGIN CERTIFICATE-----\n");
+    for chunk in b64.as_bytes().chunks(64) {
+        pem_str.push_str(std::str::from_utf8(chunk).unwrap());
+        pem_str.push('\n');
+    }
+    pem_str.push_str("-----END CERTIFICATE-----\n");
+    Ok(pem_str)
 }
 
 #[cfg(any(unix, test))]

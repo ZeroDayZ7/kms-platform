@@ -16,6 +16,8 @@ rcgen = { version = "0.9" }
 x509-parser = { version = "0.14", features = ["verify"] }
 pem = "3.0"
 chrono = "0.4"
+yasna = { version = "0.5", features = ["time"] }
+time = "0.3"
 
 # Shared dependencies inherited from the workspace
 kms-core = { workspace = true }
