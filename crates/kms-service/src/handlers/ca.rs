@@ -51,7 +51,10 @@ pub async fn post_sign_intermediate(
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("hsm client error: {}", e)))?;
 
     match resp {
+        kms_core::hsm::protocol::HsmResponse::SignedIntermediate { certificate_pem } => {
+            Ok(Json(serde_json::json!({"status": "ok", "certificate_pem": certificate_pem})))
+        }
         kms_core::hsm::protocol::HsmResponse::Error { code, message } => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("hsm error {}: {}", code, message))),
-        _ => Ok(Json(serde_json::json!({"status": "ok", "response": "signed (placeholder)"}))),
+        other => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("unexpected hsm response: {:?}", other))),
     }
 }

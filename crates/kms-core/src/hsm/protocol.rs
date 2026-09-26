@@ -111,6 +111,11 @@ pub enum HsmResponse {
         public_key: Vec<u8>,
         master_key_version: u32,
         algorithm: String,
+        certificate_pem: Option<String>,
+    },
+    /// Signed intermediate certificate PEM produced by a CA key loaded into vHSM
+    SignedIntermediate {
+        certificate_pem: String,
     },
     Error {
         code: u16,

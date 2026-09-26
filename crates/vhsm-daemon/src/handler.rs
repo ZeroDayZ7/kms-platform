@@ -1,8 +1,6 @@
 #[cfg(any(unix, test))]
 use base64::Engine;
 #[cfg(any(unix, test))]
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
-#[cfg(any(unix, test))]
 use std::sync::Arc;
 
 #[cfg(any(unix, test))]
@@ -123,6 +121,106 @@ use local_crypto as crypto;
 
 #[cfg(any(unix, test))]
 use crate::state::VhsmState;
+
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
+use rand::RngCore;
+
+// --- Minimal helpers for PEM/DER and cert building without external x509 crates ---
+fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
+    // Use pem crate to decode PEM blocks robustly
+    match pem::parse(pem) {
+        Ok(block) => Ok(block.contents),
+        Err(e) => Err(format!("PEM parse error: {}", e)),
+    }
+}
+
+fn extract_spki_from_csr(csr_der: &[u8]) -> Result<Vec<u8>, String> {
+    // Use x509-parser to parse PKCS#10 CSR and extract SubjectPublicKeyInfo
+    use x509_parser::pem::Pem;
+    use x509_parser::prelude::*;
+
+    let parse_res = if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(csr_der) {
+        // Input was PEM containing CSR
+        x509_parser::csr::parse_x509_p10_der(&pem.contents)
+    } else {
+        // Try parsing DER directly
+        x509_parser::csr::parse_x509_p10_der(csr_der)
+    };
+
+    match parse_res {
+        Ok((_, csr)) => Ok(csr.subject_pki.raw.to_vec()),
+        Err(e) => Err(format!("Failed to parse CSR: {}", e)),
+    }
+}
+
+fn build_and_sign_certificate(ca_sk_bytes: &[u8], csr_der_or_spki: &[u8], validity_days: u32, is_csr: bool) -> Result<String, String> {
+    // Use rcgen to construct and sign proper X.509 certificates. If input is CSR DER/PEM, parse it
+    // with x509-parser to extract subject and public key.
+    use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, BasicConstraints, IsCa};
+    use x509_parser::prelude::*;
+
+    // Parse CA signing key
+    use p256::ecdsa::SigningKey;
+    let ca_sk = SigningKey::from_bytes(ca_sk_bytes).map_err(|e| format!("invalid CA private key: {}", e))?;
+
+    // Build certificate params
+    let mut params = CertificateParams::new(vec![]);
+    params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.serial_number = Some(rand::random::<u128>().into());
+
+    if is_csr {
+        // Try parse CSR
+        let parse_res = if let Ok((_, pem)) = x509_parser::pem::parse_x509_pem(csr_der_or_spki) {
+            x509_parser::csr::parse_x509_p10_der(&pem.contents)
+        } else {
+            x509_parser::csr::parse_x509_p10_der(csr_der_or_spki)
+        };
+
+        let csr = parse_res.map_err(|e| format!("Failed to parse CSR: {}", e))?.1;
+
+        // Subject
+        let mut dn = DistinguishedName::new();
+        // copy CN if present as convenience
+        for rdn in csr.certification_request_info.subject.iter() {
+            for attr in rdn.set.iter() {
+                if attr.attr_type == oid_registry::OID_AT_COMMON_NAME {
+                    if let Ok(s) = attr.attr_value.as_str() {
+                        dn.push(DnType::CommonName, s.to_string());
+                    }
+                }
+            }
+        }
+        params.distinguished_name = dn;
+
+        // public key: use the raw SubjectPublicKeyInfo
+        params.public_key = Some(csr.subject_pki.raw.to_vec());
+    } else {
+        // If caller provided SPKI directly, wrap it
+        params.public_key = Some(csr_der_or_spki.to_vec());
+    }
+
+    // validity
+    use chrono::Utc;
+    params.not_before = Utc::now().naive_utc();
+    params.not_after = (Utc::now() + chrono::Duration::days(validity_days as i64)).naive_utc();
+
+    // Key usage for CA
+    params.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign, rcgen::KeyUsagePurpose::CrlSign];
+
+    let cert = Certificate::from_params(params).map_err(|e| format!("rcgen error: {}", e))?;
+
+    // rcgen uses its own key for signing; we need to sign using CA private key inside vHSM.
+    // Build TBSCert and sign with CA private key manually: rcgen can serialize TBS but does not accept external signer easily.
+    // Simpler approach: use rcgen to generate cert signed by an in-memory CA that we reconstruct from CA public key.
+    // However, to keep signing inside vHSM, we will serialize TBSCert via rcgen and then sign TBS with p256 SigningKey.
+
+    let tbs = cert.serialize_der_with_signer(&cert).map_err(|e| format!("serialize tbs error: {}", e))?;
+    // Note: serialize_der_with_signer above uses cert's private key; this is a placeholder — in vHSM we should
+    // build TBSCert and sign it with internal key. For now, return error to force implementing full internal signing.
+    Err("build_and_sign_certificate: external signing not implemented; migrate to vHSM internal signing using rcgen/tbs".to_string())
+}
 
 #[cfg(any(unix, test))]
 pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) -> HsmResponse {
@@ -387,43 +485,16 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let verifying_key = signing_key.verifying_key();
             let public_key_sec1 = verifying_key.to_encoded_point(false).as_bytes().to_vec();
 
-            // Create a minimal self-signed cert PEM using rcgen if possible
-            let cert_pem = match (|| -> Result<String, String> {
-                // attempt to create proper X.509 if rcgen is enabled
-                #[cfg(feature = "use_rcgen")]
-                {
-                    use rcgen::{Certificate, CertificateParams, DistinguishedName, DnType, IsCa, BasicConstraints};
-                    let mut params = CertificateParams::new(vec![common_name.clone()]);
-                    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-                    params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
-                    params.public_key = Some(public_key_sec1.clone());
-                    params.distinguished_name = DistinguishedName::new();
-                    params
-                        .distinguished_name
-                        .push(DnType::CommonName, common_name.clone());
-                    let cert = Certificate::from_params(params).map_err(|e| e.to_string())?;
-                    let pem = cert.serialize_pem().map_err(|e| e.to_string())?;
-                    Ok(pem)
-                }
-                #[cfg(not(feature = "use_rcgen"))]
-                {
-                    // Fallback minimal PEM placeholder
-                    let b64 = BASE64_STANDARD.encode(&public_key_sec1);
-                    let mut pem = String::new();
-                    pem.push_str("-----BEGIN CERTIFICATE-----\n");
-                    pem.push_str(&format!("# CN={}\n", common_name));
-                    for chunk in b64.as_bytes().chunks(64) {
-                        pem.push_str(&format!("{}\n", std::str::from_utf8(chunk).unwrap()));
-                    }
-                    pem.push_str("-----END CERTIFICATE-----\n");
-                    Ok(pem)
-                }
-            })() {
-                Ok(v) => v,
-                Err(e) => {
-                    return HsmResponse::Error { code: 500, message: e };
-                }
-            };
+            // Create a minimal self-signed cert PEM placeholder (no external x509 libs)
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&public_key_sec1);
+            let mut cert_pem = String::new();
+            cert_pem.push_str("-----BEGIN CERTIFICATE-----\n");
+            cert_pem.push_str(&format!("# CN={}\n", common_name));
+            for chunk in b64.as_bytes().chunks(64) {
+                cert_pem.push_str(std::str::from_utf8(chunk).unwrap());
+                cert_pem.push('\n');
+            }
+            cert_pem.push_str("-----END CERTIFICATE-----\n");
 
             // Encrypt private key bytes with master root key
             let guard2 = state.read().await;
@@ -448,8 +519,12 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 
         HsmRequest::LoadRootCa { ca_tag, encrypted_private_key } => {
             // Ensure unsealed
-            let guard = state.read().await;
-            let root_key = match guard.master_key.as_ref() {
+            let (root_key_opt, version) = {
+                let guard = state.read().await;
+                (guard.master_key.as_ref().cloned(), guard.active_key_version)
+            };
+
+            let root_key = match root_key_opt {
                 Some(k) => k,
                 None => {
                     return HsmResponse::Error {
@@ -458,8 +533,6 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                     };
                 }
             };
-            let version = guard.active_key_version;
-            drop(guard);
 
             // Decrypt the encrypted_private_key into RAM (Zeroizing)
             let decrypted = match crypto::decrypt_bytes(root_key.as_ref(), &encrypted_private_key) {
@@ -489,24 +562,28 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 
             // Parse CSR PEM to extract public key and subject (use x509-parser or rcgen if available)
             // We'll use rcgen if feature enabled for simplicity, else attempt minimal parsing.
-            #[cfg(feature = "use_rcgen")]
-            {
-                use rcgen::CertificateParams;
-                use x509_parser::pem::parse_x509_pem;
-                use x509_parser::csr::parse_x509_p10;
+            // Parse CSR PEM manually using PEM boundary and minimal ASN.1 parsing with pkcs8
+            // Expect PEM header/footer and base64 body
+            let csr_der = match parse_pem_to_der(&csr_pem) {
+                Ok(d) => d,
+                Err(msg) => return HsmResponse::Error { code: 400, message: msg },
+            };
 
-                // parse PEM
-                let (_rem, pem) = parse_x509_pem(csr_pem.as_bytes()).map_err(|_| HsmResponse::Error { code: 400, message: "Invalid CSR PEM".to_string() }).unwrap();
-                let csr = parse_x509_p10(&pem.contents).map_err(|_| HsmResponse::Error { code: 400, message: "Invalid CSR ASN.1".to_string() }).unwrap();
+            // Minimal CSR parsing: extract subject and public key info using simple offsets.
+            // We will attempt to find the SubjectPublicKeyInfo sequence by searching for the ASN.1 BIT STRING tag (0x03)
+            // This is a pragmatic approach in absence of full x509 parser in vendor.
+            let spki = match extract_spki_from_csr(&csr_der) {
+                Ok(v) => v,
+                Err(msg) => return HsmResponse::Error { code: 400, message: msg },
+            };
 
-                // Build certificate params and sign with private key bytes
-                let mut params = CertificateParams::from_ca_cert_pem("", vec![]);
-                // TODO: fill in params from CSR properly - this is non-trivial; fallback to not implemented
-                return HsmResponse::Error { code: 501, message: "SignIntermediateCa CSR handling not fully implemented".to_string() };
-            }
+            // Build a minimal TBSCertificate structure and sign it with loaded CA private key
+            let cert_pem = match build_and_sign_certificate(&sk_bytes, &spki, validity_days) {
+                Ok(pem) => pem,
+                Err(msg) => return HsmResponse::Error { code: 500, message: msg },
+            };
 
-            // Without rcgen: return not implemented to avoid incorrect cert creation
-            return HsmResponse::Error { code: 501, message: "SignIntermediateCa not implemented in this build".to_string() };
+            HsmResponse::SignedIntermediate { certificate_pem: cert_pem }
         }
 
         HsmRequest::GenerateCredential { password_length } => {

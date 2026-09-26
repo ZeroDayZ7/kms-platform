@@ -50,11 +50,11 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
     };
 
     // Now call vHSM to generate the root CA keypair - do this while holding the advisory lock
-    let (encrypted_private_key, public_key, master_key_version, algorithm) =
+    let (encrypted_private_key, public_key, master_key_version, algorithm, certificate_pem) =
         generate_root_ca_via_hsm(&socket_path, "ECDSA_P256", None).await?;
 
-    // The vHSM has generated and signed a self-signed cert; we only need to persist the returned cert data.
-    let cert_pem = generate_self_signed_cert_pem(&ca_tag, &public_key)?;
+    // Use certificate returned by vHSM
+    let cert_pem = certificate_pem.ok_or_else(|| anyhow::anyhow!("vHSM did not return certificate PEM"))?;
     let serial = Uuid::new_v4().to_string();
     let status = "ACTIVE".to_string();
     let now = Utc::now();

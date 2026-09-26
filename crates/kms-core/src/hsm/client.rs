@@ -267,11 +267,13 @@ pub async fn generate_root_ca_via_hsm(
             public_key,
             master_key_version,
             algorithm,
+            certificate_pem,
         } => Ok((
             encrypted_private_key,
             public_key,
             master_key_version,
             algorithm,
+            certificate_pem,
         )),
         HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
             "vHSM InitRootCa failed ({code}): {message}"
