@@ -138,6 +138,47 @@ fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
     }
 }
 
+fn build_root_ca_certificate_pem(
+    _ca_tag: &str,
+    common_name: &str,
+    validity_days: u32,
+) -> Result<(Vec<u8>, Vec<u8>, String), String> {
+    use p256::elliptic_curve::sec1::ToEncodedPoint;
+    use p256::pkcs8::DecodePrivateKey;
+    use rcgen::{
+        BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa,
+    };
+
+    let mut params = CertificateParams::new(vec![common_name.to_string()]);
+    params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    params.not_before = time::OffsetDateTime::now_utc() - time::Duration::days(1);
+    params.not_after = params.not_before + time::Duration::days(validity_days as i64);
+    params.serial_number = Some(rand::random::<u64>());
+    params.distinguished_name = DistinguishedName::new();
+    params
+        .distinguished_name
+        .push(DnType::CommonName, common_name.to_string());
+
+    let cert = Certificate::from_params(params)
+        .map_err(|err| format!("Failed to build self-signed Root CA certificate: {err}"))?;
+    let cert_pem = cert
+        .serialize_pem()
+        .map_err(|err| format!("Failed to serialize Root CA certificate: {err}"))?;
+
+    let private_key_der = cert.serialize_private_key_der();
+    let secret_key = p256::SecretKey::from_pkcs8_der(&private_key_der)
+        .map_err(|err| format!("Failed to parse generated CA private key: {err}"))?;
+    let private_key_bytes = secret_key.to_be_bytes().to_vec();
+    let public_key_sec1 = secret_key
+        .public_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec();
+
+    Ok((private_key_bytes.to_vec(), public_key_sec1, cert_pem))
+}
+
 // Deprecated: heuristic extraction removed. Use x509-parser to parse CSRs.
 // extract_spki_from_csr was removed to avoid fragile byte-scanning heuristics.
 
@@ -527,7 +568,6 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             validity_days,
             algorithm,
         } => {
-            // Ensure vHSM is unsealed
             let guard = state.read().await;
             let root_key = match guard.master_key.as_ref() {
                 Some(k) => k,
@@ -540,7 +580,6 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             };
             drop(guard);
 
-            // Only support ECDSA P-256 for now
             if algorithm.trim() != "ECDSA_P256" {
                 return HsmResponse::Error {
                     code: 400,
@@ -552,27 +591,26 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             use p256::elliptic_curve::sec1::ToEncodedPoint;
             use rand::rngs::OsRng;
 
-            // Generate signing key inside vHSM
             let signing_key = SigningKey::random(&mut OsRng);
             let private_bytes = signing_key.to_bytes();
             let private_vec = Zeroizing::new(private_bytes.to_vec());
-
-            // Build public key and a simple self-signed cert using rcgen if available
             let verifying_key = signing_key.verifying_key();
             let public_key_sec1 = verifying_key.to_encoded_point(false).as_bytes().to_vec();
 
-            // Create a minimal self-signed cert PEM placeholder (no external x509 libs)
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&public_key_sec1);
-            let mut cert_pem = String::new();
-            cert_pem.push_str("-----BEGIN CERTIFICATE-----\n");
-            cert_pem.push_str(&format!("# CN={}\n", common_name));
-            for chunk in b64.as_bytes().chunks(64) {
-                cert_pem.push_str(std::str::from_utf8(chunk).unwrap());
-                cert_pem.push('\n');
-            }
-            cert_pem.push_str("-----END CERTIFICATE-----\n");
+            let cert_material = match build_root_ca_certificate_pem(&ca_tag, &common_name, validity_days) {
+                Ok(material) => material,
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: msg,
+                    };
+                }
+            };
+            let (cert_private_bytes, cert_public_key, cert_pem) = cert_material;
+            let cert_private_vec = Zeroizing::new(cert_private_bytes);
+            let cert_public_key = cert_public_key;
+            let cert_pem = cert_pem;
 
-            // Encrypt private key bytes with master root key
             let guard2 = state.read().await;
             let root_key2 = guard2.master_key.as_ref().unwrap();
             let wrapped = match crypto::encrypt_bytes(root_key2.as_ref(), private_vec.as_ref()) {
@@ -582,15 +620,21 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 }
             };
 
-            // Keep encrypted blob only; do not store plaintext in KMS process
             let version = guard2.active_key_version;
 
+            let encrypted_private_key = match crypto::encrypt_bytes(root_key2.as_ref(), cert_private_vec.as_ref()) {
+                Ok(v) => v,
+                Err(msg) => {
+                    return HsmResponse::Error { code: 500, message: msg };
+                }
+            };
+
             HsmResponse::RootCaKeyGenerated {
-                encrypted_private_key: wrapped,
-                public_key: public_key_sec1,
+                encrypted_private_key,
+                public_key: cert_public_key,
                 master_key_version: version,
                 algorithm: algorithm.clone(),
-                certificate_pem: None,
+                certificate_pem: Some(cert_pem),
             }
         }
 
@@ -785,7 +829,6 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 
             let alg = algorithm.trim().to_string();
 
-            // Only support ECDSA P-256 for now
             if alg != "ECDSA_P256" {
                 return HsmResponse::Error {
                     code: 400,
@@ -793,24 +836,28 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 };
             }
 
-            // Generate ECDSA P-256 keypair inside vHSM using p256 crate
             use p256::ecdsa::SigningKey;
             use p256::elliptic_curve::sec1::ToEncodedPoint;
             use rand::rngs::OsRng;
 
-            // Create signing key (private) using secure RNG
             let signing_key = SigningKey::random(&mut OsRng);
-
-            // Extract private scalar as bytes (32 bytes) and keep in Zeroizing
             let private_bytes = signing_key.to_bytes();
             let private_vec = Zeroizing::new(private_bytes.to_vec());
-
-            // Obtain public key as SEC1 encoded uncompressed point
             let verifying_key = signing_key.verifying_key();
             let public_key_sec1 = verifying_key.to_encoded_point(false).as_bytes().to_vec();
+            let cert_material = match build_root_ca_certificate_pem("root", "kms-root-ca", 365 * 20) {
+                Ok(material) => material,
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: msg,
+                    };
+                }
+            };
+            let (cert_private_bytes, cert_public_key, cert_pem) = cert_material;
+            let cert_private_vec = Zeroizing::new(cert_private_bytes);
 
-            // Encrypt private key bytes with vHSM root/master key using existing AES-GCM helper
-            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), private_vec.as_ref()) {
+            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), cert_private_vec.as_ref()) {
                 Ok(v) => v,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -822,14 +869,12 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 
             let version = guard.active_key_version;
 
-            // Zeroizing(private_vec) will be dropped and zeroed when out of scope
-
             HsmResponse::RootCaKeyGenerated {
                 encrypted_private_key: wrapped,
-                public_key: public_key_sec1,
+                public_key: cert_public_key,
                 master_key_version: version,
                 algorithm: alg,
-                certificate_pem: None,
+                certificate_pem: Some(cert_pem),
             }
         }
 
@@ -1044,6 +1089,45 @@ mod tests {
                 let msg = b"test message";
                 let sig: Signature = signing_key.sign(msg);
                 assert!(verifying_key.verify(msg, &sig).is_ok());
+            }
+            other => panic!("unexpected response: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn init_root_ca_returns_valid_certificate_pem() {
+        let state = Arc::new(RwLock::new(VhsmState::new()));
+        {
+            let mut guard = state.write().await;
+            guard.initialized = true;
+            guard.active_key_version = 42;
+            guard.master_key = Some(Zeroizing::new(vec![7u8; 32]));
+        }
+
+        let resp = handle_request(
+            HsmRequest::InitRootCa {
+                ca_tag: "root".to_string(),
+                common_name: "kms-root-ca".to_string(),
+                validity_days: 365,
+                algorithm: "ECDSA_P256".to_string(),
+            },
+            state,
+        )
+        .await;
+
+        match resp {
+            HsmResponse::RootCaKeyGenerated {
+                encrypted_private_key,
+                public_key,
+                certificate_pem,
+                ..
+            } => {
+                assert!(!encrypted_private_key.is_empty());
+                assert!(!public_key.is_empty());
+                let cert = certificate_pem.expect("certificate_pem should be present");
+                assert!(cert.starts_with("-----BEGIN CERTIFICATE-----"));
+                let parsed = pem::parse(cert.as_str()).expect("valid PEM certificate");
+                assert!(!parsed.contents().is_empty());
             }
             other => panic!("unexpected response: {other:?}"),
         }

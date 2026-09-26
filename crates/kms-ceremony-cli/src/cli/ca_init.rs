@@ -53,8 +53,10 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
     let (encrypted_private_key, public_key, master_key_version, algorithm, certificate_pem) =
         generate_root_ca_via_hsm(&socket_path, "ECDSA_P256", None).await?;
 
-    // Use certificate returned by vHSM
-    let cert_pem = certificate_pem.ok_or_else(|| anyhow::anyhow!("vHSM did not return certificate PEM"))?;
+    let encrypted_private_key = encrypted_private_key.to_vec();
+    let public_key = public_key.to_vec();
+    let cert_pem = certificate_pem
+        .ok_or_else(|| anyhow::anyhow!("vHSM did not return certificate PEM"))?;
     let serial = Uuid::new_v4().to_string();
     let status = "ACTIVE".to_string();
     let now = Utc::now();
@@ -120,52 +122,4 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
 
     println!("Root CA '{}' initialized (id={}).", ca_tag, id);
     Ok(())
-}
-
-/// Create a minimal self-signed X.509 certificate PEM from an SEC1 uncompressed P-256 public key.
-fn generate_self_signed_cert_pem(
-    ca_tag: &str,
-    public_key_sec1: &[u8],
-) -> Result<String, anyhow::Error> {
-    // Use rcgen-like manual construction to avoid adding dependencies; build a simple PEM.
-    // However, rcgen is more convenient. Try to use rcgen if available in workspace, else construct
-    // a basic certificate using openssl crate — but to keep dependencies minimal, implement with
-    // the `x509-parser`/`yasna` crates is heavy. For now, use `rcgen` via runtime optional dependency.
-    // We'll attempt to build using rcgen; if crate not available in workspace, return an error.
-
-    // Defer to rcgen if present
-    #[cfg(feature = "use_rcgen")]
-    {
-        use rcgen::{
-            BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa,
-        };
-
-        let mut params = CertificateParams::new(vec![ca_tag.to_string()]);
-        params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        params.alg = &rcgen::PKCS_ECDSA_P256_SHA256;
-        // Provide public key bytes (SEC1) directly
-        params.public_key = Some(public_key_sec1.to_vec());
-        params.distinguished_name = DistinguishedName::new();
-        params
-            .distinguished_name
-            .push(DnType::CommonName, ca_tag.to_string());
-        let cert = Certificate::from_params(params)?;
-        let pem = cert.serialize_pem()?;
-        return Ok(pem);
-    }
-
-        // Create a minimal PEM placeholder containing the public key bytes encoded in base64.
-        // This is a pragmatic placeholder so the certificate_pem field is populated while the
-        // proper X.509 signing flow (HSM signing) is implemented in a follow-up change.
-        let b64 = BASE64_ENGINE.encode(public_key_sec1);
-        let mut pem = String::new();
-        pem.push_str("-----BEGIN CERTIFICATE-----\n");
-        // Insert CA tag as a comment for human readability
-        pem.push_str(&format!("# CN={}\n", ca_tag));
-        // Wrap base64 at 64 chars per line
-        for chunk in b64.as_bytes().chunks(64) {
-            pem.push_str(&format!("{}\n", std::str::from_utf8(chunk).unwrap()));
-        }
-        pem.push_str("-----END CERTIFICATE-----\n");
-        Ok(pem)
 }
