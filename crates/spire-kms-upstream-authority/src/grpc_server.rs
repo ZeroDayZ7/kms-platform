@@ -1,4 +1,5 @@
 #[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -77,6 +78,13 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         Ok(Response::new(MintX509caResponse {
             x509_ca_chain: chain,
         }))
+    }
+}
+
+#[cfg(unix)]
+async fn cleanup_socket_file(path: &std::path::Path) {
+    if path.exists() {
+        let _ = tokio::fs::remove_file(path).await;
     }
 }
 
