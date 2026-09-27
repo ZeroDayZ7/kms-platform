@@ -60,14 +60,29 @@ async fn main() -> Result<()> {
             socket_path,
             ca_tag,
         } => {
-            handle_ca_init(socket_path, ca_tag).await?;
+            // Read optional auth flags from env for simplicity in Makefile
+            let service_url = std::env::var("KMS_CLI__SERVICE_URL").ok();
+            let service_id = std::env::var("KMS_CLI__SERVICE_ID").ok();
+            let secret = std::env::var("KMS_CLI__SECRET").ok();
+            handle_ca_init(socket_path, ca_tag, service_url, service_id, secret).await?;
         }
         Commands::CaLoad {
             socket_path,
             ca_tag,
             encrypted_b64,
         } => {
-            handle_ca_load(socket_path, ca_tag, encrypted_b64).await?;
+            let service_url = std::env::var("KMS_CLI__SERVICE_URL").ok();
+            let service_id = std::env::var("KMS_CLI__SERVICE_ID").ok();
+            let secret = std::env::var("KMS_CLI__SECRET").ok();
+            handle_ca_load(
+                socket_path,
+                ca_tag,
+                encrypted_b64,
+                service_url,
+                service_id,
+                secret,
+            )
+            .await?;
         }
     }
 

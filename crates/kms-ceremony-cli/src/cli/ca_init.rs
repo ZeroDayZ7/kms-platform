@@ -21,7 +21,13 @@ struct CaInitManifest {
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
+pub async fn handle_ca_init(
+    socket_path: String,
+    ca_tag: String,
+    service_url: Option<String>,
+    service_id: Option<String>,
+    secret: Option<String>,
+) -> Result<()> {
     // Call vHSM to generate the root CA keypair
     let (encrypted_private_key, public_key, _master_key_version, algorithm, certificate_pem) =
         generate_root_ca_via_hsm(&socket_path, "ECDSA_P256", None).await?;
@@ -47,15 +53,27 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
         expires_at,
     };
 
-    let service_url = std::env::var("KMS_CLI__SERVICE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:8080".to_string());
-    let client = reqwest::Client::new();
+    let cfg = crate::cli::hmac::CliConfig {
+        service_id: service_id
+            .or_else(|| std::env::var("KMS_CLI__SERVICE_ID").ok())
+            .unwrap_or_else(|| "kms-cli".to_string()),
+        secret: secret
+            .or_else(|| std::env::var("KMS_CLI__SECRET").ok())
+            .expect("KMS_CLI__SECRET required for authenticated calls"),
+        service_url: service_url
+            .or_else(|| std::env::var("KMS_CLI__SERVICE_URL").ok())
+            .unwrap_or_else(|| "http://127.0.0.1:8080".to_string()),
+    };
 
-    let resp = client
-        .post(format!("{}/api/v1/ca/init", service_url))
-        .json(&manifest)
-        .send()
-        .await?;
+    let client = reqwest::Client::new();
+    let path = "/api/v1/ca/init";
+    let body = serde_json::to_vec(&manifest)?;
+    let headers =
+        crate::cli::hmac::build_signed_request_headers_with_body(&cfg, "POST", path, Some(&body))?;
+
+    let url = format!("{}{}", cfg.service_url.trim_end_matches('/'), path);
+    let req = client.post(&url).headers(headers).body(body).build()?;
+    let resp = client.execute(req).await?;
 
     if !resp.status().is_success() {
         anyhow::bail!(
