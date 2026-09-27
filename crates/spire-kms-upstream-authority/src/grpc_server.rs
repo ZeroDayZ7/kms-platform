@@ -16,6 +16,11 @@ use crate::{
 
 mod generated {
     pub mod spire {
+        pub mod common {
+            pub mod plugin {
+                tonic::include_proto!("spire.common.plugin");
+            }
+        }
         pub mod plugin {
             pub mod server {
                 pub mod upstreamauthority {
@@ -31,6 +36,10 @@ mod generated {
     }
 }
 
+use generated::spire::common::plugin::{
+    plugin_init_server::{PluginInit, PluginInitServer},
+    InitRequest, InitResponse,
+};
 use generated::spire::plugin::server::upstreamauthority::v1::{
     MintX509caRequest, MintX509caResponse, PublishJwtKeyRequest, PublishJwtKeyResponse,
     upstream_authority_server::{UpstreamAuthority, UpstreamAuthorityServer},
@@ -40,6 +49,44 @@ use generated::spire::plugin::types::X509Certificate;
 #[derive(Clone)]
 pub struct UpstreamAuthorityService {
     pub config: Arc<PluginConfig>,
+}
+
+#[derive(Clone, Default)]
+pub struct PluginInitService;
+
+#[tonic::async_trait]
+impl PluginInit for PluginInitService {
+    async fn init(
+        &self,
+        request: Request<InitRequest>,
+    ) -> Result<Response<InitResponse>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let req = request.into_inner();
+        tracing::info!(
+            service = "PluginInit",
+            method = "Init",
+            grpc_path = %path,
+            host_services = ?req.host_services,
+            "RPC_ENTER"
+        );
+        tracing::info!(
+            service = "PluginInit",
+            method = "Init",
+            grpc_path = %path,
+            "RPC_EXIT status=OK"
+        );
+        Ok(Response::new(InitResponse {
+            plugin_services: vec![
+                "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
+                "grpc.health.v1.Health".to_string(),
+            ],
+        }))
+    }
 }
 
 fn pem_to_der(pem: &str, label: &str) -> Result<Vec<u8>, Status> {
@@ -84,11 +131,18 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         &self,
         request: Request<MintX509caRequest>,
     ) -> Result<Response<Self::MintX509CAAndSubscribeStream>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
         let req = request.into_inner();
 
         tracing::info!(
             service = "UpstreamAuthority",
             method = "MintX509CAAndSubscribe",
+            grpc_path = %path,
             csr_len = req.csr.len(),
             preferred_ttl = req.preferred_ttl,
             "RPC_ENTER"
@@ -158,9 +212,16 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         &self,
         _request: Request<PublishJwtKeyRequest>,
     ) -> Result<Response<Self::PublishJWTKeyAndSubscribeStream>, Status> {
+        let path = _request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<unknown>");
+
         tracing::info!(
             service = "UpstreamAuthority",
             method = "PublishJWTKeyAndSubscribe",
+            grpc_path = %path,
             "RPC_ENTER"
         );
         tracing::warn!(
@@ -239,10 +300,11 @@ pub async fn serve_with_listener(
     );
 
     tracing::info!("TONIC_SERVER_START");
-    tracing::info!("TONIC_SERVICES: - UpstreamAuthority - grpc.health.v1.Health");
+    tracing::info!("TONIC_SERVICES: - spire.plugin.server.upstreamauthority.v1.UpstreamAuthority - grpc.health.v1.Health - spire.common.plugin.PluginInit");
 
     let server = tonic::transport::Server::builder()
         .add_service(UpstreamAuthorityServer::new(service))
+        .add_service(PluginInitServer::new(PluginInitService::default()))
         .add_service(health_service);
 
     tokio::select! {
