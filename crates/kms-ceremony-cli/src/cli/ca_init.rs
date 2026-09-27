@@ -1,8 +1,8 @@
 use anyhow::Result;
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
 use chrono::{Duration, Utc};
 use kms_core::hsm::client::generate_root_ca_via_hsm;
-use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
-use base64::Engine as _;
 use serde::Serialize;
 use uuid::Uuid;
 
@@ -28,8 +28,8 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
 
     let encrypted_private_key = encrypted_private_key.to_vec();
     let public_key = public_key.to_vec();
-    let cert_pem = certificate_pem
-        .ok_or_else(|| anyhow::anyhow!("vHSM did not return certificate PEM"))?;
+    let cert_pem =
+        certificate_pem.ok_or_else(|| anyhow::anyhow!("vHSM did not return certificate PEM"))?;
     let serial = Uuid::new_v4().to_string();
     let status = "ACTIVE".to_string();
     let now = Utc::now();
@@ -58,7 +58,10 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
         .await?;
 
     if !resp.status().is_success() {
-        anyhow::bail!("kms-service returned error: {}", resp.text().await.unwrap_or_default())
+        anyhow::bail!(
+            "kms-service returned error: {}",
+            resp.text().await.unwrap_or_default()
+        )
     }
 
     println!("Root CA '{}' initialized (serial={}).", ca_tag, serial);

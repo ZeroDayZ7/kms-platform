@@ -123,7 +123,10 @@ where
                     )
                     .await?;
 
-                Err(AppError::CryptoError(format!("HSM error {code}: {message}"), None))
+                Err(AppError::CryptoError(
+                    format!("HSM error {code}: {message}"),
+                    None,
+                ))
             }
             other => {
                 let detail = format!("Unexpected HSM response: {other:?}");

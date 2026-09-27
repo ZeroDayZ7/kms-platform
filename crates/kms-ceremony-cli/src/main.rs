@@ -62,7 +62,11 @@ async fn main() -> Result<()> {
         } => {
             handle_ca_init(socket_path, ca_tag).await?;
         }
-        Commands::CaLoad { socket_path, ca_tag, encrypted_b64 } => {
+        Commands::CaLoad {
+            socket_path,
+            ca_tag,
+            encrypted_b64,
+        } => {
             handle_ca_load(socket_path, ca_tag, encrypted_b64).await?;
         }
     }

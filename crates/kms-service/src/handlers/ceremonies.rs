@@ -1,11 +1,11 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::server::state::AppState;
-use kms_db::repositories::{AuditQueries, RootCaQueries, CredentialQueries};
 use kms_db::repositories::ceremonies::CeremonyQueries;
+use kms_db::repositories::{AuditQueries, CredentialQueries, RootCaQueries};
 
 #[derive(Deserialize, Serialize)]
 pub struct CeremonyRequest {
@@ -45,10 +45,21 @@ pub async fn register_ceremony_handler(
         )
     })?;
 
-    CeremonyQueries::insert_tx(&mut tx, ceremony_id, &payload.operation, manifest.as_slice(), "RECORDED", chrono::Utc::now())
-        .await
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("insert ceremony: {}", e)))?;
-    
+    CeremonyQueries::insert_tx(
+        &mut tx,
+        ceremony_id,
+        &payload.operation,
+        manifest.as_slice(),
+        "RECORDED",
+        chrono::Utc::now(),
+    )
+    .await
+    .map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("insert ceremony: {}", e),
+        )
+    })?;
 
     tx.commit().await.map_err(|e| {
         (

@@ -472,7 +472,6 @@ impl BootstrapQueries {
 // Re-export ceremonies module for external use
 pub mod ceremonies;
 
-
 #[derive(Debug, Clone, FromRow)]
 pub struct KeyDbRow {
     pub id: Uuid,
@@ -847,12 +846,10 @@ impl RootCaQueries {
         tx: &mut Transaction<'_, Postgres>,
         ca_tag: &str,
     ) -> Result<bool, sqlx::Error> {
-        sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM root_cas WHERE ca_tag = $1)",
-        )
-        .bind(ca_tag)
-        .fetch_one(&mut **tx)
-        .await
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM root_cas WHERE ca_tag = $1)")
+            .bind(ca_tag)
+            .fetch_one(&mut **tx)
+            .await
     }
 
     pub async fn update_encrypted_private_key(

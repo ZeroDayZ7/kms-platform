@@ -122,11 +122,11 @@ use local_crypto as crypto;
 #[cfg(any(unix, test))]
 use crate::state::VhsmState;
 
-use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use x509_parser::prelude::FromDer;
-use sha2::Digest;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use p256::ecdsa::signature::DigestSigner;
+use sha2::Digest;
+use x509_parser::prelude::FromDer;
 
 // --- Minimal helpers for PEM/DER and cert building without external x509 crates ---
 fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
@@ -181,7 +181,12 @@ fn build_root_ca_certificate_pem(
 // Deprecated: heuristic extraction removed. Use x509-parser to parse CSRs.
 // extract_spki_from_csr was removed to avoid fragile byte-scanning heuristics.
 
-fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _validity_days: u32, _is_csr: bool) -> Result<String, String> {
+fn build_and_sign_certificate(
+    _ca_sk_bytes: &[u8],
+    _csr_der_or_spki: &[u8],
+    _validity_days: u32,
+    _is_csr: bool,
+) -> Result<String, String> {
     // Implement a minimal TBSCertificate builder for two modes:
     // - Root self-signed certificate when _is_csr == false: _csr_der_or_spki is ignored
     // - Intermediate when _is_csr == true: _csr_der_or_spki is the SPKI raw bytes
@@ -195,7 +200,7 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
     use p256::ecdsa::SigningKey;
 
     // Build public key from private scalar
-    let sk_arr: [u8; 32] = match <[u8;32]>::try_from(_ca_sk_bytes) {
+    let sk_arr: [u8; 32] = match <[u8; 32]>::try_from(_ca_sk_bytes) {
         Ok(a) => a,
         Err(_) => return Err("Invalid CA private key length".to_string()),
     };
@@ -211,16 +216,18 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
     let tbs_der = yasna::construct_der(|writer| {
         writer.write_sequence(|writer| {
             // version [0] EXPLICIT v3
-            writer.next().write_tagged(yasna::Tag::context(0), |writer| {
-                writer.write_u8(2);
-            });
+            writer
+                .next()
+                .write_tagged(yasna::Tag::context(0), |writer| {
+                    writer.write_u8(2);
+                });
             // serialNumber (use random 64-bit)
             use rand::RngCore;
             let mut serial = [0u8; 8];
             rand::rngs::OsRng.fill_bytes(&mut serial);
             writer.next().write_u64(u64::from_be_bytes(serial));
             // signature AlgorithmIdentifier (ecdsa-with-SHA256 OID 1.2.840.10045.4.3.2)
-            let oid = ObjectIdentifier::from_slice(&[1,2,840,10045,4,3,2]);
+            let oid = ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 4, 3, 2]);
             writer.next().write_sequence(|writer| {
                 writer.next().write_oid(&oid);
             });
@@ -229,14 +236,16 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
                 writer.next().write_set(|writer| {
                     writer.next().write_sequence(|writer| {
                         // OID for commonName
-                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,4,3]));
+                        writer
+                            .next()
+                            .write_oid(&ObjectIdentifier::from_slice(&[2, 5, 4, 3]));
                         writer.next().write_utf8_string("kms-root-ca");
                     });
                 });
             });
             // validity
-            use time::OffsetDateTime;
             use time::Duration as TimeDuration;
+            use time::OffsetDateTime;
             use yasna::models::UTCTime;
             let not_before: OffsetDateTime = OffsetDateTime::now_utc();
             let not_after: OffsetDateTime = not_before + TimeDuration::days(_validity_days as i64);
@@ -251,7 +260,9 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
             writer.next().write_sequence(|writer| {
                 writer.next().write_set(|writer| {
                     writer.next().write_sequence(|writer| {
-                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,4,3]));
+                        writer
+                            .next()
+                            .write_oid(&ObjectIdentifier::from_slice(&[2, 5, 4, 3]));
                         writer.next().write_utf8_string("kms-root-ca");
                     });
                 });
@@ -260,38 +271,50 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
             writer.next().write_sequence(|writer| {
                 // algorithm: id-ecPublicKey OID 1.2.840.10045.2.1 and namedCurve secp256r1 1.2.840.10045.3.1.7
                 writer.next().write_sequence(|writer| {
-                    writer.next().write_oid(&ObjectIdentifier::from_slice(&[1,2,840,10045,2,1]));
-                    writer.next().write_oid(&ObjectIdentifier::from_slice(&[1,2,840,10045,3,1,7]));
+                    writer
+                        .next()
+                        .write_oid(&ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 2, 1]));
+                    writer
+                        .next()
+                        .write_oid(&ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
                 });
                 // public key BIT STRING
-                writer.next().write_bitvec_bytes(spki_bytes, 8 * spki_bytes.len());
+                writer
+                    .next()
+                    .write_bitvec_bytes(spki_bytes, 8 * spki_bytes.len());
             });
             // extensions [3]
-            writer.next().write_tagged(yasna::Tag::context(3), |writer| {
-                writer.write_sequence(|writer| {
-                    // basicConstraints (OID 2.5.29.19) critical true, cA:true
-                    writer.next().write_sequence(|writer| {
-                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,29,19]));
-                        writer.next().write_bool(true);
-                        let bc = yasna::construct_der(|writer| {
-                            writer.write_sequence(|writer| {
-                                writer.next().write_bool(true);
+            writer
+                .next()
+                .write_tagged(yasna::Tag::context(3), |writer| {
+                    writer.write_sequence(|writer| {
+                        // basicConstraints (OID 2.5.29.19) critical true, cA:true
+                        writer.next().write_sequence(|writer| {
+                            writer
+                                .next()
+                                .write_oid(&ObjectIdentifier::from_slice(&[2, 5, 29, 19]));
+                            writer.next().write_bool(true);
+                            let bc = yasna::construct_der(|writer| {
+                                writer.write_sequence(|writer| {
+                                    writer.next().write_bool(true);
+                                });
                             });
+                            writer.next().write_bytes(&bc);
                         });
-                        writer.next().write_bytes(&bc);
-                    });
-                    // keyUsage (OID 2.5.29.15) critical true, bits keyCertSign(5) + cRLSign(6)
-                    writer.next().write_sequence(|writer| {
-                        writer.next().write_oid(&ObjectIdentifier::from_slice(&[2,5,29,15]));
-                        writer.next().write_bool(true);
-                        let ku = yasna::construct_der(|writer| {
-                            // bitstring with bits 5 and 6 set -> bit positions
-                            writer.write_bitvec_bytes(&[0b01100000], 3);
+                        // keyUsage (OID 2.5.29.15) critical true, bits keyCertSign(5) + cRLSign(6)
+                        writer.next().write_sequence(|writer| {
+                            writer
+                                .next()
+                                .write_oid(&ObjectIdentifier::from_slice(&[2, 5, 29, 15]));
+                            writer.next().write_bool(true);
+                            let ku = yasna::construct_der(|writer| {
+                                // bitstring with bits 5 and 6 set -> bit positions
+                                writer.write_bitvec_bytes(&[0b01100000], 3);
+                            });
+                            writer.next().write_bytes(&ku);
                         });
-                        writer.next().write_bytes(&ku);
                     });
                 });
-            });
         });
     });
 
@@ -299,8 +322,8 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
     // For the self-signed Root case we can sign using the local key material directly without RPC.
     // Use SHA-256 and ECDSA P-256 signing; produce ASN.1 DER signature
     use p256::ecdsa::SigningKey as P256SigningKey;
-    use sha2::Sha256;
     use p256::ecdsa::signature::DigestSigner;
+    use sha2::Sha256;
 
     let signing_key2 = match P256SigningKey::from_bytes(&sk_arr) {
         Ok(k) => k,
@@ -316,12 +339,14 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
         writer.write_sequence(|writer| {
             writer.next().write_der(&tbs_der);
             // signatureAlgorithm
-            let oid = ObjectIdentifier::from_slice(&[1,2,840,10045,4,3,2]);
+            let oid = ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 4, 3, 2]);
             writer.next().write_sequence(|writer| {
                 writer.next().write_oid(&oid);
             });
             // signature BIT STRING
-            writer.next().write_bitvec_bytes(&der_sig, der_sig.len() * 8);
+            writer
+                .next()
+                .write_bitvec_bytes(&der_sig, der_sig.len() * 8);
         });
     });
 
@@ -572,7 +597,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 None => {
                     return HsmResponse::Error {
                         code: 403,
-                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                        message: "vHSM is locked. Master key must be initialized first."
+                            .to_string(),
                     };
                 }
             };
@@ -595,15 +621,16 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let verifying_key = signing_key.verifying_key();
             let public_key_sec1 = verifying_key.to_encoded_point(false).as_bytes().to_vec();
 
-            let cert_material = match build_root_ca_certificate_pem(&ca_tag, &common_name, validity_days) {
-                Ok(material) => material,
-                Err(msg) => {
-                    return HsmResponse::Error {
-                        code: 500,
-                        message: msg,
-                    };
-                }
-            };
+            let cert_material =
+                match build_root_ca_certificate_pem(&ca_tag, &common_name, validity_days) {
+                    Ok(material) => material,
+                    Err(msg) => {
+                        return HsmResponse::Error {
+                            code: 500,
+                            message: msg,
+                        };
+                    }
+                };
             let (cert_private_bytes, cert_public_key, cert_pem) = cert_material;
             let cert_private_vec = Zeroizing::new(cert_private_bytes);
             let cert_public_key = cert_public_key;
@@ -614,18 +641,25 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let wrapped = match crypto::encrypt_bytes(root_key2.as_ref(), private_vec.as_ref()) {
                 Ok(v) => v,
                 Err(msg) => {
-                    return HsmResponse::Error { code: 500, message: msg };
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: msg,
+                    };
                 }
             };
 
             let version = guard2.active_key_version;
 
-            let encrypted_private_key = match crypto::encrypt_bytes(root_key2.as_ref(), cert_private_vec.as_ref()) {
-                Ok(v) => v,
-                Err(msg) => {
-                    return HsmResponse::Error { code: 500, message: msg };
-                }
-            };
+            let encrypted_private_key =
+                match crypto::encrypt_bytes(root_key2.as_ref(), cert_private_vec.as_ref()) {
+                    Ok(v) => v,
+                    Err(msg) => {
+                        return HsmResponse::Error {
+                            code: 500,
+                            message: msg,
+                        };
+                    }
+                };
 
             HsmResponse::RootCaKeyGenerated {
                 encrypted_private_key,
@@ -636,7 +670,10 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
-        HsmRequest::LoadRootCa { ca_tag, encrypted_private_key } => {
+        HsmRequest::LoadRootCa {
+            ca_tag,
+            encrypted_private_key,
+        } => {
             // Ensure unsealed
             let (root_key_opt, version) = {
                 let guard = state.read().await;
@@ -648,7 +685,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 None => {
                     return HsmResponse::Error {
                         code: 403,
-                        message: "vHSM is locked. Master key must be initialized first.".to_string(),
+                        message: "vHSM is locked. Master key must be initialized first."
+                            .to_string(),
                     };
                 }
             };
@@ -656,7 +694,12 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             // Decrypt the encrypted_private_key into RAM (Zeroizing)
             let decrypted = match crypto::decrypt_bytes(root_key.as_ref(), &encrypted_private_key) {
                 Ok(z) => z,
-                Err(msg) => return HsmResponse::Error { code: 422, message: format!("Failed to decrypt provided CA blob: {}", msg) },
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 422,
+                        message: format!("Failed to decrypt provided CA blob: {}", msg),
+                    };
+                }
             };
 
             // Store loaded key in state.active_ca_keys
@@ -668,7 +711,11 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             HsmResponse::MasterKeyInitialized
         }
 
-        HsmRequest::SignIntermediateCa { ca_tag, csr_pem, validity_days } => {
+        HsmRequest::SignIntermediateCa {
+            ca_tag,
+            csr_pem,
+            validity_days,
+        } => {
             // Ensure CA is loaded
             let guard = state.read().await;
             let key_opt = guard.active_ca_keys.get(&ca_tag).cloned();
@@ -676,13 +723,23 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 
             let sk_bytes = match key_opt {
                 Some(z) => z,
-                None => return HsmResponse::Error { code: 404, message: format!("CA with tag '{}' not loaded", ca_tag) },
+                None => {
+                    return HsmResponse::Error {
+                        code: 404,
+                        message: format!("CA with tag '{}' not loaded", ca_tag),
+                    };
+                }
             };
 
             // Parse CSR PEM/DER using x509-parser and verify signature
             let csr_der = match parse_pem_to_der(&csr_pem) {
                 Ok(d) => d,
-                Err(msg) => return HsmResponse::Error { code: 400, message: msg },
+                Err(msg) => {
+                    return HsmResponse::Error {
+                        code: 400,
+                        message: msg,
+                    };
+                }
             };
 
             // Use x509-parser to parse CSR and verify signature, then build & sign intermediate
@@ -690,18 +747,38 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
                 Ok((_, csr)) => {
                     // Verify CSR signature (requires x509-parser 'verify' feature)
                     if let Err(_e) = csr.verify_signature() {
-                        return HsmResponse::Error { code: 422, message: "CSR signature verification failed".to_string() };
+                        return HsmResponse::Error {
+                            code: 422,
+                            message: "CSR signature verification failed".to_string(),
+                        };
                     }
 
                     // Pass full CSR DER to builder which will extract subject and SPKI
-                    let cert_pem = match build_and_sign_certificate(&sk_bytes, &csr_der, validity_days, true) {
+                    let cert_pem = match build_and_sign_certificate(
+                        &sk_bytes,
+                        &csr_der,
+                        validity_days,
+                        true,
+                    ) {
                         Ok(pem) => pem,
-                        Err(msg) => return HsmResponse::Error { code: 500, message: msg },
+                        Err(msg) => {
+                            return HsmResponse::Error {
+                                code: 500,
+                                message: msg,
+                            };
+                        }
                     };
 
-                    HsmResponse::SignedIntermediate { certificate_pem: cert_pem }
+                    HsmResponse::SignedIntermediate {
+                        certificate_pem: cert_pem,
+                    }
                 }
-                Err(_e) => return HsmResponse::Error { code: 400, message: "Failed to parse CSR as PKCS#10".to_string() },
+                Err(_e) => {
+                    return HsmResponse::Error {
+                        code: 400,
+                        message: "Failed to parse CSR as PKCS#10".to_string(),
+                    };
+                }
             }
         }
 
@@ -843,7 +920,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let private_vec = Zeroizing::new(private_bytes.to_vec());
             let verifying_key = signing_key.verifying_key();
             let public_key_sec1 = verifying_key.to_encoded_point(false).as_bytes().to_vec();
-            let cert_material = match build_root_ca_certificate_pem("root", "kms-root-ca", 365 * 20) {
+            let cert_material = match build_root_ca_certificate_pem("root", "kms-root-ca", 365 * 20)
+            {
                 Ok(material) => material,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -855,7 +933,8 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let (cert_private_bytes, cert_public_key, cert_pem) = cert_material;
             let cert_private_vec = Zeroizing::new(cert_private_bytes);
 
-            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), cert_private_vec.as_ref()) {
+            let wrapped = match crypto::encrypt_bytes(root_key.as_ref(), cert_private_vec.as_ref())
+            {
                 Ok(v) => v,
                 Err(msg) => {
                     return HsmResponse::Error {
@@ -931,7 +1010,11 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             }
         }
 
-        HsmRequest::SignWithCaKey { ca_tag, algorithm, tbs } => {
+        HsmRequest::SignWithCaKey {
+            ca_tag,
+            algorithm,
+            tbs,
+        } => {
             // Ensure CA is loaded in RAM
             let guard = state.read().await;
             let key_opt = guard.active_ca_keys.get(&ca_tag).cloned();
@@ -939,12 +1022,23 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
 
             let sk_bytes = match key_opt {
                 Some(z) => z,
-                None => return HsmResponse::Error { code: 404, message: format!("CA with tag '{}' not loaded", ca_tag) },
+                None => {
+                    return HsmResponse::Error {
+                        code: 404,
+                        message: format!("CA with tag '{}' not loaded", ca_tag),
+                    };
+                }
             };
 
             // Only support ECDSA P-256 + SHA-256 for now
-            if !matches!(algorithm.as_str(), "ECDSA_P256" | "ECDSA_P256_SHA256" | "ECDSA_P256-SHA256") {
-                return HsmResponse::Error { code: 400, message: "Unsupported signing algorithm".to_string() };
+            if !matches!(
+                algorithm.as_str(),
+                "ECDSA_P256" | "ECDSA_P256_SHA256" | "ECDSA_P256-SHA256"
+            ) {
+                return HsmResponse::Error {
+                    code: 400,
+                    message: "Unsupported signing algorithm".to_string(),
+                };
             }
 
             // Construct SigningKey from raw scalar bytes kept in memory (Zeroizing)
@@ -954,12 +1048,22 @@ pub async fn handle_request(request: HsmRequest, state: Arc<RwLock<VhsmState>>) 
             let sk_vec: &Vec<u8> = sk_bytes.as_ref();
             let sk_arr: [u8; 32] = match sk_vec.as_slice().try_into() {
                 Ok(a) => a,
-                Err(_) => return HsmResponse::Error { code: 500, message: "Invalid CA private key length".to_string() },
+                Err(_) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: "Invalid CA private key length".to_string(),
+                    };
+                }
             };
 
             let signing_key = match SigningKey::from_bytes(&sk_arr) {
                 Ok(k) => k,
-                Err(_) => return HsmResponse::Error { code: 500, message: "Failed to construct signing key".to_string() },
+                Err(_) => {
+                    return HsmResponse::Error {
+                        code: 500,
+                        message: "Failed to construct signing key".to_string(),
+                    };
+                }
             };
 
             // Sign the TBS using SHA-256 digest (sign_digest performs the correct pre-hash signing)
@@ -1049,7 +1153,13 @@ mod tests {
         .await;
 
         match resp {
-            HsmResponse::RootCaKeyGenerated { encrypted_private_key, public_key, master_key_version, algorithm, certificate_pem: _ } => {
+            HsmResponse::RootCaKeyGenerated {
+                encrypted_private_key,
+                public_key,
+                master_key_version,
+                algorithm,
+                certificate_pem: _,
+            } => {
                 assert!(!encrypted_private_key.is_empty());
                 assert!(!public_key.is_empty());
                 assert_eq!(master_key_version, 42);

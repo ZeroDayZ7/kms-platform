@@ -2,9 +2,12 @@ use chrono::Utc;
 use serde_json::json;
 use sqlx::Postgres;
 
-use crate::{errors::{AppError, AppResult}, server::state::AppState};
+use crate::{
+    errors::{AppError, AppResult},
+    server::state::AppState,
+};
 
-use kms_db::repositories::{RootCaQueries, CredentialQueries, AuditQueries};
+use kms_db::repositories::{AuditQueries, CredentialQueries, RootCaQueries};
 
 use uuid::Uuid;
 
@@ -34,24 +37,42 @@ pub async fn execute(state: &AppState, input: InitRootCaInput) -> AppResult<Init
     // Advisory lock to prevent races
     kms_db::repositories::RootCaQueries::advisory_xact_lock_tx(&mut tx, &input.ca_tag)
         .await
-        .map_err(|err| AppError::database_error_with_source(format!("Database operation failed: {err}"), err))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
     // Check exists
-    let exists: bool = kms_db::repositories::RootCaQueries::exists_by_tag_tx(&mut tx, &input.ca_tag)
-        .await
-        .map_err(|err| AppError::database_error_with_source(format!("Database operation failed: {err}"), err))?;
+    let exists: bool =
+        kms_db::repositories::RootCaQueries::exists_by_tag_tx(&mut tx, &input.ca_tag)
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
 
     if exists {
-        return Err(AppError::ValidationError(format!("Root CA '{}' already exists", input.ca_tag)));
+        return Err(AppError::ValidationError(format!(
+            "Root CA '{}' already exists",
+            input.ca_tag
+        )));
     }
 
     // Fetch KEK info
-    let kek_row = CredentialQueries::fetch_latest_kek_id(&state.db, "kms-system").await
-        .map_err(|err| AppError::database_error_with_source(format!("Database operation failed: {err}"), err))?;
+    let kek_row = CredentialQueries::fetch_latest_kek_id(&state.db, "kms-system")
+        .await
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
     let (kek_id, kek_version) = match kek_row {
         Some((id, ver)) => (id, ver),
-        None => return Err(AppError::ValidationError("No active KEK found for kms-system".to_string())),
+        None => {
+            return Err(AppError::ValidationError(
+                "No active KEK found for kms-system".to_string(),
+            ));
+        }
     };
 
     // Insert root_ca
@@ -73,10 +94,14 @@ pub async fn execute(state: &AppState, input: InitRootCaInput) -> AppResult<Init
         input.expires_at,
     )
     .await
-    .map_err(|err| AppError::database_error_with_source(format!("Database operation failed: {err}"), err))?;
+    .map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     if !inserted {
-        return Err(AppError::ValidationError("Root CA insert conflict".to_string()));
+        return Err(AppError::ValidationError(
+            "Root CA insert conflict".to_string(),
+        ));
     }
 
     // Insert ceremony record
@@ -89,9 +114,18 @@ pub async fn execute(state: &AppState, input: InitRootCaInput) -> AppResult<Init
     .map_err(|e| AppError::ValidationError(format!("invalid payload: {}", e)))?;
 
     // Use repository to insert ceremony within transaction
-    kms_db::repositories::ceremonies::CeremonyQueries::insert_tx(&mut tx, ceremony_id, "ca_init", &manifest, "RECORDED", Utc::now())
-        .await
-        .map_err(|err| AppError::database_error_with_source(format!("Database operation failed: {err}"), err))?;
+    kms_db::repositories::ceremonies::CeremonyQueries::insert_tx(
+        &mut tx,
+        ceremony_id,
+        "ca_init",
+        &manifest,
+        "RECORDED",
+        Utc::now(),
+    )
+    .await
+    .map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
     // Insert audit
     let audit_row = kms_db::repositories::AuditInsert {
@@ -114,9 +148,16 @@ pub async fn execute(state: &AppState, input: InitRootCaInput) -> AppResult<Init
 
     AuditQueries::insert_tx(&mut tx, audit_row)
         .await
-        .map_err(|err| AppError::database_error_with_source(format!("Database operation failed: {err}"), err))?;
+        .map_err(|err| {
+            AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+        })?;
 
-    tx.commit().await.map_err(|err| AppError::database_error_with_source(format!("Database operation failed: {err}"), err))?;
+    tx.commit().await.map_err(|err| {
+        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
+    })?;
 
-    Ok(InitRootCaOutput { root_ca_id, ceremony_id })
+    Ok(InitRootCaOutput {
+        root_ca_id,
+        ceremony_id,
+    })
 }

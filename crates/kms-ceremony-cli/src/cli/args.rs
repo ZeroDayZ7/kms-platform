@@ -157,7 +157,11 @@ pub enum Commands {
         #[arg(short, long, help = "CA tag (identifier)", default_value = "root")]
         ca_tag: String,
 
-        #[arg(short = 'e', long = "encrypted-b64", help = "Encrypted private key (base64)")]
+        #[arg(
+            short = 'e',
+            long = "encrypted-b64",
+            help = "Encrypted private key (base64)"
+        )]
         encrypted_b64: String,
     },
     /// Import encrypted bootstrap secrets file and send into KMS

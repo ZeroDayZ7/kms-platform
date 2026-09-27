@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use sqlx::{Postgres, Transaction, PgPool};
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
 pub struct CeremonyQueries;

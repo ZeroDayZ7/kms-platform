@@ -253,7 +253,13 @@ pub async fn generate_root_ca_via_hsm(
     socket_path: &str,
     algorithm: &str,
     timeout: Option<Duration>,
-) -> HsmResult<(Zeroizing<Vec<u8>>, Zeroizing<Vec<u8>>, u32, String, Option<String>)> {
+) -> HsmResult<(
+    Zeroizing<Vec<u8>>,
+    Zeroizing<Vec<u8>>,
+    u32,
+    String,
+    Option<String>,
+)> {
     let req = HsmRequest::InitRootCa {
         ca_tag: "root".to_string(),
         common_name: "kms-root-ca".to_string(),

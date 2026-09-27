@@ -1,7 +1,7 @@
 // crates/kms-service/src/hsm/client.rs
 use kms_core::hsm::client::{
-    decrypt_via_hsm as core_decrypt, encrypt_via_hsm as core_encrypt, send_hsm_request as core_send,
-    load_root_ca_via_hsm as core_load_root_ca,
+    decrypt_via_hsm as core_decrypt, encrypt_via_hsm as core_encrypt,
+    load_root_ca_via_hsm as core_load_root_ca, send_hsm_request as core_send,
 };
 use kms_core::hsm::protocol::{HsmRequest, HsmResponse};
 
