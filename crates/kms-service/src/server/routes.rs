@@ -88,16 +88,17 @@ pub fn router(state: AppState) -> Router {
     );
 
     // Dedicated CA init endpoint to keep semantics clear and avoid client-side DB logic
-    router = router.route(
-        "/api/v1/ceremonies/ca-init",
-        post(crate::handlers::ceremonies::register_ceremony_handler).layer(rate_limits.auth.clone()),
-    );
+    // remove temporary /api/v1/ceremonies/ca-init; use dedicated CA endpoint below
 
     // Add CA management routes
     router = router
         .route(
             "/api/v1/ca/load",
             post(crate::handlers::ca::post_ca_load).layer(rate_limits.auth.clone()),
+        )
+        .route(
+            "/api/v1/ca/init",
+            post(crate::handlers::ca::post_ca_init).layer(rate_limits.auth.clone()),
         )
         .route(
             "/api/v1/ca/sign-intermediate",

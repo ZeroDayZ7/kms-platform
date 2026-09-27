@@ -52,7 +52,7 @@ pub async fn handle_ca_init(socket_path: String, ca_tag: String) -> Result<()> {
     let client = reqwest::Client::new();
 
     let resp = client
-        .post(format!("{}/api/v1/ceremonies/ca-init", service_url))
+        .post(format!("{}/api/v1/ca/init", service_url))
         .json(&manifest)
         .send()
         .await?;

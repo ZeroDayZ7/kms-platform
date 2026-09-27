@@ -1,6 +1,29 @@
 use chrono::{DateTime, Utc};
-use sqlx::PgPool;
+use sqlx::{Postgres, Transaction, PgPool};
 use uuid::Uuid;
+
+pub struct CeremonyQueries;
+
+impl CeremonyQueries {
+    pub async fn insert_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+        kind: &str,
+        payload: &[u8],
+        status: &str,
+        created_at: DateTime<Utc>,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO ceremonies (id, kind, payload, status, created_at) VALUES ($1, $2, $3, $4, $5)")
+            .bind(id)
+            .bind(kind)
+            .bind(payload)
+            .bind(status)
+            .bind(created_at)
+            .execute(&mut **tx)
+            .await
+            .map(|_| ())
+    }
+}
 
 #[derive(Debug)]
 pub struct CeremonyRecord {

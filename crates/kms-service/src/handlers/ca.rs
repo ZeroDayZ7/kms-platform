@@ -2,6 +2,12 @@ use axum::{extract::State, Json};
 use serde::Deserialize;
 
 use crate::server::state::AppState;
+use crate::application::use_cases::init_root_ca::{InitRootCaInput, execute as init_root_ca_execute};
+use crate::errors::{AppError, AppResult};
+use crate::domain::audit::models::RequestContext;
+use crate::domain::audit::models::AuditAction;
+use crate::domain::keys::models::ServiceId;
+use crate::application::use_cases::sign_intermediate_ca::SignIntermediateCaInput;
 
 #[derive(Deserialize)]
 pub struct LoadCaRequest {
@@ -32,6 +38,56 @@ pub async fn post_ca_load(
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("hsm error: {}", e)))?;
 
     Ok(Json(serde_json::json!({"status": "loaded"})))
+}
+
+#[derive(Deserialize)]
+pub struct CaInitRequest {
+    pub ca_tag: String,
+    pub algorithm: Option<String>,
+    pub public_key_b64: String,
+    pub encrypted_private_key_b64: String,
+    pub certificate_pem: Option<String>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub metadata: Option<serde_json::Value>,
+}
+
+pub async fn post_ca_init(
+    State(state): State<AppState>,
+    Json(payload): Json<CaInitRequest>,
+) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
+    use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
+    use base64::Engine as _;
+
+    let public_key = BASE64_ENGINE.decode(&payload.public_key_b64)
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("invalid base64 public key: {}", e)))?;
+
+    let encrypted_private_key = BASE64_ENGINE.decode(&payload.encrypted_private_key_b64)
+        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("invalid base64 encrypted key: {}", e)))?;
+
+    let algorithm = payload.algorithm.clone().unwrap_or_else(|| "ECDSA_P256".to_string());
+    let cert_pem = payload.certificate_pem.clone().unwrap_or_default();
+    let serial = uuid::Uuid::new_v4().to_string();
+    let status = "INITIALIZING".to_string();
+
+    let input = InitRootCaInput {
+        ca_tag: payload.ca_tag.clone(),
+        algorithm,
+        public_key,
+        encrypted_private_key,
+        certificate_pem: cert_pem,
+        serial,
+        status,
+        expires_at: payload.expires_at,
+        metadata: payload.metadata.clone(),
+    };
+
+    match init_root_ca_execute(&state, input).await {
+        Ok(output) => Ok(Json(serde_json::json!({"root_ca_id": output.root_ca_id, "ceremony_id": output.ceremony_id}))),
+        Err(e) => match e {
+            AppError::ValidationError(msg) => Err((axum::http::StatusCode::CONFLICT, msg)),
+            _ => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("server error: {}", e))),
+        },
+    }
 }
 
 pub async fn post_sign_intermediate(

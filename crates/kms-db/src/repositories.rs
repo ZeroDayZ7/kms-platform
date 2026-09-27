@@ -832,6 +832,29 @@ impl RootCaQueries {
         Ok(res.rows_affected() == 1)
     }
 
+    pub async fn advisory_xact_lock_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        key: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(key)
+            .execute(&mut **tx)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn exists_by_tag_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        ca_tag: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM root_cas WHERE ca_tag = $1)",
+        )
+        .bind(ca_tag)
+        .fetch_one(&mut **tx)
+        .await
+    }
+
     pub async fn update_encrypted_private_key(
         tx: &mut Transaction<'_, Postgres>,
         id: Uuid,
