@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package spire.server.upstreamauthority.v1;
+
+service UpstreamAuthority {
+  rpc MintX509CA(MintX509CARequest) returns (MintX509CAResponse);
+}
+
+message MintX509CARequest {
+  string csr_pem = 1;
+  string ca_tag = 2;
+}
+
+message MintX509CAResponse {
+  repeated string x509_ca_chain = 1;
+}

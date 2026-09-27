@@ -6,6 +6,7 @@ members = [
     "crates/kms-service",
     "crates/kms-ceremony-cli",
     "crates/vhsm-daemon",
+    "crates/spire-kms-upstream-authority",
 ]
 resolver = "2"
 
