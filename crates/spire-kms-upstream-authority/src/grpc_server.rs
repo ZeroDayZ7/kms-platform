@@ -1,7 +1,11 @@
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::path::Path;
 use std::sync::Arc;
+
+#[cfg(unix)]
+use tonic_health::ServingStatus;
 
 use tonic::{Request, Response, Status};
 
@@ -82,7 +86,8 @@ impl UpstreamAuthority for UpstreamAuthorityService {
 }
 
 #[cfg(unix)]
-async fn cleanup_socket_file(path: &std::path::Path) {
+async fn cleanup_socket_file(path: impl AsRef<std::path::Path>) {
+    let path = path.as_ref();
     if path.exists() {
         let _ = tokio::fs::remove_file(path).await;
     }
@@ -97,7 +102,7 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    cleanup_socket_file(&socket_path).await;
+    cleanup_socket_file(std::path::Path::new(&socket_path)).await;
 
     let listener = tokio::net::UnixListener::bind(&socket_path)?;
     std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o660))?;
@@ -111,8 +116,18 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
         socket_path
     );
 
+    let (health_reporter, health_service) = tonic_health::server::health_reporter();
+    health_reporter.set_service_status("", ServingStatus::Serving).await;
+    health_reporter
+        .set_service_status(
+            "spire.server.upstreamauthority.v1.UpstreamAuthority",
+            ServingStatus::Serving,
+        )
+        .await;
+
     let server = tonic::transport::Server::builder()
-        .add_service(generated::upstream_authority_server::UpstreamAuthorityServer::new(service));
+        .add_service(generated::upstream_authority_server::UpstreamAuthorityServer::new(service))
+        .add_service(health_service);
 
     tokio::select! {
         result = server.serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener)) => {
