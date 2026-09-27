@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: kms_service_dev
-    command: bash -lc "mkdir -p /run/kms /run/spire && cargo run -p kms-service -- serve"
+    command: bash -c "mkdir -p /run/kms /run/spire && /usr/local/cargo/bin/cargo run -p kms-service -- serve"
     ports:
       - "8081:8080"
     environment:
