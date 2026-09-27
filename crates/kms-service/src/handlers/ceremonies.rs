@@ -1,11 +1,10 @@
-use axum::{Json, extract::State};
+use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::server::state::AppState;
 use kms_db::repositories::ceremonies::CeremonyQueries;
-// removed unused imports
 
 #[derive(Deserialize, Serialize)]
 pub struct CeremonyRequest {
@@ -27,21 +26,16 @@ pub struct CeremonyRequest {
 pub async fn register_ceremony_handler(
     State(state): State<AppState>,
     Json(payload): Json<CeremonyRequest>,
-) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
-    // Start a DB transaction
-    let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|e| {
-        (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("db begin error: {}", e),
-        )
-    })?;
-
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     // Only generic ceremony handling belongs here. CA init is handled in handlers/ca.rs use case.
     let ceremony_id = Uuid::new_v4();
-    let manifest = serde_json::to_vec(&payload).map_err(|e| {
+    let manifest = serde_json::to_vec(&payload)
+        .map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid payload: {}", e)))?;
+
+    let mut tx: Transaction<'_, Postgres> = state.db.begin().await.map_err(|e| {
         (
-            axum::http::StatusCode::BAD_REQUEST,
-            format!("invalid payload: {}", e),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("db begin error: {}", e),
         )
     })?;
 
@@ -56,14 +50,14 @@ pub async fn register_ceremony_handler(
     .await
     .map_err(|e| {
         (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
             format!("insert ceremony: {}", e),
         )
     })?;
 
     tx.commit().await.map_err(|e| {
         (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::INTERNAL_SERVER_ERROR,
             format!("tx commit: {}", e),
         )
     })?;
