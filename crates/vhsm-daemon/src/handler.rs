@@ -124,7 +124,6 @@ use crate::state::VhsmState;
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
-use rand::RngCore;
 use x509_parser::prelude::FromDer;
 use sha2::Digest;
 use p256::ecdsa::signature::DigestSigner;
@@ -194,7 +193,6 @@ fn build_and_sign_certificate(_ca_sk_bytes: &[u8], _csr_der_or_spki: &[u8], _val
 
     // Since _ca_sk_bytes contains the private scalar, derive public key SEC1 point
     use p256::ecdsa::SigningKey;
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
 
     // Build public key from private scalar
     let sk_arr: [u8; 32] = match <[u8;32]>::try_from(_ca_sk_bytes) {
