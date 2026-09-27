@@ -70,12 +70,18 @@ pub async fn register_ceremony_handler(
     let audit_id = uuid::Uuid::new_v4();
     let now = chrono::Utc::now();
 
+    let algorithm_name = payload
+        .algorithm
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("ECDSA_P256");
+
     let hash = core_audit::compute_audit_hash(&core_audit::AuditHashInput {
         id: &audit_id.to_string(),
         caller_service: "kms-service",
         target_service: "ceremony",
         action: &payload.operation,
-        algorithm: "NONE",
+        algorithm: algorithm_name,
         status: "RECORDED",
         reason: None,
         prev_hash: &prev_hash,
@@ -92,7 +98,7 @@ pub async fn register_ceremony_handler(
         caller_service: "kms-service".to_string(),
         target_service: "ceremony".to_string(),
         action: payload.operation.clone(),
-        algorithm: "NONE".to_string(),
+        algorithm: algorithm_name.to_string(),
         status: "RECORDED".to_string(),
         reason: None,
         prev_hash: prev_hash.clone(),

@@ -36,7 +36,7 @@ where
         algorithm: KeyAlgorithm,
     ) -> AppResult<()> {
         let prev_hash = "0000000000000000000000000000000000000000000000000000000000000000";
-        let entry = CanonicalAuditEntry::new(ctx, action, status, details, prev_hash);
+        let entry = CanonicalAuditEntry::new(ctx, action, status, details, prev_hash, algorithm);
 
         let audit_log = AuditLog::new(
             entry.id,

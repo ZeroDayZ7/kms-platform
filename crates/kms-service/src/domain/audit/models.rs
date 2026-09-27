@@ -37,11 +37,31 @@ pub enum AuditAction {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AuditStatus {
+    Recorded,
     Success,
     AccessDenied,
     NotFound,
     ValidationFailure,
     Failure,
+}
+
+impl AuditStatus {
+    pub const fn as_str(&self) -> &str {
+        match self {
+            Self::Recorded => "RECORDED",
+            Self::Success => "SUCCESS",
+            Self::AccessDenied => "ACCESS_DENIED",
+            Self::NotFound => "NOT_FOUND",
+            Self::ValidationFailure => "VALIDATION_FAILURE",
+            Self::Failure => "FAILURE",
+        }
+    }
+}
+
+impl std::fmt::Display for AuditStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,6 +132,7 @@ impl CanonicalAuditEntry {
         status: AuditStatus,
         details: Option<serde_json::Value>,
         prev_hash: &str,
+        algorithm: KeyAlgorithm,
     ) -> Self {
         let target = context.actor_id.clone();
         Self {
@@ -119,7 +140,7 @@ impl CanonicalAuditEntry {
             caller_service: context.actor_id.clone(),
             target_service: target,
             action,
-            algorithm: KeyAlgorithm::AES256GCM,
+            algorithm,
             status,
             reason: None,
             prev_hash: prev_hash.to_string(),
@@ -174,7 +195,7 @@ impl CanonicalAuditEntry {
         );
         map.insert(
             "algorithm".to_string(),
-            Value::String(format!("{:?}", self.algorithm)),
+            Value::String(self.algorithm.as_str().to_string()),
         );
         map.insert(
             "caller_service".to_string(),
@@ -203,7 +224,7 @@ impl CanonicalAuditEntry {
         );
         map.insert(
             "status".to_string(),
-            Value::String(format!("{:?}", self.status)),
+            Value::String(self.status.as_str().to_string()),
         );
         map.insert(
             "target_id".to_string(),
@@ -331,6 +352,29 @@ mod tests {
         let _ = AuditStatus::AccessDenied;
         let _ = AuditStatus::ValidationFailure;
         let _ = AuditStatus::Failure;
+    }
+
+    #[test]
+    fn canonical_audit_entry_preserves_explicit_algorithm() {
+        let context = RequestContext {
+            operation_id: "op-1".to_string(),
+            nonce: None,
+            actor_id: ServiceId("kms-cli".to_string()),
+            ip: None,
+            user_agent: None,
+        };
+
+        let entry = CanonicalAuditEntry::new(
+            &context,
+            AuditAction::MasterKeyGenerated,
+            AuditStatus::Success,
+            Some(serde_json::json!({"key_algorithm": "ECDSA_P256"})),
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            KeyAlgorithm::Ed25519,
+        );
+
+        assert_eq!(entry.algorithm, KeyAlgorithm::Ed25519);
+        assert!(entry.canonical_json().unwrap().contains("Ed25519"));
     }
 
     #[test]
