@@ -4,7 +4,7 @@ use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::server::state::AppState;
-use kms_db::repositories::{AuditQueries, RootCaQueries};
+use kms_db::repositories::{AuditQueries, RootCaQueries, CredentialQueries};
 
 #[derive(Deserialize, Serialize)]
 pub struct CeremonyRequest {
@@ -80,8 +80,14 @@ pub async fn register_ceremony_handler(
         })?)
         .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("encrypted key decode: {}", e)))?;
 
-        let kek_id = payload.kek_id.ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "missing kek_id".to_string()))?;
-        let kek_version = payload.kek_version.ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "missing kek_version".to_string()))?;
+        // Fetch KEK info server-side (CLI no longer supplies kek info)
+        let kek_row = CredentialQueries::fetch_latest_kek_id(&state.db, "kms-system").await
+            .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("fetch kek: {}", e)))?;
+
+        let (kek_id, kek_version) = match kek_row {
+            Some((id, ver)) => (id, ver),
+            None => return Err((axum::http::StatusCode::BAD_REQUEST, "No active KEK found for kms-system".to_string())),
+        };
 
         let cert_pem = payload.certificate_pem.clone().unwrap_or_default();
         let serial = payload.serial.clone().unwrap_or_else(|| Uuid::new_v4().to_string());
