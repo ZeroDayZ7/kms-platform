@@ -80,10 +80,10 @@ unlock-dev:
 	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -it vhsm-daemon cargo run -p kms-ceremony-cli -- unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
 
 ca-init-dev:
-	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --env-file .env --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root
+	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root
 
 ca-load-dev:
-	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --env-file .env --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root --encrypted-b64 "$(ENCRYPTED_B64)"
+	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root --encrypted-b64 "$(ENCRYPTED_B64)"
 
 bootstrap-dev:
 	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- import-bootstrap --file ./out/bootstrap-secrets.json.enc --service-url 'http://kms-service:8080'
