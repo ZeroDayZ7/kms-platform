@@ -37,6 +37,11 @@ message InitResponse {
   repeated string plugin_services = 1;
 }
 
+service Plugin {
+  rpc Configure(ConfigureRequest) returns (ConfigureResponse);
+  rpc GetPluginInfo(GetPluginInfoRequest) returns (GetPluginInfoResponse);
+}
+
 service PluginInit {
   rpc Init(InitRequest) returns (InitResponse);
 }

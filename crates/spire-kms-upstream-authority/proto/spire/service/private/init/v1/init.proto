@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package spire.service.private.init.v1;
+option go_package = "github.com/spiffe/spire-plugin-sdk/internal/proto/spire/service/private/init/v1;initv1";
+
+service Init {
+  rpc Init(InitRequest) returns (InitResponse);
+  rpc Deinit(DeinitRequest) returns (DeinitResponse);
+}
+
+message InitRequest {
+  repeated string host_service_names = 1;
+}
+
+message InitResponse {
+  repeated string plugin_service_names = 1;
+}
+
+message DeinitRequest {}
+
+message DeinitResponse {}

@@ -33,11 +33,22 @@ mod generated {
                 tonic::include_proto!("spire.plugin.types");
             }
         }
+        pub mod service {
+            pub mod private {
+                pub mod init {
+                    pub mod v1 {
+                        tonic::include_proto!("spire.service.private.init.v1");
+                    }
+                }
+            }
+        }
     }
 }
 
 use generated::spire::common::plugin::{
     plugin_init_server::{PluginInit, PluginInitServer},
+    plugin_server::{Plugin, PluginServer},
+    ConfigureRequest, ConfigureResponse, GetPluginInfoRequest, GetPluginInfoResponse,
     InitRequest, InitResponse,
 };
 use generated::spire::plugin::server::upstreamauthority::v1::{
@@ -45,10 +56,76 @@ use generated::spire::plugin::server::upstreamauthority::v1::{
     upstream_authority_server::{UpstreamAuthority, UpstreamAuthorityServer},
 };
 use generated::spire::plugin::types::X509Certificate;
+use generated::spire::service::private::init::v1::{
+    DeinitRequest, DeinitResponse, InitRequest as PrivateInitRequest,
+    InitResponse as PrivateInitResponse, init_server::{Init as PrivateInit, InitServer},
+};
 
 #[derive(Clone)]
 pub struct UpstreamAuthorityService {
     pub config: Arc<PluginConfig>,
+}
+
+#[derive(Clone, Default)]
+pub struct PluginService;
+
+#[tonic::async_trait]
+impl Plugin for PluginService {
+    async fn configure(
+        &self,
+        request: Request<ConfigureRequest>,
+    ) -> Result<Response<ConfigureResponse>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let req = request.into_inner();
+
+        tracing::info!(
+            service = "Plugin",
+            method = "Configure",
+            grpc_path = %path,
+            configuration = %req.configuration,
+            "RPC_ENTER"
+        );
+
+        Ok(Response::new(ConfigureResponse {
+            error_list: vec![],
+        }))
+    }
+
+    async fn get_plugin_info(
+        &self,
+        request: Request<GetPluginInfoRequest>,
+    ) -> Result<Response<GetPluginInfoResponse>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        tracing::info!(
+            service = "Plugin",
+            method = "GetPluginInfo",
+            grpc_path = %path,
+            "RPC_ENTER"
+        );
+
+        Ok(Response::new(GetPluginInfoResponse {
+            name: "spire-kms-upstream-authority".to_string(),
+            category: "UpstreamAuthority".to_string(),
+            r#type: "server".to_string(),
+            description: "SPIRE upstream authority plugin backed by KMS".to_string(),
+            date_created: String::new(),
+            location: String::new(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            author: String::new(),
+            company: String::new(),
+        }))
+    }
 }
 
 #[derive(Clone, Default)]
@@ -86,6 +163,61 @@ impl PluginInit for PluginInitService {
                 "grpc.health.v1.Health".to_string(),
             ],
         }))
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct PrivateInitService;
+
+#[tonic::async_trait]
+impl PrivateInit for PrivateInitService {
+    async fn init(
+        &self,
+        request: Request<PrivateInitRequest>,
+    ) -> Result<Response<PrivateInitResponse>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+        let req = request.into_inner();
+
+        tracing::info!(
+            service = "spire.service.private.init.v1.Init",
+            method = "Init",
+            grpc_path = %path,
+            host_service_names = ?req.host_service_names,
+            "RPC_ENTER"
+        );
+
+        Ok(Response::new(PrivateInitResponse {
+            plugin_service_names: vec![
+                "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
+                "grpc.health.v1.Health".to_string(),
+            ],
+        }))
+    }
+
+    async fn deinit(
+        &self,
+        request: Request<DeinitRequest>,
+    ) -> Result<Response<DeinitResponse>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        tracing::info!(
+            service = "spire.service.private.init.v1.Init",
+            method = "Deinit",
+            grpc_path = %path,
+            "RPC_ENTER"
+        );
+
+        Ok(Response::new(DeinitResponse {}))
     }
 }
 
@@ -300,11 +432,19 @@ pub async fn serve_with_listener(
     );
 
     tracing::info!("TONIC_SERVER_START");
-    tracing::info!("TONIC_SERVICES: - spire.plugin.server.upstreamauthority.v1.UpstreamAuthority - grpc.health.v1.Health - spire.common.plugin.PluginInit");
+    tracing::info!("TONIC_SERVICES: - spire.common.plugin.Plugin - spire.common.plugin.PluginInit - spire.service.private.init.v1.Init - spire.plugin.server.upstreamauthority.v1.UpstreamAuthority - grpc.health.v1.Health");
 
     let server = tonic::transport::Server::builder()
-        .add_service(UpstreamAuthorityServer::new(service))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_grpc()
+                .on_request(|request: &http::Request<_>, _span: &tracing::Span| {
+                    tracing::info!(grpc_path = %request.uri().path(), "gRPC_REQUEST_RECEIVED");
+                }),
+        )
+        .add_service(PluginServer::new(PluginService::default()))
         .add_service(PluginInitServer::new(PluginInitService::default()))
+        .add_service(InitServer::new(PrivateInitService::default()))
+        .add_service(UpstreamAuthorityServer::new(service))
         .add_service(health_service);
 
     tokio::select! {
@@ -368,6 +508,20 @@ pub async fn serve(_config: PluginConfig) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn plugin_configure_returns_success() {
+        let response = PluginService::default()
+            .configure(Request::new(ConfigureRequest {
+                configuration: "".to_string(),
+                global_config: None,
+            }))
+            .await
+            .expect("plugin configure should succeed");
+
+        assert!(response.into_inner().error_list.is_empty());
+    }
     use super::*;
 
     #[test]

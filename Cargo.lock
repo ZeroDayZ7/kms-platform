@@ -3906,6 +3906,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "http",
  "pem 3.0.6",
  "prost 0.13.5",
  "serde",
@@ -3915,6 +3916,8 @@ dependencies = [
  "tonic 0.13.1",
  "tonic-build",
  "tonic-health",
+ "tower",
+ "tower-http",
  "tracing",
  "tracing-subscriber",
  "uuid",
