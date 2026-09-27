@@ -86,7 +86,20 @@ impl UpstreamAuthority for UpstreamAuthorityService {
     ) -> Result<Response<Self::MintX509CAAndSubscribeStream>, Status> {
         let req = request.into_inner();
 
+        tracing::info!(
+            service = "UpstreamAuthority",
+            method = "MintX509CAAndSubscribe",
+            csr_len = req.csr.len(),
+            preferred_ttl = req.preferred_ttl,
+            "RPC_ENTER"
+        );
+
         if req.csr.is_empty() {
+            tracing::warn!(
+                service = "UpstreamAuthority",
+                method = "MintX509CAAndSubscribe",
+                "RPC_REQUEST_RECEIVED status=INVALID empty CSR"
+            );
             return Err(Status::invalid_argument("empty CSR"));
         }
 
@@ -95,7 +108,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             ca_tag = %self.config.ca_tag,
             csr_len = req.csr.len(),
             preferred_ttl = req.preferred_ttl,
-            "MintX509CAAndSubscribe requested from SPIRE"
+            "RPC_REQUEST_RECEIVED"
         );
 
         let csr_pem = pem::encode(&pem::Pem::new("CERTIFICATE REQUEST", req.csr));
@@ -132,7 +145,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         tracing::info!(
             certificates_in_chain = stream_response.x509_ca_chain.len(),
             upstream_roots = stream_response.upstream_x509_roots.len(),
-            "MintX509CAAndSubscribe certificate issued successfully"
+            "RPC_EXIT status=OK"
         );
 
         Ok(Response::new(tokio_stream::iter(vec![Ok(stream_response)])))
@@ -145,6 +158,16 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         &self,
         _request: Request<PublishJwtKeyRequest>,
     ) -> Result<Response<Self::PublishJWTKeyAndSubscribeStream>, Status> {
+        tracing::info!(
+            service = "UpstreamAuthority",
+            method = "PublishJWTKeyAndSubscribe",
+            "RPC_ENTER"
+        );
+        tracing::warn!(
+            service = "UpstreamAuthority",
+            method = "PublishJWTKeyAndSubscribe",
+            "RPC_RETURN_UNIMPLEMENTED"
+        );
         Err(Status::unimplemented(
             "JWT key publication is not supported by this SPIRE UpstreamAuthority plugin",
         ))
@@ -185,6 +208,10 @@ pub async fn serve_with_listener(
     };
 
     tracing::info!(
+        "PLUGIN_SOCKET_BIND_START path={}",
+        socket_path
+    );
+    tracing::info!(
         "Serving SPIRE UpstreamAuthority on plugin socket {}",
         socket_path
     );
@@ -200,10 +227,19 @@ pub async fn serve_with_listener(
         )
         .await;
 
+    tracing::info!("HEALTH_SERVICE_REGISTERED");
+    tracing::info!("HEALTH_STATUS_SET service=\"\" status=SERVING");
+    tracing::info!(
+        "HEALTH_STATUS_SET service=spire.plugin.server.upstreamauthority.v1.UpstreamAuthority status=SERVING"
+    );
+
     tracing::debug!(
         service_count = 2,
         "Configured tonic server with UpstreamAuthorityServer and health_service"
     );
+
+    tracing::info!("TONIC_SERVER_START");
+    tracing::info!("TONIC_SERVICES: - UpstreamAuthority - grpc.health.v1.Health");
 
     let server = tonic::transport::Server::builder()
         .add_service(generated::upstream_authority_server::UpstreamAuthorityServer::new(service))
@@ -226,11 +262,25 @@ pub async fn serve_with_listener(
 pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
     prepare_plugin_socket_path(&config.spire_plugin_socket_path).await?;
 
+    tracing::info!(
+        "PLUGIN_SOCKET_BIND_START path={}"
+        , config.spire_plugin_socket_path
+    );
+
     let listener = tokio::net::UnixListener::bind(&config.spire_plugin_socket_path)?;
+    tracing::info!(
+        "PLUGIN_SOCKET_BIND_OK path={}"
+        , config.spire_plugin_socket_path
+    );
+
     std::fs::set_permissions(
         &config.spire_plugin_socket_path,
         std::fs::Permissions::from_mode(0o660),
     )?;
+    tracing::info!(
+        "PLUGIN_SOCKET_PERMISSIONS_OK mode=0660 path={}"
+        , config.spire_plugin_socket_path
+    );
 
     serve_with_listener(config, listener).await
 }

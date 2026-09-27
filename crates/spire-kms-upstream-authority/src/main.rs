@@ -29,6 +29,10 @@ fn emit_go_plugin_handshake(socket_path: &str) -> anyhow::Result<()> {
 async fn main() -> anyhow::Result<()> {
     init_logging();
 
+    tracing::info!(
+        "PLUGIN_START name=spire-kms-upstream-authority"
+    );
+
     let args = PluginArgs::parse();
     let config = args.into_config();
     config.validate()?;
@@ -38,11 +42,21 @@ async fn main() -> anyhow::Result<()> {
         spire_plugin_socket = %config.spire_plugin_socket_path,
         kms_socket = %config.kms_socket_path,
         ca_tag = %config.ca_tag,
-        "Starting SPIRE upstream authority shim"
+        "PLUGIN_CONFIG"
+    );
+    tracing::info!(
+        "PLUGIN_CONFIG spire_socket={} kms_socket={} ca_tag={}",
+        config.spire_plugin_socket_path,
+        config.kms_socket_path,
+        config.ca_tag
     );
 
     #[cfg(unix)]
     {
+        tracing::info!(
+            "PLUGIN_SOCKET path={}"
+            , config.spire_plugin_socket_path
+        );
         grpc_server::serve(config).await
     }
 

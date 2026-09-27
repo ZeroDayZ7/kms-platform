@@ -41,6 +41,13 @@ impl PluginArgs {
 
 impl PluginConfig {
     pub fn validate(&self) -> anyhow::Result<()> {
+        tracing::info!(
+            "PLUGIN_CONFIG_VALIDATE spire_socket={} kms_socket={} ca_tag={}",
+            self.spire_plugin_socket_path,
+            self.kms_socket_path,
+            self.ca_tag
+        );
+
         if self.spire_plugin_socket_path.trim().is_empty() {
             anyhow::bail!("SPIRE plugin socket path must not be empty");
         }
@@ -52,6 +59,13 @@ impl PluginConfig {
         if self.ca_tag.trim().is_empty() {
             anyhow::bail!("CA tag must not be empty");
         }
+
+        tracing::info!(
+            "PLUGIN_CONFIG_VALID spire_socket={} kms_socket={} ca_tag={}",
+            self.spire_plugin_socket_path,
+            self.kms_socket_path,
+            self.ca_tag
+        );
 
         Ok(())
     }
