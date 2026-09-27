@@ -11,7 +11,7 @@ use config::PluginArgs;
 fn init_logging() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter("info")
+        .with_env_filter("spire_kms_upstream_authority=trace,tonic=trace,hyper=trace")
         .with_target(false)
         .without_time()
         .init();
@@ -43,10 +43,28 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(unix)]
     {
+        tracing::debug!(
+            spire_plugin_socket = %config.spire_plugin_socket_path,
+            "Preparing SPIRE plugin socket before handshake"
+        );
+
         grpc_server::prepare_plugin_socket_path(&config.spire_plugin_socket_path).await?;
 
         let listener = tokio::net::UnixListener::bind(&config.spire_plugin_socket_path)?;
+        tracing::info!(
+            spire_plugin_socket = %config.spire_plugin_socket_path,
+            "SPIRE plugin socket bound successfully"
+        );
+
+        tracing::debug!(
+            spire_plugin_socket = %config.spire_plugin_socket_path,
+            "Emitting go-plugin handshake on stdout"
+        );
         emit_go_plugin_handshake(&config.spire_plugin_socket_path)?;
+        tracing::debug!(
+            spire_plugin_socket = %config.spire_plugin_socket_path,
+            "go-plugin handshake emitted"
+        );
 
         grpc_server::serve_with_listener(config, listener).await
     }

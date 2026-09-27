@@ -42,7 +42,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             kms_socket = %self.config.kms_socket_path,
             ca_tag = %self.config.ca_tag,
             csr_len = req.csr_pem.len(),
-            "Proxying MintX509CA to kms-service over UDS"
+            "MintX509CA request received from SPIRE"
         );
 
         let ca_tag = if req.ca_tag.trim().is_empty() {
@@ -131,6 +131,11 @@ pub async fn serve_with_listener(
             ServingStatus::Serving,
         )
         .await;
+
+    tracing::debug!(
+        service_count = 2,
+        "Configured tonic server with UpstreamAuthorityServer and health_service"
+    );
 
     let server = tonic::transport::Server::builder()
         .add_service(generated::upstream_authority_server::UpstreamAuthorityServer::new(service))
