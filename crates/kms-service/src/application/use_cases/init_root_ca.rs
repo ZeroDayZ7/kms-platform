@@ -1,6 +1,6 @@
 use chrono::Utc;
 use serde_json::json;
-use sqlx::Postgres;
+// removed unused import
 
 use crate::{
     errors::{AppError, AppResult},

@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::server::state::AppState;
 use kms_db::repositories::ceremonies::CeremonyQueries;
-use kms_db::repositories::{AuditQueries, CredentialQueries, RootCaQueries};
+// removed unused imports
 
 #[derive(Deserialize, Serialize)]
 pub struct CeremonyRequest {

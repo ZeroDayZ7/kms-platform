@@ -1,7 +1,7 @@
 use chrono::{Duration, Utc};
-use kms_db::PgPool;
 use kms_db::repositories::RootCaQueries;
-use sqlx::{Connection, Executor, PgConnection};
+use sqlx::Connection;
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 #[tokio::test]
@@ -14,7 +14,7 @@ async fn root_ca_lifecycle() {
         }
     };
 
-    let mut conn = PgConnection::connect(&database_url).await.unwrap();
+    let _conn = PgConnection::connect(&database_url).await.unwrap();
 
     // Ensure no root cas exist for tag 'test-root'
     let exists_before = RootCaQueries::exists_by_tag(
@@ -42,6 +42,7 @@ async fn root_ca_lifecycle() {
         id,
         "test-root",
         "RSA2048",
+        b"spki_placeholder",
         b"encrypted_placeholder",
         Uuid::new_v4(),
         1,
@@ -79,6 +80,7 @@ async fn root_ca_lifecycle() {
         id,
         "test-root",
         "RSA2048",
+        b"spki_placeholder",
         b"encrypted_placeholder2",
         Uuid::new_v4(),
         1,

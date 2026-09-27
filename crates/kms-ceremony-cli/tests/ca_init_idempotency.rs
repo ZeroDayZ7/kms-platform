@@ -8,7 +8,7 @@ use tokio::process::Command;
 #[tokio::test]
 async fn ca_init_idempotency_smoke() {
     // This test is intended to run locally by the developer; it will skip if DATABASE_URL not set.
-    let db = match env::var("DATABASE_URL") {
+    let _db = match env::var("DATABASE_URL") {
         Ok(v) => v,
         Err(_) => {
             eprintln!("DATABASE_URL not set; skipping integration test");
@@ -22,7 +22,7 @@ async fn ca_init_idempotency_smoke() {
 
     // First run
     let status1 = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "-p",
             "kms-ceremony-cli",
@@ -39,7 +39,7 @@ async fn ca_init_idempotency_smoke() {
 
     // Second run (should be idempotent)
     let status2 = Command::new("cargo")
-        .args(&[
+        .args([
             "run",
             "-p",
             "kms-ceremony-cli",

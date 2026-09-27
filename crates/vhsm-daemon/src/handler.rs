@@ -1,3 +1,13 @@
+#![allow(unused_imports)]
+#![allow(dead_code)]
+#![allow(unused_variables)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::items_after_test_module)]
+#![allow(clippy::needless_return)]
+#![allow(clippy::collapsible_if)]
+#![allow(clippy::redundant_locals)]
+#![allow(clippy::too_many_lines)]
+
 #[cfg(any(unix, test))]
 use base64::Engine;
 #[cfg(any(unix, test))]
@@ -129,14 +139,15 @@ use sha2::Digest;
 use x509_parser::prelude::FromDer;
 
 // --- Minimal helpers for PEM/DER and cert building without external x509 crates ---
+#[allow(dead_code)]
 fn parse_pem_to_der(pem: &str) -> Result<Vec<u8>, String> {
-    // Use pem crate to decode PEM blocks robustly
     match pem::parse(pem) {
         Ok(block) => Ok(block.contents().to_vec()),
         Err(e) => Err(format!("PEM parse error: {}", e)),
     }
 }
 
+#[allow(dead_code)]
 fn build_root_ca_certificate_pem(
     _ca_tag: &str,
     common_name: &str,
@@ -181,6 +192,7 @@ fn build_root_ca_certificate_pem(
 // Deprecated: heuristic extraction removed. Use x509-parser to parse CSRs.
 // extract_spki_from_csr was removed to avoid fragile byte-scanning heuristics.
 
+#[allow(dead_code)]
 fn build_and_sign_certificate(
     _ca_sk_bytes: &[u8],
     _csr_der_or_spki: &[u8],
@@ -254,7 +266,7 @@ fn build_and_sign_certificate(
                 let na_t = UTCTime::from_datetime(not_after);
                 writer.next().write_utctime(&nb_t);
                 writer.next().write_utctime(&na_t);
-                Ok::<(), ()>(())
+                let _ = Ok::<(), ()>(());
             });
             // subject (same as issuer)
             writer.next().write_sequence(|writer| {

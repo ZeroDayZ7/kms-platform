@@ -4,11 +4,7 @@ use serde::Deserialize;
 use crate::application::use_cases::init_root_ca::{
     InitRootCaInput, execute as init_root_ca_execute,
 };
-use crate::application::use_cases::sign_intermediate_ca::SignIntermediateCaInput;
-use crate::domain::audit::models::AuditAction;
-use crate::domain::audit::models::RequestContext;
-use crate::domain::keys::models::ServiceId;
-use crate::errors::{AppError, AppResult};
+use crate::errors::AppError;
 use crate::server::state::AppState;
 
 #[derive(Deserialize)]

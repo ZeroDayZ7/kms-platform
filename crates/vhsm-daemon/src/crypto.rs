@@ -14,7 +14,7 @@ use kms_core::crypto::sss::{SecretShare, combine_shares, split_shares};
 use zeroize::{Zeroize, Zeroizing};
 
 #[cfg(any(unix, test))]
-//#region generate_and_split_master_key
+#[allow(dead_code, clippy::type_complexity)]
 pub fn generate_and_split_master_key(
     total: u8,
     threshold: u8,
@@ -29,7 +29,7 @@ pub fn generate_and_split_master_key(
 }
 
 #[cfg(any(unix, test))]
-//#[region reconstruct_master_key
+#[allow(dead_code)]
 pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Zeroizing<Vec<u8>>, String> {
     if shares.is_empty() {
         return Err("At least one share is required".to_string());
@@ -67,7 +67,7 @@ pub fn reconstruct_master_key(shares: &[(u8, String)]) -> Result<Zeroizing<Vec<u
 }
 
 #[cfg(any(unix, test))]
-//#[region encrypt_bytes
+#[allow(dead_code)]
 pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
     let cipher = Aes256Gcm::new_from_slice(key)
         .map_err(|err| format!("Failed to initialize AES-GCM: {err}"))?;
@@ -88,7 +88,7 @@ pub fn encrypt_bytes(key: &[u8], plaintext: &[u8]) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(any(unix, test))]
-//#[region decrypt_bytes
+#[allow(dead_code)]
 pub fn decrypt_bytes(key: &[u8], payload: &[u8]) -> Result<Zeroizing<Vec<u8>>, String> {
     if payload.len() < 12 {
         return Err("Ciphertext payload too short".to_string());
