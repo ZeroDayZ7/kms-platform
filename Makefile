@@ -30,13 +30,13 @@ net-down:
 	@docker network rm kms_target_admin_net 2>/dev/null || true
 
 docker-down:
-	docker compose down -v
+	docker compose down --remove-orphans
 
 docker-up: net-up
 	docker compose up -d
 
 docker-rebuild: net-up
-	docker compose down -v
+	docker compose down --remove-orphans
 	docker compose up -d --build --force-recreate
 
 profile:
@@ -46,8 +46,8 @@ clean:
 	cargo clean
 
 rebuild: net-up
-	@echo "===> Czyszczenie starych kontenerów i wolumenów..."
-	docker compose --profile tools down -v --remove-orphans
+	@echo "===> Czyszczenie starych kontenerów..."
+	docker compose --profile tools down --remove-orphans
 	@echo "===> Formatowanie kodu (cargo fmt)..."
 	cargo fmt
 	@echo "===> Budowanie wszystkich obrazów (w tym tools) bez cache..."
@@ -130,10 +130,12 @@ dev: net-up
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
 dev-down:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans
 
 prod: net-up
 	docker compose up --build
 
 dev-recreate: net-up
+	@docker volume inspect kms_sockets >/dev/null 2>&1 || docker volume create kms_sockets
+	@docker volume inspect spire_sockets >/dev/null 2>&1 || docker volume create spire_sockets
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate kms-service

@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile.dev
     container_name: kms_service_dev
-    command: cargo run -p kms-service -- serve
+    command: bash -lc "mkdir -p /run/kms /run/spire && cargo run -p kms-service -- serve"
     ports:
       - "8081:8080"
     environment:
@@ -20,6 +20,8 @@ services:
       - DATABASE__NAME=${DATABASE__NAME:-kms_db}
       - DATABASE__USER=${DATABASE__USER:-kms_app_user}
       - DATABASE__PASSWORD_FILE=/run/secrets/kms_app_db_pass
+      - KMS_GRPC_SOCKET=/run/kms/kms.sock
+      - KMS_CA_TAG=root
     env_file:
       - .env.dev
     secrets:
@@ -29,6 +31,8 @@ services:
       - cargo_cache:/usr/local/cargo/registry
       - target_cache:/app/target
       - vhsm_sockets:/run/vhsm
+      - kms_sockets:/run/kms
+      - spire_sockets:/run/spire
     networks:
       - kms-internal-net
       - sec-net
@@ -38,3 +42,11 @@ services:
         condition: service_healthy
       vhsm-daemon:
         condition: service_started
+
+volumes:
+  kms_sockets:
+    name: kms_sockets
+    external: true
+  spire_sockets:
+    name: spire_sockets
+    external: true
