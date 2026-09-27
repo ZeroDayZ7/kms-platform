@@ -1,16 +1,44 @@
 syntax = "proto3";
 
-package spire.server.upstreamauthority.v1;
+package spire.plugin.server.upstreamauthority.v1;
+option go_package = "github.com/spiffe/spire-plugin-sdk/proto/spire/plugin/server/upstreamauthority/v1;upstreamauthorityv1";
+
+import "spire/plugin/types/x509certificate.proto";
+import "spire/plugin/types/jwtkey.proto";
 
 service UpstreamAuthority {
-  rpc MintX509CA(MintX509CARequest) returns (MintX509CAResponse);
+  // Mints an X.509 CA and responds with the signed X.509 CA certificate chain and
+  // upstream X.509 roots. If supported by the implementation, subsequent responses
+  // on the stream contain upstream X.509 root updates; otherwise the stream is closed
+  // after the initial response.
+  rpc MintX509CAAndSubscribe(MintX509CARequest) returns (stream MintX509CAResponse);
+
+  // Optional JWT key publication support.
+  rpc PublishJWTKeyAndSubscribe(PublishJWTKeyRequest) returns (stream PublishJWTKeyResponse);
 }
 
 message MintX509CARequest {
-  string csr_pem = 1;
-  string ca_tag = 2;
+  // Required. Certificate signing request (PKCS#10)
+  bytes csr = 1;
+
+  // Optional. Preferred TTL in seconds.
+  int32 preferred_ttl = 2;
 }
 
 message MintX509CAResponse {
-  repeated string x509_ca_chain = 1;
+  // Required on the first response.
+  repeated spire.plugin.types.X509Certificate x509_ca_chain = 1;
+
+  // Required. The trusted X.509 root authorities for the upstream authority.
+  repeated spire.plugin.types.X509Certificate upstream_x509_roots = 2;
+}
+
+message PublishJWTKeyRequest {
+  // Required. The JWT signing key to publish upstream.
+  spire.plugin.types.JWTKey jwt_key = 1;
+}
+
+message PublishJWTKeyResponse {
+  // Required. The upstream JWT signing keys.
+  repeated spire.plugin.types.JWTKey upstream_jwt_keys = 1;
 }

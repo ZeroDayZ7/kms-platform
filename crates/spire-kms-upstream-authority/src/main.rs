@@ -43,30 +43,7 @@ async fn main() -> anyhow::Result<()> {
 
     #[cfg(unix)]
     {
-        tracing::debug!(
-            spire_plugin_socket = %config.spire_plugin_socket_path,
-            "Preparing SPIRE plugin socket before handshake"
-        );
-
-        grpc_server::prepare_plugin_socket_path(&config.spire_plugin_socket_path).await?;
-
-        let listener = tokio::net::UnixListener::bind(&config.spire_plugin_socket_path)?;
-        tracing::info!(
-            spire_plugin_socket = %config.spire_plugin_socket_path,
-            "SPIRE plugin socket bound successfully"
-        );
-
-        tracing::debug!(
-            spire_plugin_socket = %config.spire_plugin_socket_path,
-            "Emitting go-plugin handshake on stdout"
-        );
-        emit_go_plugin_handshake(&config.spire_plugin_socket_path)?;
-        tracing::debug!(
-            spire_plugin_socket = %config.spire_plugin_socket_path,
-            "go-plugin handshake emitted"
-        );
-
-        grpc_server::serve_with_listener(config, listener).await
+        grpc_server::serve(config).await
     }
 
     #[cfg(not(unix))]

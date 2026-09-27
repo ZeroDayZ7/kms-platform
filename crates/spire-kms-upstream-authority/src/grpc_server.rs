@@ -15,48 +15,96 @@ use crate::{
 };
 
 mod generated {
-    include!(concat!(
-        env!("OUT_DIR"),
-        "/spire.server.upstreamauthority.v1.rs"
-    ));
+    pub mod spire {
+        pub mod plugin {
+            pub mod server {
+                pub mod upstreamauthority {
+                    pub mod v1 {
+                        tonic::include_proto!("spire.plugin.server.upstreamauthority.v1");
+                    }
+                }
+            }
+            pub mod types {
+                tonic::include_proto!("spire.plugin.types");
+            }
+        }
+    }
 }
 
-use generated::{
-    MintX509caRequest, MintX509caResponse, upstream_authority_server::UpstreamAuthority,
+use generated::spire::plugin::server::upstreamauthority::v1::{
+    MintX509caRequest, MintX509caResponse, PublishJwtKeyRequest, PublishJwtKeyResponse,
+    upstream_authority_server::UpstreamAuthority,
 };
+use generated::spire::plugin::types::X509Certificate;
 
 #[derive(Clone)]
 pub struct UpstreamAuthorityService {
     pub config: Arc<PluginConfig>,
 }
 
+fn pem_to_der(pem: &str, label: &str) -> Result<Vec<u8>, Status> {
+    pem::parse(pem)
+        .map(|block| block.contents().to_vec())
+        .map_err(|err| Status::internal(format!("invalid {label} PEM: {err}")))
+}
+
+fn build_mint_x509ca_response(certs: &[String]) -> MintX509caResponse {
+    let mut chain = Vec::with_capacity(certs.len());
+    for cert_pem in certs {
+        let Ok(der) = pem_to_der(cert_pem, "certificate") else {
+            continue;
+        };
+        chain.push(X509Certificate {
+            asn1: der,
+            tainted: false,
+        });
+    }
+
+    let upstream_x509_roots = if chain.is_empty() {
+        Vec::new()
+    } else {
+        vec![chain.last().cloned().unwrap_or_else(|| X509Certificate {
+            asn1: Vec::new(),
+            tainted: false,
+        })]
+    };
+
+    MintX509caResponse {
+        x509_ca_chain: chain,
+        upstream_x509_roots,
+    }
+}
+
 #[tonic::async_trait]
 impl UpstreamAuthority for UpstreamAuthorityService {
-    async fn mint_x509ca(
+    type MintX509CAAndSubscribeStream =
+        tokio_stream::Iter<std::vec::IntoIter<Result<MintX509caResponse, Status>>>;
+
+    async fn mint_x509ca_and_subscribe(
         &self,
         request: Request<MintX509caRequest>,
-    ) -> Result<Response<MintX509caResponse>, Status> {
+    ) -> Result<Response<Self::MintX509CAAndSubscribeStream>, Status> {
         let req = request.into_inner();
+
+        if req.csr.is_empty() {
+            return Err(Status::invalid_argument("empty CSR"));
+        }
 
         tracing::info!(
             kms_socket = %self.config.kms_socket_path,
             ca_tag = %self.config.ca_tag,
-            csr_len = req.csr_pem.len(),
-            "MintX509CA request received from SPIRE"
+            csr_len = req.csr.len(),
+            preferred_ttl = req.preferred_ttl,
+            "MintX509CAAndSubscribe requested from SPIRE"
         );
 
-        let ca_tag = if req.ca_tag.trim().is_empty() {
-            self.config.ca_tag.clone()
-        } else {
-            req.ca_tag.clone()
-        };
-
+        let csr_pem = pem::encode(&pem::Pem::new("CERTIFICATE REQUEST", req.csr));
         let response = sign_csr_via_kms(
             &self.config.kms_socket_path,
             KmsSignRequest {
-                csr_pem: req.csr_pem,
-                ca_tag,
-                validity_days: 3650,
+                csr_pem,
+                ca_tag: self.config.ca_tag.clone(),
+                validity_days: req.preferred_ttl.max(1) as u32,
                 caller_service: "spire".to_string(),
             },
         )
@@ -79,9 +127,27 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             ));
         }
 
-        Ok(Response::new(MintX509caResponse {
-            x509_ca_chain: chain,
-        }))
+        let stream_response = build_mint_x509ca_response(&chain);
+
+        tracing::info!(
+            certificates_in_chain = stream_response.x509_ca_chain.len(),
+            upstream_roots = stream_response.upstream_x509_roots.len(),
+            "MintX509CAAndSubscribe certificate issued successfully"
+        );
+
+        Ok(Response::new(tokio_stream::iter(vec![Ok(stream_response)])))
+    }
+
+    type PublishJWTKeyAndSubscribeStream =
+        tokio_stream::Iter<std::vec::IntoIter<Result<PublishJwtKeyResponse, Status>>>;
+
+    async fn publish_jwt_key_and_subscribe(
+        &self,
+        _request: Request<PublishJwtKeyRequest>,
+    ) -> Result<Response<Self::PublishJWTKeyAndSubscribeStream>, Status> {
+        Err(Status::unimplemented(
+            "JWT key publication is not supported by this SPIRE UpstreamAuthority plugin",
+        ))
     }
 }
 
@@ -124,10 +190,12 @@ pub async fn serve_with_listener(
     );
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
-    health_reporter.set_service_status("", ServingStatus::Serving).await;
+    health_reporter
+        .set_service_status("", ServingStatus::Serving)
+        .await;
     health_reporter
         .set_service_status(
-            "spire.server.upstreamauthority.v1.UpstreamAuthority",
+            "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority",
             ServingStatus::Serving,
         )
         .await;
@@ -174,4 +242,61 @@ pub async fn serve(_config: PluginConfig) -> anyhow::Result<()> {
         "SPIRE upstream authority Unix Domain Socket support is only available on Unix-like systems; this host is {}",
         std::env::consts::OS
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_first_stream_response_from_signed_certificate() {
+        let root_cert = r#"-----BEGIN CERTIFICATE-----
+MIIC3zCCAcegAwIBAgIUEVKTaQkekN/ztlAvCHN+v851/1owDQYJKoZIhvcNAQEL
+BQAwFzEVMBMGA1UEAwwMVGVzdCBSb290IENBMB4XDTI2MDkyNzE1MTY0NFoXDTI3
+MDkyNzE1MTY0NFowFzEVMBMGA1UEAwwMVGVzdCBSb290IENBMIIBIjANBgkqhkiG
+9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyHGbzBbDp+b70JcuKTfGNrMrTAWQuwDO0vfO
+bTwER/oSrL1YTkoA/aO6r8imVubdF0foUXuvt9QFhwkSKQIZzkkVLOQY5jZEQiQm
+GH0JM4y33/NSuX+Is6dP4tZBpLlGw3eaIOZxLMHD4md8i1897MITDAUnOs1VEyHt
+FtpekIZUZ0+nb8RLactKNn0NRrjGDhIx5enL/hFGI8zaEgA+OyYlb153hhi/2suo
+Ds0cm7G1S8K1nGbx15hoNqthQtls8ouX2CMNx5ljbHIExbIkebWckoepAz2VskCA
+WjKUnhWBO+EnaslHQImrMVtlfGS1xyAPzW8yRrOdg/WBNwQMFwIDAQABoyMwITAP
+BgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjANBgkqhkiG9w0BAQsFAAOC
+AQEANB00aX03BZcY4LkzEqmQxixZiUuWHoYMBnk/5qxlhRgTzPi0A8kW2K3lp7VT
+h048ZZFGG5E3JfsY2wPpGXcULBpHlOw37sz9kCzFENBn92yJcWtaQLfw4AXGiM5u
+iv4EAq5//dTfX8uVhiF4QwWg3V6OG41cmW9gAhsArRiuQfcTmGpeP+pC/8xJVhjG
+kjpL+oMSToZEi7OjcDzHflLWs1NwNtJosguKMzKzawIucS+uh3Y/CcJpg7v0nj86
+OLqJgqLRWhIwXxb+/FgcgVjyb+rgier8NFi1H8TURsigZvp56G4xXjlS4zayQM2E
+l1QoCI0IU38B1DcQpjJjmbH+Sw==
+-----END CERTIFICATE-----"#;
+        let leaf_cert = r#"-----BEGIN CERTIFICATE-----
+MIICtzCCAZ+gAwIBAgIUZZ49J6BXbQmTAcVROrtch/fukTcwDQYJKoZIhvcNAQEL
+BQAwFzEVMBMGA1UEAwwMVGVzdCBSb290IENBMB4XDTI2MDkyNzE1MTY0NFoXDTI3
+MDkyNzE1MTY0NFowFDESMBAGA1UEAwwJVGVzdCBMZWFmMIIBIjANBgkqhkiG9w0B
+AQEFAAOCAQ8AMIIBCgKCAQEAsISX9h9vZrpPoXYKoM73Q5S1+XLp9YsG6rWSijVt
+sy59ckAtvh0+68edRac5FhJZ8U4Z7MlEHedGWI1u1V0FEMmjaeV2vqWaZt/K++By
+MDl4pfT1wi3V/oAvRLDcvWt6ZifbpErPJwE47ZwzdGUmREzqEe0FEa0biUM2ADqd
+FNntDaxBRlsEfk+/zJvxlqpXs7AvBp7JaLbIRBNRvbMoBKFfoUXstXGYWDwkf4WL
+UPSuTKbV5VMs88t1kOG0PZhEaoysIBnVargd0nlUxp01FwVPZ4FE4geZ2U8Ej2WO
+M93Bjn2Cc8ZskmdfkdCEbiTTiZq1EmHKo8fc3fcSS0p9BQIDAQABMA0GCSqGSIb3
+DQEBCwUAA4IBAQCRVaw/tpCXLlhwqhvm6tW8lp86AeDvJoNpfPbolxpKVvOk5Cdl
+rX4gcq105bp4Oq4Dmm6ImRsWsdtAwYpp3DGmXyTuHgprxBlMBjxElSU2VfcRfUZ6
+dMsVOLowlQO503ljgGg79sDuYbidD644FmzmPspoHQgy4Q9hS/1UdeieUS0I3S64
+7gdqZ1TQgRuPdj5Dh2Q0xo3UtjEaoAkXYta229PL6Rl+nU5ekS490HEoJoXY+b+7
+2K7NDsZnX3nXpPOPI+0hXutw0Pz7DEH/Oy/W9UYplPBS5C07Ue/SWUoMzKk+nfTE
+rTcwViK3d+ALfhamH6lbyzLnbMlLxVFEPH07
+-----END CERTIFICATE-----"#;
+
+        let response = build_mint_x509ca_response(&[leaf_cert.to_string(), root_cert.to_string()]);
+
+        assert_eq!(response.x509_ca_chain.len(), 2);
+        assert_eq!(response.upstream_x509_roots.len(), 1);
+        assert!(response.x509_ca_chain[0].asn1.len() > 0);
+    }
+
+    #[test]
+    fn rejects_empty_certificate_chain() {
+        let response = build_mint_x509ca_response(&[]);
+        assert!(response.x509_ca_chain.is_empty());
+        assert!(response.upstream_x509_roots.is_empty());
+    }
 }
