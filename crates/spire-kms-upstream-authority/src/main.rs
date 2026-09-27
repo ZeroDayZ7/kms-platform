@@ -1,54 +1,35 @@
 mod config;
 mod grpc_server;
+mod kms_client;
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 
 use clap::Parser;
+use config::PluginArgs;
 
-use crate::{config::PluginConfig, grpc_server::serve};
-
-#[derive(Debug, Parser)]
-#[command(
-    name = "spire-kms-upstream-authority",
-    about = "SPIRE upstream authority shim for KMS"
-)]
-struct Args {
-    #[arg(long, env = "KMS_GRPC_SOCKET", default_value = "/run/kms/kms.sock")]
-    socket: String,
-
-    #[arg(long, env = "KMS_CA_TAG", default_value = "root")]
-    ca_tag: String,
+fn init_logging() {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter("info")
+        .with_target(false)
+        .without_time()
+        .init();
 }
 
-fn run_go_plugin_handshake() -> anyhow::Result<()> {
-    let mut stdin = io::stdin().lock();
-    let mut buffer = [0_u8; 1];
-    let _ = stdin.read_exact(&mut buffer);
-
+fn emit_go_plugin_handshake(socket_path: &str) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
-    writeln!(
-        stdout,
-        "{{\"protocolVersion\":1,\"pluginName\":\"spire-kms-upstream-authority\",\"pluginType\":\"UpstreamAuthority\"}}"
-    )?;
+    writeln!(stdout, "1|1|unix|{socket_path}|grpc")?;
     stdout.flush()?;
-
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .with_target(false)
-        .without_time()
-        .init();
+    init_logging();
 
-    let args = Args::parse();
-    let config = PluginConfig {
-        socket_path: args.socket,
-        ca_tag: args.ca_tag,
-        plugin_name: "spire-kms-upstream-authority".to_string(),
-    };
+    let args = PluginArgs::parse();
+    let config = args.into_config();
+    config.validate()?;
 
     tracing::info!(
         plugin = %config.plugin_name,
@@ -57,9 +38,19 @@ async fn main() -> anyhow::Result<()> {
         "Starting SPIRE upstream authority shim"
     );
 
-    if let Err(err) = run_go_plugin_handshake() {
-        tracing::warn!(error = %err, "go-plugin handshake did not complete; continuing with the shim loop");
+    emit_go_plugin_handshake(&config.socket_path)?;
+
+    #[cfg(unix)]
+    {
+        grpc_server::serve(config).await
     }
 
-    serve(config).await
+    #[cfg(not(unix))]
+    {
+        eprintln!(
+            "SPIRE upstream authority requires Unix Domain Sockets; this host is {}.",
+            std::env::consts::OS
+        );
+        Ok(())
+    }
 }
