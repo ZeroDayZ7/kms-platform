@@ -39,7 +39,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         let req = request.into_inner();
 
         tracing::info!(
-            socket = %self.config.socket_path,
+            kms_socket = %self.config.kms_socket_path,
             ca_tag = %self.config.ca_tag,
             csr_len = req.csr_pem.len(),
             "Proxying MintX509CA to kms-service over UDS"
@@ -52,7 +52,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         };
 
         let response = sign_csr_via_kms(
-            &self.config.socket_path,
+            &self.config.kms_socket_path,
             KmsSignRequest {
                 csr_pem: req.csr_pem,
                 ca_tag,
@@ -86,6 +86,21 @@ impl UpstreamAuthority for UpstreamAuthorityService {
 }
 
 #[cfg(unix)]
+pub async fn prepare_plugin_socket_path(socket_path: &str) -> anyhow::Result<()> {
+    let socket = Path::new(socket_path);
+
+    if let Some(parent) = socket.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    if socket.exists() {
+        tokio::fs::remove_file(socket).await?;
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
 async fn cleanup_socket_file(path: impl AsRef<std::path::Path>) {
     let path = path.as_ref();
     if path.exists() {
@@ -94,25 +109,17 @@ async fn cleanup_socket_file(path: impl AsRef<std::path::Path>) {
 }
 
 #[cfg(unix)]
-pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
-    let socket_path = config.socket_path.clone();
-    let socket = Path::new(&socket_path);
-
-    if let Some(parent) = socket.parent() {
-        tokio::fs::create_dir_all(parent).await?;
-    }
-
-    cleanup_socket_file(std::path::Path::new(&socket_path)).await;
-
-    let listener = tokio::net::UnixListener::bind(&socket_path)?;
-    std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o660))?;
-
+pub async fn serve_with_listener(
+    config: PluginConfig,
+    listener: tokio::net::UnixListener,
+) -> anyhow::Result<()> {
+    let socket_path = config.spire_plugin_socket_path.clone();
     let service = UpstreamAuthorityService {
         config: Arc::new(config),
     };
 
     tracing::info!(
-        "Serving SPIRE UpstreamAuthority over Unix Domain Socket at {}",
+        "Serving SPIRE UpstreamAuthority on plugin socket {}",
         socket_path
     );
 
@@ -134,14 +141,25 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
             result?;
         }
         _ = tokio::signal::ctrl_c() => {
-            tracing::info!("Received shutdown signal, cleaning up socket");
-            if Path::new(&socket_path).exists() {
-                let _ = tokio::fs::remove_file(&socket_path).await;
-            }
+            tracing::info!("Received shutdown signal, cleaning up SPIRE plugin socket");
+            cleanup_socket_file(&socket_path).await;
         }
     }
 
     Ok(())
+}
+
+#[cfg(unix)]
+pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
+    prepare_plugin_socket_path(&config.spire_plugin_socket_path).await?;
+
+    let listener = tokio::net::UnixListener::bind(&config.spire_plugin_socket_path)?;
+    std::fs::set_permissions(
+        &config.spire_plugin_socket_path,
+        std::fs::Permissions::from_mode(0o660),
+    )?;
+
+    serve_with_listener(config, listener).await
 }
 
 #[cfg(not(unix))]

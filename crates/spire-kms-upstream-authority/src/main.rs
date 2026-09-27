@@ -2,6 +2,7 @@ mod config;
 mod grpc_server;
 mod kms_client;
 
+#[cfg(unix)]
 use std::io::{self, Write};
 
 use clap::Parser;
@@ -16,6 +17,7 @@ fn init_logging() {
         .init();
 }
 
+#[cfg(unix)]
 fn emit_go_plugin_handshake(socket_path: &str) -> anyhow::Result<()> {
     let mut stdout = io::stdout().lock();
     writeln!(stdout, "1|1|unix|{socket_path}|grpc")?;
@@ -33,16 +35,20 @@ async fn main() -> anyhow::Result<()> {
 
     tracing::info!(
         plugin = %config.plugin_name,
-        socket = %config.socket_path,
+        spire_plugin_socket = %config.spire_plugin_socket_path,
+        kms_socket = %config.kms_socket_path,
         ca_tag = %config.ca_tag,
         "Starting SPIRE upstream authority shim"
     );
 
-    emit_go_plugin_handshake(&config.socket_path)?;
-
     #[cfg(unix)]
     {
-        grpc_server::serve(config).await
+        grpc_server::prepare_plugin_socket_path(&config.spire_plugin_socket_path).await?;
+
+        let listener = tokio::net::UnixListener::bind(&config.spire_plugin_socket_path)?;
+        emit_go_plugin_handshake(&config.spire_plugin_socket_path)?;
+
+        grpc_server::serve_with_listener(config, listener).await
     }
 
     #[cfg(not(unix))]
