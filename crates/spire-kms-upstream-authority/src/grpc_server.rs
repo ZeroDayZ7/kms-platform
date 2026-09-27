@@ -33,7 +33,7 @@ mod generated {
 
 use generated::spire::plugin::server::upstreamauthority::v1::{
     MintX509caRequest, MintX509caResponse, PublishJwtKeyRequest, PublishJwtKeyResponse,
-    upstream_authority_server::UpstreamAuthority,
+    upstream_authority_server::{UpstreamAuthority, UpstreamAuthorityServer},
 };
 use generated::spire::plugin::types::X509Certificate;
 
@@ -242,7 +242,7 @@ pub async fn serve_with_listener(
     tracing::info!("TONIC_SERVICES: - UpstreamAuthority - grpc.health.v1.Health");
 
     let server = tonic::transport::Server::builder()
-        .add_service(generated::upstream_authority_server::UpstreamAuthorityServer::new(service))
+        .add_service(UpstreamAuthorityServer::new(service))
         .add_service(health_service);
 
     tokio::select! {
@@ -279,6 +279,16 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
     )?;
     tracing::info!(
         "PLUGIN_SOCKET_PERMISSIONS_OK mode=0660 path={}"
+        , config.spire_plugin_socket_path
+    );
+
+    tracing::info!(
+        "HANDSHAKE_START path={}"
+        , config.spire_plugin_socket_path
+    );
+    crate::emit_go_plugin_handshake(&config.spire_plugin_socket_path)?;
+    tracing::info!(
+        "HANDSHAKE_OK path={}"
         , config.spire_plugin_socket_path
     );
 
