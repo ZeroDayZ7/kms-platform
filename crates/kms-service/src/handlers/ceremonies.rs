@@ -4,7 +4,10 @@ use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
 
 use crate::server::state::AppState;
-use kms_db::repositories::ceremonies::CeremonyQueries;
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
+use kms_core::audit::{self as core_audit, AuditHashVersion};
+use kms_db::repositories::{AuditInsert, AuditQueries};
 
 #[derive(Deserialize, Serialize)]
 pub struct CeremonyRequest {
@@ -39,21 +42,77 @@ pub async fn register_ceremony_handler(
         )
     })?;
 
-    CeremonyQueries::insert_tx(
-        &mut tx,
-        ceremony_id,
-        &payload.operation,
-        manifest.as_slice(),
-        "RECORDED",
-        chrono::Utc::now(),
-    )
-    .await
-    .map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("insert ceremony: {}", e),
-        )
-    })?;
+    // Append an audit log entry representing the ceremony
+    AuditQueries::lock_audit_chain_tx(&mut tx)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("lock audit chain: {}", e),
+            )
+        })?;
+
+    let prev_hash = AuditQueries::latest_hash_tx(&mut tx)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("latest_hash: {}", e),
+            )
+        })?
+        .unwrap_or_default();
+
+    let metadata_str = match std::str::from_utf8(manifest.as_slice()) {
+        Ok(s) => s.to_string(),
+        Err(_) => BASE64_ENGINE.encode(manifest.as_slice()),
+    };
+
+    let audit_id = uuid::Uuid::new_v4();
+    let now = chrono::Utc::now();
+
+    let hash = core_audit::compute_audit_hash(&core_audit::AuditHashInput {
+        id: &audit_id.to_string(),
+        caller_service: "kms-service",
+        target_service: "ceremony",
+        action: &payload.operation,
+        algorithm: "NONE",
+        status: "RECORDED",
+        reason: None,
+        prev_hash: &prev_hash,
+        timestamp: &now,
+        request_id: None,
+        operation_id: Some(&ceremony_id.to_string()),
+        target_id: None,
+        metadata: Some(&metadata_str),
+        hash_version: AuditHashVersion::CURRENT,
+    });
+
+    let audit_row = AuditInsert {
+        id: audit_id,
+        caller_service: "kms-service".to_string(),
+        target_service: "ceremony".to_string(),
+        action: payload.operation.clone(),
+        algorithm: "NONE".to_string(),
+        status: "RECORDED".to_string(),
+        reason: None,
+        prev_hash: prev_hash.clone(),
+        hash,
+        signature: Some(Vec::new()),
+        request_id: None,
+        operation_id: Some(ceremony_id.to_string()),
+        target_id: None,
+        metadata: Some(metadata_str),
+        created_at: now,
+    };
+
+    AuditQueries::insert_tx(&mut tx, audit_row)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("insert audit: {}", e),
+            )
+        })?;
 
     tx.commit().await.map_err(|e| {
         (

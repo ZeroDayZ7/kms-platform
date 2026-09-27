@@ -469,8 +469,7 @@ impl BootstrapQueries {
     }
 }
 
-// Re-export ceremonies module for external use
-pub mod ceremonies;
+// Legacy ceremonies repository removed — ceremonies are recorded via audit_logs
 
 #[derive(Debug, Clone, FromRow)]
 pub struct KeyDbRow {

@@ -113,19 +113,81 @@ pub async fn execute(state: &AppState, input: InitRootCaInput) -> AppResult<Init
     }))
     .map_err(|e| AppError::ValidationError(format!("invalid payload: {}", e)))?;
 
-    // Use repository to insert ceremony within transaction
-    kms_db::repositories::ceremonies::CeremonyQueries::insert_tx(
-        &mut tx,
-        ceremony_id,
-        "ca_init",
-        &manifest,
-        "RECORDED",
-        Utc::now(),
-    )
-    .await
-    .map_err(|err| {
-        AppError::database_error_with_source(format!("Database operation failed: {err}"), err)
-    })?;
+    // Record ceremony as an audit log entry
+    {
+        // Lock audit chain and compute hash
+        kms_db::repositories::AuditQueries::lock_audit_chain_tx(&mut tx)
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
+
+        let prev_hash = kms_db::repositories::AuditQueries::latest_hash_tx(&mut tx)
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?
+            .unwrap_or_default();
+
+        use base64::Engine;
+        let metadata = match std::str::from_utf8(&manifest) {
+            Ok(s) => s.to_string(),
+            Err(_) => base64::engine::general_purpose::STANDARD.encode(&manifest),
+        };
+
+        let audit_id = Uuid::new_v4();
+        let now = Utc::now();
+
+        let audit_hash = kms_core::audit::compute_audit_hash(&kms_core::audit::AuditHashInput {
+            id: &audit_id.to_string(),
+            caller_service: "kms-ceremony-cli",
+            target_service: "kms-service",
+            action: "ca_init",
+            algorithm: "NONE",
+            status: "RECORDED",
+            reason: None,
+            prev_hash: &prev_hash,
+            timestamp: &now,
+            request_id: None,
+            operation_id: Some(&ceremony_id.to_string()),
+            target_id: Some(&root_ca_id.to_string()),
+            metadata: Some(&metadata),
+            hash_version: kms_core::audit::AuditHashVersion::CURRENT,
+        });
+
+        let audit_row = kms_db::repositories::AuditInsert {
+            id: audit_id,
+            caller_service: "kms-ceremony-cli".to_string(),
+            target_service: "kms-service".to_string(),
+            action: "ca_init".to_string(),
+            algorithm: "NONE".to_string(),
+            status: "RECORDED".to_string(),
+            reason: None,
+            prev_hash: prev_hash.clone(),
+            hash: audit_hash,
+            signature: None,
+            request_id: None,
+            operation_id: Some(ceremony_id.to_string()),
+            target_id: Some(root_ca_id.to_string()),
+            metadata: Some(metadata),
+            created_at: now,
+        };
+
+        kms_db::repositories::AuditQueries::insert_tx(&mut tx, audit_row)
+            .await
+            .map_err(|err| {
+                AppError::database_error_with_source(
+                    format!("Database operation failed: {err}"),
+                    err,
+                )
+            })?;
+    }
 
     // Insert audit
     let audit_row = kms_db::repositories::AuditInsert {
