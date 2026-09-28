@@ -261,7 +261,8 @@ fn build_and_sign_certificate(
             use yasna::models::UTCTime;
             // Truncate subseconds: yasna's UTCTime cannot express non-zero nanoseconds
             let now_tmp = OffsetDateTime::now_utc();
-            let not_before: OffsetDateTime = OffsetDateTime::from_unix_timestamp(now_tmp.unix_timestamp()).unwrap_or(now_tmp);
+            let not_before: OffsetDateTime =
+                OffsetDateTime::from_unix_timestamp(now_tmp.unix_timestamp()).unwrap_or(now_tmp);
             let not_after: OffsetDateTime = not_before + TimeDuration::days(_validity_days as i64);
             writer.next().write_sequence(|writer| {
                 let nb_t = UTCTime::from_datetime(not_before);
@@ -322,8 +323,12 @@ fn build_and_sign_certificate(
                                 .write_oid(&ObjectIdentifier::from_slice(&[2, 5, 29, 15]));
                             writer.next().write_bool(true);
                             let ku = yasna::construct_der(|writer| {
-                                // bitstring with bits 5 and 6 set -> bit positions
-                                writer.write_bitvec_bytes(&[0b01100000], 3);
+                                // Construct a BIT STRING where bit positions follow X.509 spec:
+                                // bit 0 = digitalSignature, 1 = nonRepudiation, 2 = keyEncipherment,
+                                // 3 = dataEncipherment, 4 = keyAgreement, 5 = keyCertSign, 6 = cRLSign
+                                // We need bits 5 and 6 set => first octet 0b01100000
+                                // Write 8 bits (one octet) with bits 5 and 6 set.
+                                writer.write_bitvec_bytes(&[0b01100000], 8);
                             });
                             writer.next().write_bytes(&ku);
                         });

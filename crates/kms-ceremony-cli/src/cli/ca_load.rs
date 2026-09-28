@@ -37,8 +37,12 @@ pub async fn handle_ca_load(
         let client = reqwest::Client::new();
         let path = "/api/v1/ca/load";
         let body = serde_json::to_vec(&manifest)?;
-        let headers =
-            crate::cli::hmac::build_signed_request_headers_with_body(&cfg, "POST", path, Some(&body))?;
+        let headers = crate::cli::hmac::build_signed_request_headers_with_body(
+            &cfg,
+            "POST",
+            path,
+            Some(&body),
+        )?;
         let url = format!("{}{}", cfg.service_url.trim_end_matches('/'), path);
         let req = client.post(&url).headers(headers).body(body).build()?;
         let resp = client.execute(req).await?;
@@ -67,8 +71,12 @@ pub async fn handle_ca_load(
         let path = "/api/v1/ca/load";
         let manifest = serde_json::json!({"operation": "ca_load", "ca_tag": ca_tag});
         let body = serde_json::to_vec(&manifest)?;
-        let headers =
-            crate::cli::hmac::build_signed_request_headers_with_body(&cfg, "POST", path, Some(&body))?;
+        let headers = crate::cli::hmac::build_signed_request_headers_with_body(
+            &cfg,
+            "POST",
+            path,
+            Some(&body),
+        )?;
         let url = format!("{}{}", cfg.service_url.trim_end_matches('/'), path);
         let req = client.post(&url).headers(headers).body(body).build()?;
         let resp = client.execute(req).await?;

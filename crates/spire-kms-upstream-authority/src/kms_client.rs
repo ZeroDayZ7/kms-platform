@@ -91,7 +91,10 @@ pub async fn sign_csr_via_kms(
                 let v: serde_json::Value = serde_json::from_slice(&response_buf)?;
                 if let Some(err_obj) = v.get("Error") {
                     let code = err_obj.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-                    let message = err_obj.get("message").and_then(|m| m.as_str()).unwrap_or("");
+                    let message = err_obj
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("");
                     anyhow::bail!("KMS error {}: {}", code, message);
                 }
 
@@ -99,7 +102,9 @@ pub async fn sign_csr_via_kms(
                     let cert = signed
                         .get("certificate_pem")
                         .and_then(|c| c.as_str())
-                        .ok_or_else(|| anyhow::anyhow!("missing certificate_pem in SignedIntermediate"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("missing certificate_pem in SignedIntermediate")
+                        })?;
                     return Ok::<KmsSignResponse, anyhow::Error>(KmsSignResponse {
                         certificate_pem: cert.to_string(),
                         root_certificate_pem: None,
@@ -141,7 +146,10 @@ pub async fn sign_csr_via_kms(
                 let v: serde_json::Value = serde_json::from_slice(&response_buf)?;
                 if let Some(err_obj) = v.get("Error") {
                     let code = err_obj.get("code").and_then(|c| c.as_u64()).unwrap_or(0);
-                    let message = err_obj.get("message").and_then(|m| m.as_str()).unwrap_or("");
+                    let message = err_obj
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("");
                     anyhow::bail!("KMS error {}: {}", code, message);
                 }
 
@@ -149,7 +157,9 @@ pub async fn sign_csr_via_kms(
                     let cert = signed
                         .get("certificate_pem")
                         .and_then(|c| c.as_str())
-                        .ok_or_else(|| anyhow::anyhow!("missing certificate_pem in SignedIntermediate"))?;
+                        .ok_or_else(|| {
+                            anyhow::anyhow!("missing certificate_pem in SignedIntermediate")
+                        })?;
                     return Ok::<KmsSignResponse, anyhow::Error>(KmsSignResponse {
                         certificate_pem: cert.to_string(),
                         root_certificate_pem: None,
