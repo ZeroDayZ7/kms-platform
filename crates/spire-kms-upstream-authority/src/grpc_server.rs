@@ -15,6 +15,9 @@ use crate::{
 };
 
 mod generated {
+    pub mod plugin {
+        tonic::include_proto!("plugin");
+    }
     pub mod spire {
         pub mod common {
             pub mod plugin {
@@ -45,17 +48,29 @@ mod generated {
     }
 }
 
+#[allow(unused_imports)]
+use generated::plugin::{
+    grpc_broker_server::{GrpcBroker, GrpcBrokerServer},
+    grpc_controller_server::{GrpcController, GrpcControllerServer},
+    grpc_stdio_server::{GrpcStdio, GrpcStdioServer},
+    ConnInfo, Empty,
+    StdioData,
+};
+#[allow(unused_imports)]
 use generated::spire::common::plugin::{
     plugin_init_server::{PluginInit, PluginInitServer},
     plugin_server::{Plugin, PluginServer},
     ConfigureRequest, ConfigureResponse, GetPluginInfoRequest, GetPluginInfoResponse,
     InitRequest, InitResponse,
 };
+#[allow(unused_imports)]
 use generated::spire::plugin::server::upstreamauthority::v1::{
     MintX509caRequest, MintX509caResponse, PublishJwtKeyRequest, PublishJwtKeyResponse,
     upstream_authority_server::{UpstreamAuthority, UpstreamAuthorityServer},
 };
+#[allow(unused_imports)]
 use generated::spire::plugin::types::X509Certificate;
+#[allow(unused_imports)]
 use generated::spire::service::private::init::v1::{
     DeinitRequest, DeinitResponse, InitRequest as PrivateInitRequest,
     InitResponse as PrivateInitResponse, init_server::{Init as PrivateInit, InitServer},
@@ -75,8 +90,8 @@ impl Plugin for PluginService {
         &self,
         request: Request<ConfigureRequest>,
     ) -> Result<Response<ConfigureResponse>, Status> {
-        let path = request
-            .metadata()
+        let metadata = request.metadata().clone();
+        let path = metadata
             .get(":path")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
@@ -162,6 +177,113 @@ impl Plugin for PluginService {
 }
 
 #[derive(Clone, Default)]
+pub struct GoPluginControllerService;
+
+#[tonic::async_trait]
+impl GrpcController for GoPluginControllerService {
+    async fn shutdown(
+        &self,
+        request: Request<Empty>,
+    ) -> Result<Response<Empty>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        tracing::warn!(
+            service = "plugin.GRPCController",
+            method = "Shutdown",
+            grpc_path = %path,
+            "RPC_ENTER shutdown_requested"
+        );
+
+        let response = Empty {};
+        tracing::warn!(
+            service = "plugin.GRPCController",
+            method = "Shutdown",
+            grpc_path = %path,
+            "RPC_EXIT status=OK"
+        );
+        Ok(Response::new(response))
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct GoPluginStdioService;
+
+#[tonic::async_trait]
+impl GrpcStdio for GoPluginStdioService {
+    type StreamStdioStream = tokio_stream::wrappers::ReceiverStream<Result<StdioData, Status>>;
+
+    async fn stream_stdio(
+        &self,
+        request: Request<()>,
+    ) -> Result<Response<Self::StreamStdioStream>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        tracing::info!(
+            service = "plugin.GRPCStdio",
+            method = "StreamStdio",
+            grpc_path = %path,
+            "RPC_ENTER stdio_stream_requested"
+        );
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<StdioData, Status>>(64);
+        let _ = tx;
+        tracing::info!(
+            service = "plugin.GRPCStdio",
+            method = "StreamStdio",
+            grpc_path = %path,
+            "RPC_EXIT status=OK empty_stream"
+        );
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+}
+
+#[derive(Clone, Default)]
+pub struct GoPluginBrokerService;
+
+#[tonic::async_trait]
+impl GrpcBroker for GoPluginBrokerService {
+    type StartStreamStream = tokio_stream::wrappers::ReceiverStream<Result<ConnInfo, Status>>;
+
+    async fn start_stream(
+        &self,
+        request: Request<tonic::Streaming<ConnInfo>>,
+    ) -> Result<Response<Self::StartStreamStream>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .unwrap_or_else(|| "<unknown>".to_string());
+
+        tracing::info!(
+            service = "plugin.GRPCBroker",
+            method = "StartStream",
+            grpc_path = %path,
+            "RPC_ENTER broker_stream_requested"
+        );
+
+        let (_tx, rx) = tokio::sync::mpsc::channel::<Result<ConnInfo, Status>>(64);
+        tracing::info!(
+            service = "plugin.GRPCBroker",
+            method = "StartStream",
+            grpc_path = %path,
+            "RPC_EXIT status=OK empty_stream"
+        );
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+}
+
+#[derive(Clone, Default)]
 pub struct PluginInitService;
 
 #[tonic::async_trait]
@@ -170,8 +292,8 @@ impl PluginInit for PluginInitService {
         &self,
         request: Request<InitRequest>,
     ) -> Result<Response<InitResponse>, Status> {
-        let path = request
-            .metadata()
+        let metadata = request.metadata().clone();
+        let path = metadata
             .get(":path")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
@@ -214,8 +336,8 @@ impl PrivateInit for PrivateInitService {
         &self,
         request: Request<PrivateInitRequest>,
     ) -> Result<Response<PrivateInitResponse>, Status> {
-        let path = request
-            .metadata()
+        let metadata = request.metadata().clone();
+        let path = metadata
             .get(":path")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
@@ -280,10 +402,10 @@ impl PrivateInit for PrivateInitService {
     }
 }
 
-fn pem_to_der(pem: &str, label: &str) -> Result<Vec<u8>, Status> {
+fn pem_to_der(pem: &str, label: &str) -> Result<Vec<u8>, String> {
     pem::parse(pem)
         .map(|block| block.contents().to_vec())
-        .map_err(|err| Status::internal(format!("invalid {label} PEM: {err}")))
+        .map_err(|err| format!("invalid {label} PEM: {err}"))
 }
 
 fn build_mint_x509ca_response(certs: &[String]) -> MintX509caResponse {
@@ -322,8 +444,8 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         &self,
         request: Request<MintX509caRequest>,
     ) -> Result<Response<Self::MintX509CAAndSubscribeStream>, Status> {
-        let path = request
-            .metadata()
+        let metadata = request.metadata().clone();
+        let path = metadata
             .get(":path")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
@@ -336,7 +458,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             grpc_path = %path,
             csr_len = req.csr.len(),
             preferred_ttl = req.preferred_ttl,
-            request_metadata = ?request.metadata(),
+            request_metadata = ?metadata,
             "RPC_ENTER"
         );
 
@@ -568,6 +690,9 @@ pub async fn serve_with_listener(
         .add_service(PluginServer::new(PluginService::default()))
         .add_service(PluginInitServer::new(PluginInitService::default()))
         .add_service(InitServer::new(PrivateInitService::default()))
+        .add_service(GrpcControllerServer::new(GoPluginControllerService::default()))
+        .add_service(GrpcStdioServer::new(GoPluginStdioService::default()))
+        .add_service(GrpcBrokerServer::new(GoPluginBrokerService::default()))
         .add_service(UpstreamAuthorityServer::new(service))
         .add_service(health_service);
 
@@ -657,7 +782,7 @@ mod tests {
 
     #[tokio::test]
     async fn plugin_configure_returns_success() {
-        let response = PluginService::default()
+        let response = PluginService
             .configure(Request::new(ConfigureRequest {
                 configuration: "".to_string(),
                 global_config: None,
@@ -667,7 +792,6 @@ mod tests {
 
         assert!(response.into_inner().error_list.is_empty());
     }
-    use super::*;
 
     #[test]
     fn builds_first_stream_response_from_signed_certificate() {
@@ -711,7 +835,7 @@ rTcwViK3d+ALfhamH6lbyzLnbMlLxVFEPH07
 
         assert_eq!(response.x509_ca_chain.len(), 2);
         assert_eq!(response.upstream_x509_roots.len(), 1);
-        assert!(response.x509_ca_chain[0].asn1.len() > 0);
+        assert!(!response.x509_ca_chain[0].asn1.is_empty());
     }
 
     #[test]
