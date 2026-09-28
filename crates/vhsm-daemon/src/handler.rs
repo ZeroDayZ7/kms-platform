@@ -259,7 +259,9 @@ fn build_and_sign_certificate(
             use time::Duration as TimeDuration;
             use time::OffsetDateTime;
             use yasna::models::UTCTime;
-            let not_before: OffsetDateTime = OffsetDateTime::now_utc();
+            // Truncate subseconds: yasna's UTCTime cannot express non-zero nanoseconds
+            let now_tmp = OffsetDateTime::now_utc();
+            let not_before: OffsetDateTime = OffsetDateTime::from_unix_timestamp(now_tmp.unix_timestamp()).unwrap_or(now_tmp);
             let not_after: OffsetDateTime = not_before + TimeDuration::days(_validity_days as i64);
             writer.next().write_sequence(|writer| {
                 let nb_t = UTCTime::from_datetime(not_before);
