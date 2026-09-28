@@ -6,7 +6,8 @@ use std::time::Duration;
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(unix)]
-use tokio::net::UnixStream;
+use tokio::net::{TcpStream, UnixStream};
+use tracing::warn;
 
 #[allow(dead_code)]
 const MAX_KMS_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -33,50 +34,116 @@ pub async fn sign_csr_via_kms(
     socket_path: &str,
     req: KmsSignRequest,
 ) -> anyhow::Result<KmsSignResponse> {
-    if !Path::new(socket_path).exists() {
-        anyhow::bail!("KMS socket not available at {}", socket_path);
+    // Allow addresses like `unix:/run/kms/kms.sock` or `tcp:127.0.0.1:8080`.
+    let (is_tcp, path) = if socket_path.starts_with("tcp:") {
+        (true, socket_path.trim_start_matches("tcp:").to_string())
+    } else if socket_path.starts_with("unix:") {
+        (false, socket_path.trim_start_matches("unix:").to_string())
+    } else {
+        (false, socket_path.to_string())
+    };
+
+    if !is_tcp && !Path::new(&path).exists() {
+        anyhow::bail!("KMS socket not available at {}", path);
     }
 
-    let res = tokio::time::timeout(KMS_TIMEOUT, async move {
-        let mut stream = UnixStream::connect(socket_path).await?;
-        let payload = serde_json::to_vec(&req)?;
-        let len = payload.len() as u32;
+    const ATTEMPTS: usize = 5;
+    const INITIAL_BACKOFF_MS: u64 = 500;
 
-        // Write a length-prefixed message and flush. Use small writes to
-        // reduce chances of partial-frame issues with some UDS proxies.
-        stream.write_all(&len.to_be_bytes()).await?;
-        stream.write_all(&payload).await?;
-        stream.flush().await?;
+    let mut last_err: Option<anyhow::Error> = None;
 
-        let mut len_buf = [0_u8; 4];
-        stream.read_exact(&mut len_buf).await?;
-        let response_len = u32::from_be_bytes(len_buf) as usize;
+    for attempt in 1..=ATTEMPTS {
+        let attempt_desc = format!("{}/{}", attempt, ATTEMPTS);
 
-        if response_len > MAX_KMS_RESPONSE_SIZE {
-            anyhow::bail!(
-                "KMS response length {} exceeds limit {}",
-                response_len,
-                MAX_KMS_RESPONSE_SIZE
-            );
-        }
+        let fut = async {
+            // encapsulate the request/response exchange so we can reuse for both stream types
+            let payload = serde_json::to_vec(&req)?;
+            let len = payload.len() as u32;
 
-        let mut response_buf = vec![0_u8; response_len];
-        let mut read = 0usize;
-        while read < response_len {
-            let n = stream.read(&mut response_buf[read..]).await?;
-            if n == 0 {
-                anyhow::bail!("unexpected EOF while reading KMS response")
+            if is_tcp {
+                let mut stream = TcpStream::connect(&path).await?;
+                stream.write_all(&len.to_be_bytes()).await?;
+                stream.write_all(&payload).await?;
+                stream.flush().await?;
+
+                let mut len_buf = [0_u8; 4];
+                stream.read_exact(&mut len_buf).await?;
+                let response_len = u32::from_be_bytes(len_buf) as usize;
+
+                if response_len > MAX_KMS_RESPONSE_SIZE {
+                    anyhow::bail!(
+                        "KMS response length {} exceeds limit {}",
+                        response_len,
+                        MAX_KMS_RESPONSE_SIZE
+                    );
+                }
+
+                let mut response_buf = vec![0_u8; response_len];
+                let mut read = 0usize;
+                while read < response_len {
+                    let n = stream.read(&mut response_buf[read..]).await?;
+                    if n == 0 {
+                        anyhow::bail!("unexpected EOF while reading KMS response")
+                    }
+                    read += n;
+                }
+
+                let response: KmsSignResponse = serde_json::from_slice(&response_buf)?;
+                Ok::<KmsSignResponse, anyhow::Error>(response)
+            } else {
+                let mut stream = UnixStream::connect(&path).await?;
+                stream.write_all(&len.to_be_bytes()).await?;
+                stream.write_all(&payload).await?;
+                stream.flush().await?;
+
+                let mut len_buf = [0_u8; 4];
+                stream.read_exact(&mut len_buf).await?;
+                let response_len = u32::from_be_bytes(len_buf) as usize;
+
+                if response_len > MAX_KMS_RESPONSE_SIZE {
+                    anyhow::bail!(
+                        "KMS response length {} exceeds limit {}",
+                        response_len,
+                        MAX_KMS_RESPONSE_SIZE
+                    );
+                }
+
+                let mut response_buf = vec![0_u8; response_len];
+                let mut read = 0usize;
+                while read < response_len {
+                    let n = stream.read(&mut response_buf[read..]).await?;
+                    if n == 0 {
+                        anyhow::bail!("unexpected EOF while reading KMS response")
+                    }
+                    read += n;
+                }
+
+                let response: KmsSignResponse = serde_json::from_slice(&response_buf)?;
+                Ok::<KmsSignResponse, anyhow::Error>(response)
             }
-            read += n;
+        };
+
+        match tokio::time::timeout(KMS_TIMEOUT, fut).await {
+            Ok(Ok(resp)) => return Ok(resp),
+            Ok(Err(e)) => {
+                warn!(error = %e, attempt = %attempt_desc, "KMS request failed");
+                last_err = Some(e);
+            }
+            Err(_) => {
+                let to_err = anyhow::anyhow!("KMS request timed out after {:?}", KMS_TIMEOUT);
+                warn!(error = %to_err, attempt = %attempt_desc, "KMS request timed out");
+                last_err = Some(to_err);
+            }
         }
 
-        let response: KmsSignResponse = serde_json::from_slice(&response_buf)?;
-        Ok::<KmsSignResponse, anyhow::Error>(response)
-    })
-    .await
-    .map_err(|_| anyhow::anyhow!("KMS request timed out after {:?}", KMS_TIMEOUT))?;
+        // exponential backoff
+        if attempt < ATTEMPTS {
+            let backoff_ms = INITIAL_BACKOFF_MS.saturating_mul(1u64 << (attempt - 1));
+            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+        }
+    }
 
-    res
+    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("KMS request failed")))
 }
 
 #[cfg(not(unix))]

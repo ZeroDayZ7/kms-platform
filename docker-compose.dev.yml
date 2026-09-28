@@ -50,3 +50,14 @@ volumes:
   spire_sockets:
     name: spire_sockets
     external: true
+
+networks:
+  kms-internal-net:
+    name: kms_internal_net
+    external: true
+  sec-net:
+    name: kms_sec_net
+    external: true
+  target-admin-net:
+    name: kms_target_admin_net
+    external: true

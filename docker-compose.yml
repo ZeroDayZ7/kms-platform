@@ -123,6 +123,9 @@ volumes:
     driver: local
   target_cache:
     driver: local
+  kms_sockets:
+    name: kms_sockets
+    external: true
 
 # region secrets
 secrets:
