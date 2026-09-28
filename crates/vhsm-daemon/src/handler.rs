@@ -328,7 +328,11 @@ fn build_and_sign_certificate(
                                 // 3 = dataEncipherment, 4 = keyAgreement, 5 = keyCertSign, 6 = cRLSign
                                 // We need bits 5 and 6 set => first octet 0b01100000
                                 // Write 8 bits (one octet) with bits 5 and 6 set.
-                                writer.write_bitvec_bytes(&[0b01100000], 8);
+                                // Set bits 5 (keyCertSign) and 6 (cRLSign).
+                                // ASN.1 BIT STRING bit numbering: bit 0 is MSB of first octet (0x80).
+                                // Therefore keyCertSign (index 5) => 0x04, cRLSign (index 6) => 0x02.
+                                // Combined => 0x06 (0b00000110).
+                                writer.write_bitvec_bytes(&[0b00000110], 8);
                             });
                             writer.next().write_bytes(&ku);
                         });
