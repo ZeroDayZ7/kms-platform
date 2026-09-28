@@ -30,22 +30,37 @@ async fn main() -> anyhow::Result<()> {
     init_logging();
 
     tracing::info!(
-        "PLUGIN_START name=spire-kms-upstream-authority"
+        "PLUGIN_START_BEGIN name=spire-kms-upstream-authority"
+    );
+    tracing::info!(
+        "RUST_LOG_FILTER_ACTIVE level=trace target=all"
     );
 
     let args = PluginArgs::parse();
-    let config = args.into_config();
-    config.validate()?;
+    tracing::info!(
+        plugin_args = ?args,
+        "PLUGIN_ARGS_PARSED"
+    );
 
+    let config = args.into_config();
+    tracing::info!(
+        plugin_name = %config.plugin_name,
+        spire_plugin_socket = %config.spire_plugin_socket_path,
+        kms_socket = %config.kms_socket_path,
+        ca_tag = %config.ca_tag,
+        "PLUGIN_CONFIG_RAW"
+    );
+
+    config.validate()?;
     tracing::info!(
         plugin = %config.plugin_name,
         spire_plugin_socket = %config.spire_plugin_socket_path,
         kms_socket = %config.kms_socket_path,
         ca_tag = %config.ca_tag,
-        "PLUGIN_CONFIG"
+        "PLUGIN_CONFIG_VALIDATED"
     );
     tracing::info!(
-        "PLUGIN_CONFIG spire_socket={} kms_socket={} ca_tag={}",
+        "PLUGIN_CONFIG_OK spire_socket={} kms_socket={} ca_tag={}",
         config.spire_plugin_socket_path,
         config.kms_socket_path,
         config.ca_tag
@@ -54,10 +69,15 @@ async fn main() -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         tracing::info!(
-            "PLUGIN_SOCKET path={}"
-            , config.spire_plugin_socket_path
+            "PLUGIN_SOCKET_PREPARE path={}",
+            config.spire_plugin_socket_path
         );
-        grpc_server::serve(config).await
+        let result = grpc_server::serve(config).await;
+        tracing::info!(
+            server_result = ?result,
+            "PLUGIN_SERVER_EXIT"
+        );
+        result
     }
 
     #[cfg(not(unix))]

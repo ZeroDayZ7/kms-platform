@@ -87,13 +87,34 @@ impl Plugin for PluginService {
             service = "Plugin",
             method = "Configure",
             grpc_path = %path,
-            configuration = %req.configuration,
+            configuration_len = req.configuration.len(),
+            configuration_preview = %req.configuration,
+            global_config_present = req.global_config.is_some(),
             "RPC_ENTER"
         );
 
-        Ok(Response::new(ConfigureResponse {
+        if req.configuration.trim().is_empty() {
+            tracing::warn!(
+                service = "Plugin",
+                method = "Configure",
+                grpc_path = %path,
+                "RPC_CONFIG_EMPTY"
+            );
+        }
+
+        let response = ConfigureResponse {
             error_list: vec![],
-        }))
+        };
+
+        tracing::info!(
+            service = "Plugin",
+            method = "Configure",
+            grpc_path = %path,
+            error_count = response.error_list.len(),
+            "RPC_EXIT status=OK"
+        );
+
+        Ok(Response::new(response))
     }
 
     async fn get_plugin_info(
@@ -114,7 +135,7 @@ impl Plugin for PluginService {
             "RPC_ENTER"
         );
 
-        Ok(Response::new(GetPluginInfoResponse {
+        let response = GetPluginInfoResponse {
             name: "spire-kms-upstream-authority".to_string(),
             category: "UpstreamAuthority".to_string(),
             r#type: "server".to_string(),
@@ -124,7 +145,19 @@ impl Plugin for PluginService {
             version: env!("CARGO_PKG_VERSION").to_string(),
             author: String::new(),
             company: String::new(),
-        }))
+        };
+
+        tracing::info!(
+            service = "Plugin",
+            method = "GetPluginInfo",
+            grpc_path = %path,
+            plugin_name = %response.name,
+            plugin_category = %response.category,
+            plugin_version = %response.version,
+            "RPC_EXIT status=OK"
+        );
+
+        Ok(Response::new(response))
     }
 }
 
@@ -149,20 +182,26 @@ impl PluginInit for PluginInitService {
             method = "Init",
             grpc_path = %path,
             host_services = ?req.host_services,
+            host_services_count = req.host_services.len(),
             "RPC_ENTER"
         );
-        tracing::info!(
-            service = "PluginInit",
-            method = "Init",
-            grpc_path = %path,
-            "RPC_EXIT status=OK"
-        );
-        Ok(Response::new(InitResponse {
+
+        let response = InitResponse {
             plugin_services: vec![
                 "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
                 "grpc.health.v1.Health".to_string(),
             ],
-        }))
+        };
+
+        tracing::info!(
+            service = "PluginInit",
+            method = "Init",
+            grpc_path = %path,
+            plugin_services = ?response.plugin_services,
+            plugin_service_count = response.plugin_services.len(),
+            "RPC_EXIT status=OK"
+        );
+        Ok(Response::new(response))
     }
 }
 
@@ -188,15 +227,27 @@ impl PrivateInit for PrivateInitService {
             method = "Init",
             grpc_path = %path,
             host_service_names = ?req.host_service_names,
+            host_service_count = req.host_service_names.len(),
             "RPC_ENTER"
         );
 
-        Ok(Response::new(PrivateInitResponse {
+        let response = PrivateInitResponse {
             plugin_service_names: vec![
                 "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
                 "grpc.health.v1.Health".to_string(),
             ],
-        }))
+        };
+
+        tracing::info!(
+            service = "spire.service.private.init.v1.Init",
+            method = "Init",
+            grpc_path = %path,
+            plugin_service_names = ?response.plugin_service_names,
+            plugin_service_count = response.plugin_service_names.len(),
+            "RPC_EXIT status=OK"
+        );
+
+        Ok(Response::new(response))
     }
 
     async fn deinit(
@@ -217,7 +268,15 @@ impl PrivateInit for PrivateInitService {
             "RPC_ENTER"
         );
 
-        Ok(Response::new(DeinitResponse {}))
+        let response = DeinitResponse {};
+        tracing::info!(
+            service = "spire.service.private.init.v1.Init",
+            method = "Deinit",
+            grpc_path = %path,
+            "RPC_EXIT status=OK"
+        );
+
+        Ok(Response::new(response))
     }
 }
 
@@ -277,6 +336,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             grpc_path = %path,
             csr_len = req.csr.len(),
             preferred_ttl = req.preferred_ttl,
+            request_metadata = ?request.metadata(),
             "RPC_ENTER"
         );
 
@@ -284,6 +344,7 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             tracing::warn!(
                 service = "UpstreamAuthority",
                 method = "MintX509CAAndSubscribe",
+                grpc_path = %path,
                 "RPC_REQUEST_RECEIVED status=INVALID empty CSR"
             );
             return Err(Status::invalid_argument("empty CSR"));
@@ -298,6 +359,17 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         );
 
         let csr_pem = pem::encode(&pem::Pem::new("CERTIFICATE REQUEST", req.csr));
+        tracing::info!(
+            service = "UpstreamAuthority",
+            method = "MintX509CAAndSubscribe",
+            grpc_path = %path,
+            kms_socket = %self.config.kms_socket_path,
+            ca_tag = %self.config.ca_tag,
+            csr_pem_len = csr_pem.len(),
+            validity_days = req.preferred_ttl.max(1) as u32,
+            "KMS_SIGN_REQUEST_PREPARED"
+        );
+
         let response = sign_csr_via_kms(
             &self.config.kms_socket_path,
             KmsSignRequest {
@@ -307,8 +379,31 @@ impl UpstreamAuthority for UpstreamAuthorityService {
                 caller_service: "spire".to_string(),
             },
         )
-        .await
-        .map_err(|err| Status::unavailable(format!("kms-service proxy failed: {err}")))?;
+        .await;
+
+        match &response {
+            Ok(resp) => {
+                tracing::info!(
+                    service = "UpstreamAuthority",
+                    method = "MintX509CAAndSubscribe",
+                    grpc_path = %path,
+                    certificate_pem_len = resp.certificate_pem.len(),
+                    root_certificate_pem_present = resp.root_certificate_pem.as_ref().is_some_and(|v| !v.trim().is_empty()),
+                    "KMS_SIGN_REQUEST_OK"
+                );
+            }
+            Err(err) => {
+                tracing::error!(
+                    service = "UpstreamAuthority",
+                    method = "MintX509CAAndSubscribe",
+                    grpc_path = %path,
+                    error = %err,
+                    "KMS_SIGN_REQUEST_FAILED"
+                );
+            }
+        }
+
+        let response = response.map_err(|err| Status::unavailable(format!("kms-service proxy failed: {err}")))?;
 
         let mut chain = Vec::new();
         if !response.certificate_pem.trim().is_empty() {
@@ -320,7 +415,21 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             chain.push(root);
         }
 
+        tracing::info!(
+            service = "UpstreamAuthority",
+            method = "MintX509CAAndSubscribe",
+            grpc_path = %path,
+            chain_items_before_conversion = chain.len(),
+            "CHAIN_PREPARED"
+        );
+
         if chain.is_empty() {
+            tracing::error!(
+                service = "UpstreamAuthority",
+                method = "MintX509CAAndSubscribe",
+                grpc_path = %path,
+                "RPC_RETURN status=INTERNAL empty certificate chain"
+            );
             return Err(Status::internal(
                 "kms-service returned an empty certificate chain",
             ));
@@ -329,6 +438,9 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         let stream_response = build_mint_x509ca_response(&chain);
 
         tracing::info!(
+            service = "UpstreamAuthority",
+            method = "MintX509CAAndSubscribe",
+            grpc_path = %path,
             certificates_in_chain = stream_response.x509_ca_chain.len(),
             upstream_roots = stream_response.upstream_x509_roots.len(),
             "RPC_EXIT status=OK"
@@ -354,11 +466,14 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             service = "UpstreamAuthority",
             method = "PublishJWTKeyAndSubscribe",
             grpc_path = %path,
+            request_metadata = ?_request.metadata(),
             "RPC_ENTER"
         );
         tracing::warn!(
             service = "UpstreamAuthority",
             method = "PublishJWTKeyAndSubscribe",
+            grpc_path = %path,
+            reason = "JWT support intentionally not implemented for this SPIRE plugin",
             "RPC_RETURN_UNIMPLEMENTED"
         );
         Err(Status::unimplemented(
@@ -410,6 +525,7 @@ pub async fn serve_with_listener(
     );
 
     let (health_reporter, health_service) = tonic_health::server::health_reporter();
+    tracing::info!("HEALTH_REPORTER_CREATED");
     health_reporter
         .set_service_status("", ServingStatus::Serving)
         .await;
@@ -427,18 +543,26 @@ pub async fn serve_with_listener(
     );
 
     tracing::debug!(
-        service_count = 2,
+        service_count = 5,
         "Configured tonic server with UpstreamAuthorityServer and health_service"
     );
 
     tracing::info!("TONIC_SERVER_START");
     tracing::info!("TONIC_SERVICES: - spire.common.plugin.Plugin - spire.common.plugin.PluginInit - spire.service.private.init.v1.Init - spire.plugin.server.upstreamauthority.v1.UpstreamAuthority - grpc.health.v1.Health");
+    tracing::info!(
+        socket_path = %socket_path,
+        services = 5,
+        "TONIC_SERVER_READY"
+    );
 
     let server = tonic::transport::Server::builder()
         .layer(
             tower_http::trace::TraceLayer::new_for_grpc()
                 .on_request(|request: &http::Request<_>, _span: &tracing::Span| {
                     tracing::info!(grpc_path = %request.uri().path(), "gRPC_REQUEST_RECEIVED");
+                })
+                .on_response(|response: &http::Response<_>, _latency: std::time::Duration, _span: &tracing::Span| {
+                    tracing::info!(status_code = %response.status(), grpc_path = %response.status(), "gRPC_RESPONSE_SENT");
                 }),
         )
         .add_service(PluginServer::new(PluginService::default()))
@@ -447,8 +571,11 @@ pub async fn serve_with_listener(
         .add_service(UpstreamAuthorityServer::new(service))
         .add_service(health_service);
 
+    tracing::info!("TONIC_SERVER_REGISTERED_ALL_SERVICES");
+
     tokio::select! {
         result = server.serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener)) => {
+            tracing::info!(result = ?result, "TONIC_SERVER_SERVE_WITH_INCOMING_RETURNED");
             result?;
         }
         _ = tokio::signal::ctrl_c() => {
@@ -462,7 +589,15 @@ pub async fn serve_with_listener(
 
 #[cfg(unix)]
 pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
+    tracing::info!(
+        "PLUGIN_SOCKET_PREPARE_START path={}"
+        , config.spire_plugin_socket_path
+    );
     prepare_plugin_socket_path(&config.spire_plugin_socket_path).await?;
+    tracing::info!(
+        "PLUGIN_SOCKET_PREPARE_OK path={}"
+        , config.spire_plugin_socket_path
+    );
 
     tracing::info!(
         "PLUGIN_SOCKET_BIND_START path={}"
@@ -494,7 +629,17 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
         , config.spire_plugin_socket_path
     );
 
-    serve_with_listener(config, listener).await
+    tracing::info!(
+        "PLUGIN_SOCKET_READY_FOR_SPIRE path={}"
+        , config.spire_plugin_socket_path
+    );
+
+    let result = serve_with_listener(config, listener).await;
+    tracing::info!(
+        server_result = ?result,
+        "PLUGIN_SERVE_WITH_LISTENER_EXIT"
+    );
+    result
 }
 
 #[cfg(not(unix))]
