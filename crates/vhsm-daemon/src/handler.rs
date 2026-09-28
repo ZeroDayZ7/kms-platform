@@ -223,6 +223,33 @@ fn build_and_sign_certificate(
     let verifying_key = signing_key.verifying_key();
     let public_point = verifying_key.to_encoded_point(false);
     let spki_bytes = public_point.as_bytes();
+    // Prepare SubjectPublicKeyInfo DER to embed into TBSCertificate.
+    // If issuing from a CSR, extract SPKI from CSR DER; otherwise construct SPKI from CA public key.
+    let subject_spki_der: Vec<u8> = if _is_csr {
+        match x509_parser::certification_request::X509CertificationRequest::from_der(
+            _csr_der_or_spki,
+        ) {
+            Ok((_, csr)) => csr.certification_request_info.subject_pki.raw.to_vec(),
+            Err(_) => return Err("Failed to parse CSR to extract SubjectPublicKeyInfo".to_string()),
+        }
+    } else {
+        let public_point_bytes = public_point.as_bytes();
+        yasna::construct_der(|writer| {
+            writer.write_sequence(|writer| {
+                writer.next().write_sequence(|writer| {
+                    writer
+                        .next()
+                        .write_oid(&ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 2, 1]));
+                    writer
+                        .next()
+                        .write_oid(&ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
+                });
+                writer
+                    .next()
+                    .write_bitvec_bytes(public_point_bytes, 8 * public_point_bytes.len());
+            });
+        })
+    };
 
     // TBSCertificate DER construction
     let tbs_der = yasna::construct_der(|writer| {
@@ -282,22 +309,8 @@ fn build_and_sign_certificate(
                     });
                 });
             });
-            // subjectPublicKeyInfo (use raw SEC1 point -> wrap into SubjectPublicKeyInfo)
-            writer.next().write_sequence(|writer| {
-                // algorithm: id-ecPublicKey OID 1.2.840.10045.2.1 and namedCurve secp256r1 1.2.840.10045.3.1.7
-                writer.next().write_sequence(|writer| {
-                    writer
-                        .next()
-                        .write_oid(&ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 2, 1]));
-                    writer
-                        .next()
-                        .write_oid(&ObjectIdentifier::from_slice(&[1, 2, 840, 10045, 3, 1, 7]));
-                });
-                // public key BIT STRING
-                writer
-                    .next()
-                    .write_bitvec_bytes(spki_bytes, 8 * spki_bytes.len());
-            });
+            // subjectPublicKeyInfo: embed precomputed SubjectPublicKeyInfo DER
+            writer.next().write_der(&subject_spki_der);
             // extensions [3]
             writer
                 .next()
@@ -329,10 +342,15 @@ fn build_and_sign_certificate(
                                 // We need bits 5 and 6 set => first octet 0b01100000
                                 // Write 8 bits (one octet) with bits 5 and 6 set.
                                 // Set bits 5 (keyCertSign) and 6 (cRLSign).
-                                // ASN.1 BIT STRING bit numbering: bit 0 is MSB of first octet (0x80).
-                                // Therefore keyCertSign (index 5) => 0x04, cRLSign (index 6) => 0x02.
-                                // Combined => 0x06 (0b00000110).
-                                writer.write_bitvec_bytes(&[0b00000110], 8);
+                                // For DER BIT STRING (MSB-first) the highest set bit index is 6,
+                                // so we need 7 meaningful bits (bit_len = 7) and 1 unused bit in final octet.
+                                // In that 7-bit field, bit indexes 5 and 6 correspond to the two least-significant
+                                // bits of the 7-bit sequence -> data byte 0x03 (0b00000011) with bit_len=7.
+                                // This produces an OCTET STRING content: [unused_bits=1][0x03].
+                                // Correct: set keyCertSign (bit 5 -> 0x04) and cRLSign (bit 6 -> 0x02)
+                                // Combined value = 0x06 (0b00000110).
+                                // Encode as a full octet (8 bits) to avoid unused-bits handling complexity.
+                                writer.write_bitvec_bytes(&[0x06], 8);
                             });
                             writer.next().write_bytes(&ku);
                         });
@@ -382,6 +400,10 @@ fn build_and_sign_certificate(
         pem_str.push('\n');
     }
     pem_str.push_str("-----END CERTIFICATE-----\n");
+    // For debugging: if this was an intermediate signed from a CSR, write PEM to /tmp for inspection.
+    if _is_csr {
+        let _ = std::fs::write("/tmp/vhsm_signed_intermediate.pem", &pem_str);
+    }
     Ok(pem_str)
 }
 
