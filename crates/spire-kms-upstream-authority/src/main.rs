@@ -9,9 +9,14 @@ use clap::Parser;
 use config::PluginArgs;
 
 fn init_logging() {
+    let env_filter = tracing_subscriber::EnvFilter::from_default_env()
+        .add_directive("spire_kms_upstream_authority=info".parse().unwrap())
+        .add_directive("tonic=warn".parse().unwrap())
+        .add_directive("hyper=warn".parse().unwrap());
+
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
-        .with_env_filter("spire_kms_upstream_authority=trace,tonic=trace,hyper=trace")
+        .with_env_filter(env_filter)
         .with_target(false)
         .without_time()
         .init();
@@ -20,7 +25,7 @@ fn init_logging() {
 #[cfg(unix)]
 fn emit_go_plugin_handshake(socket_path: &str) -> anyhow::Result<()> {
     let mut stdout = io::stdout();
-    let handshake = format!("1|1|unix|{socket_path}|grpc\n");
+    let handshake = format!("1|1|unix|{}|grpc\n", socket_path);
     stdout.write_all(handshake.as_bytes())?;
     stdout.flush()?;
     Ok(())
@@ -30,12 +35,8 @@ fn emit_go_plugin_handshake(socket_path: &str) -> anyhow::Result<()> {
 async fn main() -> anyhow::Result<()> {
     init_logging();
 
-    tracing::info!(
-        "PLUGIN_START_BEGIN name=spire-kms-upstream-authority"
-    );
-    tracing::info!(
-        "RUST_LOG_FILTER_ACTIVE level=trace target=all"
-    );
+    tracing::info!("PLUGIN_START_BEGIN name=spire-kms-upstream-authority");
+    tracing::info!("RUST_LOG_FILTER_ACTIVE level=trace target=all");
 
     let args = PluginArgs::parse();
     tracing::info!(

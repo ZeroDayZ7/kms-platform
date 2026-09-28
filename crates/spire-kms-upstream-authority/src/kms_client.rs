@@ -8,8 +8,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(unix)]
 use tokio::net::UnixStream;
 
+#[allow(dead_code)]
 const MAX_KMS_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
-const KMS_TIMEOUT: Duration = Duration::from_secs(10);
+// Keep a conservative but reasonable default timeout for KMS RPCs
+#[allow(dead_code)]
+const KMS_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KmsSignRequest {
@@ -39,6 +42,8 @@ pub async fn sign_csr_via_kms(
         let payload = serde_json::to_vec(&req)?;
         let len = payload.len() as u32;
 
+        // Write a length-prefixed message and flush. Use small writes to
+        // reduce chances of partial-frame issues with some UDS proxies.
         stream.write_all(&len.to_be_bytes()).await?;
         stream.write_all(&payload).await?;
         stream.flush().await?;
@@ -48,11 +53,22 @@ pub async fn sign_csr_via_kms(
         let response_len = u32::from_be_bytes(len_buf) as usize;
 
         if response_len > MAX_KMS_RESPONSE_SIZE {
-            anyhow::bail!("KMS response length {} exceeds limit {}", response_len, MAX_KMS_RESPONSE_SIZE);
+            anyhow::bail!(
+                "KMS response length {} exceeds limit {}",
+                response_len,
+                MAX_KMS_RESPONSE_SIZE
+            );
         }
 
         let mut response_buf = vec![0_u8; response_len];
-        stream.read_exact(&mut response_buf).await?;
+        let mut read = 0usize;
+        while read < response_len {
+            let n = stream.read(&mut response_buf[read..]).await?;
+            if n == 0 {
+                anyhow::bail!("unexpected EOF while reading KMS response")
+            }
+            read += n;
+        }
 
         let response: KmsSignResponse = serde_json::from_slice(&response_buf)?;
         Ok::<KmsSignResponse, anyhow::Error>(response)

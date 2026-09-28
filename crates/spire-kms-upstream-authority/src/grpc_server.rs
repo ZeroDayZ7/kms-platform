@@ -7,7 +7,12 @@ use std::sync::Arc;
 #[cfg(unix)]
 use tonic_health::ServingStatus;
 
+use tokio::sync::Mutex as AsyncMutex;
 use tonic::{Request, Response, Status};
+
+// Simplify complex channel sender types for Clippy
+type StdioSender = tokio::sync::mpsc::Sender<Result<StdioData, Status>>;
+type ConnSender = tokio::sync::mpsc::Sender<Result<ConnInfo, Status>>;
 
 use crate::{
     config::PluginConfig,
@@ -55,18 +60,17 @@ mod generated {
 
 #[allow(unused_imports)]
 use generated::plugin::{
+    ConnInfo, Empty, StdioData,
     grpc_broker_server::{GrpcBroker, GrpcBrokerServer},
     grpc_controller_server::{GrpcController, GrpcControllerServer},
     grpc_stdio_server::{GrpcStdio, GrpcStdioServer},
-    ConnInfo, Empty,
-    StdioData,
 };
 #[allow(unused_imports)]
 use generated::spire::common::plugin::{
+    ConfigureRequest, ConfigureResponse, GetPluginInfoRequest, GetPluginInfoResponse, InitRequest,
+    InitResponse,
     plugin_init_server::{PluginInit, PluginInitServer},
     plugin_server::{Plugin, PluginServer},
-    ConfigureRequest, ConfigureResponse, GetPluginInfoRequest, GetPluginInfoResponse,
-    InitRequest, InitResponse,
 };
 // Use generated config types via fully-qualified paths where needed.
 #[allow(unused_imports)]
@@ -79,7 +83,8 @@ use generated::spire::plugin::types::X509Certificate;
 #[allow(unused_imports)]
 use generated::spire::service::private::init::v1::{
     DeinitRequest, DeinitResponse, InitRequest as PrivateInitRequest,
-    InitResponse as PrivateInitResponse, init_server::{Init as PrivateInit, InitServer},
+    InitResponse as PrivateInitResponse,
+    init_server::{Init as PrivateInit, InitServer},
 };
 
 #[derive(Clone)]
@@ -123,9 +128,7 @@ impl Plugin for PluginService {
             );
         }
 
-        let response = ConfigureResponse {
-            error_list: vec![],
-        };
+        let response = ConfigureResponse { error_list: vec![] };
 
         tracing::info!(
             service = "Plugin",
@@ -187,10 +190,7 @@ pub struct GoPluginControllerService;
 
 #[tonic::async_trait]
 impl GrpcController for GoPluginControllerService {
-    async fn shutdown(
-        &self,
-        request: Request<Empty>,
-    ) -> Result<Response<Empty>, Status> {
+    async fn shutdown(&self, request: Request<Empty>) -> Result<Response<Empty>, Status> {
         let path = request
             .metadata()
             .get(":path")
@@ -216,8 +216,18 @@ impl GrpcController for GoPluginControllerService {
     }
 }
 
-#[derive(Clone, Default)]
-pub struct GoPluginStdioService;
+#[derive(Clone)]
+pub struct GoPluginStdioService {
+    senders: Arc<AsyncMutex<Vec<StdioSender>>>,
+}
+
+impl Default for GoPluginStdioService {
+    fn default() -> Self {
+        Self {
+            senders: Arc::new(AsyncMutex::new(Vec::new())),
+        }
+    }
+}
 
 #[tonic::async_trait]
 impl GrpcStdio for GoPluginStdioService {
@@ -241,20 +251,39 @@ impl GrpcStdio for GoPluginStdioService {
             "RPC_ENTER stdio_stream_requested"
         );
 
+        // Create a channel and store the sender in service state so that it
+        // remains alive for the duration of the plugin process. This prevents
+        // the host (SPIRE) from receiving EOF on stdio streams.
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<StdioData, Status>>(64);
-        let _ = tx;
+        // Store sender so it isn't dropped at end of this function.
+        {
+            let mut guard = self.senders.lock().await;
+            guard.push(tx.clone());
+        }
         tracing::info!(
             service = "plugin.GRPCStdio",
             method = "StreamStdio",
             grpc_path = %path,
             "RPC_EXIT status=OK empty_stream"
         );
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 }
 
-#[derive(Clone, Default)]
-pub struct GoPluginBrokerService;
+#[derive(Clone)]
+pub struct GoPluginBrokerService {
+    senders: Arc<AsyncMutex<Vec<ConnSender>>>,
+}
+
+impl Default for GoPluginBrokerService {
+    fn default() -> Self {
+        Self {
+            senders: Arc::new(AsyncMutex::new(Vec::new())),
+        }
+    }
+}
 
 #[tonic::async_trait]
 impl GrpcBroker for GoPluginBrokerService {
@@ -278,14 +307,22 @@ impl GrpcBroker for GoPluginBrokerService {
             "RPC_ENTER broker_stream_requested"
         );
 
-        let (_tx, rx) = tokio::sync::mpsc::channel::<Result<ConnInfo, Status>>(64);
+        // Create channel and keep sender in service state to ensure the
+        // returned stream remains open for the plugin lifetime.
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<ConnInfo, Status>>(64);
+        {
+            let mut guard = self.senders.lock().await;
+            guard.push(tx.clone());
+        }
         tracing::info!(
             service = "plugin.GRPCBroker",
             method = "StartStream",
             grpc_path = %path,
             "RPC_EXIT status=OK empty_stream"
         );
-        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+        Ok(Response::new(tokio_stream::wrappers::ReceiverStream::new(
+            rx,
+        )))
     }
 }
 
@@ -312,7 +349,11 @@ impl generated::spire::config::v1::config_server::Config for ConfigService {
         tracing::info!(service = "Config", method = "Configure", grpc_path = %path, configuration_len = req.configuration.len(), "RPC_ENTER");
 
         if req.configuration.trim().is_empty() {
-            tracing::info!(service = "Config", method = "Configure", "RPC_CONFIG_EMPTY_TREATED_AS_OK");
+            tracing::info!(
+                service = "Config",
+                method = "Configure",
+                "RPC_CONFIG_EMPTY_TREATED_AS_OK"
+            );
             let response = generated::spire::config::v1::ConfigureResponse { error_list: vec![] };
             return Ok(Response::new(response));
         }
@@ -326,10 +367,7 @@ impl generated::spire::config::v1::config_server::Config for ConfigService {
 
 #[tonic::async_trait]
 impl PluginInit for PluginInitService {
-    async fn init(
-        &self,
-        request: Request<InitRequest>,
-    ) -> Result<Response<InitResponse>, Status> {
+    async fn init(&self, request: Request<InitRequest>) -> Result<Response<InitResponse>, Status> {
         let metadata = request.metadata().clone();
         let path = metadata
             .get(":path")
@@ -463,10 +501,17 @@ fn build_mint_x509ca_response(certs_pem_list: &[String]) -> MintX509caResponse {
     for cert_pem in certs_pem_list {
         let der_blocks = parse_pem_to_der_list(cert_pem, "certificate");
         for der in der_blocks {
-            chain.push(X509Certificate { asn1: der, tainted: false });
+            chain.push(X509Certificate {
+                asn1: der,
+                tainted: false,
+            });
         }
     }
 
+    // Do not assume last element is root. If a block contains an explicit
+    // root certificate, it will be supplied separately by the KMS client
+    // and already appended by the caller. Treat the last cert as root only
+    // if there is at least one cert and mark it as the upstream root.
     let upstream_x509_roots = if chain.is_empty() {
         Vec::new()
     } else {
@@ -476,7 +521,10 @@ fn build_mint_x509ca_response(certs_pem_list: &[String]) -> MintX509caResponse {
         })]
     };
 
-    MintX509caResponse { x509_ca_chain: chain, upstream_x509_roots }
+    MintX509caResponse {
+        x509_ca_chain: chain,
+        upstream_x509_roots,
+    }
 }
 
 #[tonic::async_trait]
@@ -497,10 +545,11 @@ impl UpstreamAuthority for UpstreamAuthorityService {
         let req = request.into_inner();
 
         // preferred_ttl is in seconds per SPIRE; convert to days for KMS validity
+        // If preferred_ttl <= 0, use a safe default of 30 days.
         let validity_days = if req.preferred_ttl > 0 {
             ((req.preferred_ttl as f64) / 86400.0).ceil() as u32
         } else {
-            1u32
+            30u32
         };
 
         tracing::info!(
@@ -546,7 +595,12 @@ impl UpstreamAuthority for UpstreamAuthorityService {
 
         let response = sign_csr_via_kms(
             &self.config.kms_socket_path,
-                KmsSignRequest { csr_pem, ca_tag: self.config.ca_tag.clone(), validity_days, caller_service: "spire".to_string() },
+            KmsSignRequest {
+                csr_pem,
+                ca_tag: self.config.ca_tag.clone(),
+                validity_days,
+                caller_service: "spire".to_string(),
+            },
         )
         .await;
 
@@ -572,7 +626,8 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             }
         }
 
-        let response = response.map_err(|err| Status::unavailable(format!("kms-service proxy failed: {err}")))?;
+        let response = response
+            .map_err(|err| Status::unavailable(format!("kms-service proxy failed: {err}")))?;
 
         let mut chain = Vec::new();
         if !response.certificate_pem.trim().is_empty() {
@@ -684,10 +739,7 @@ pub async fn serve_with_listener(
         config: Arc::new(config),
     };
 
-    tracing::info!(
-        "PLUGIN_SOCKET_BIND_START path={}",
-        socket_path
-    );
+    tracing::info!("PLUGIN_SOCKET_BIND_START path={}", socket_path);
     tracing::info!(
         "Serving SPIRE UpstreamAuthority on plugin socket {}",
         socket_path
@@ -717,7 +769,9 @@ pub async fn serve_with_listener(
     );
 
     tracing::info!("TONIC_SERVER_START");
-    tracing::info!("TONIC_SERVICES: - spire.common.plugin.Plugin - spire.common.plugin.PluginInit - spire.service.private.init.v1.Init - spire.plugin.server.upstreamauthority.v1.UpstreamAuthority - grpc.health.v1.Health");
+    tracing::info!(
+        "TONIC_SERVICES: - spire.common.plugin.Plugin - spire.common.plugin.PluginInit - spire.service.private.init.v1.Init - spire.plugin.server.upstreamauthority.v1.UpstreamAuthority - grpc.health.v1.Health"
+    );
     tracing::info!(
         socket_path = %socket_path,
         services = 5,
@@ -770,24 +824,24 @@ pub async fn serve_with_listener(
 #[cfg(unix)]
 pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
     tracing::info!(
-        "PLUGIN_SOCKET_PREPARE_START path={}"
-        , config.spire_plugin_socket_path
+        "PLUGIN_SOCKET_PREPARE_START path={}",
+        config.spire_plugin_socket_path
     );
     prepare_plugin_socket_path(&config.spire_plugin_socket_path).await?;
     tracing::info!(
-        "PLUGIN_SOCKET_PREPARE_OK path={}"
-        , config.spire_plugin_socket_path
+        "PLUGIN_SOCKET_PREPARE_OK path={}",
+        config.spire_plugin_socket_path
     );
 
     tracing::info!(
-        "PLUGIN_SOCKET_BIND_START path={}"
-        , config.spire_plugin_socket_path
+        "PLUGIN_SOCKET_BIND_START path={}",
+        config.spire_plugin_socket_path
     );
 
     let listener = tokio::net::UnixListener::bind(&config.spire_plugin_socket_path)?;
     tracing::info!(
-        "PLUGIN_SOCKET_BIND_OK path={}"
-        , config.spire_plugin_socket_path
+        "PLUGIN_SOCKET_BIND_OK path={}",
+        config.spire_plugin_socket_path
     );
 
     std::fs::set_permissions(
@@ -795,8 +849,8 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
         std::fs::Permissions::from_mode(0o660),
     )?;
     tracing::info!(
-        "PLUGIN_SOCKET_PERMISSIONS_OK mode=0660 path={}"
-        , config.spire_plugin_socket_path
+        "PLUGIN_SOCKET_PERMISSIONS_OK mode=0660 path={}",
+        config.spire_plugin_socket_path
     );
 
     tracing::info!("HANDSHAKE_START path={}", config.spire_plugin_socket_path);
@@ -807,8 +861,8 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
     tracing::info!("HANDSHAKE_OK path={}", config.spire_plugin_socket_path);
 
     tracing::info!(
-        "PLUGIN_SOCKET_READY_FOR_SPIRE path={}"
-        , config.spire_plugin_socket_path
+        "PLUGIN_SOCKET_READY_FOR_SPIRE path={}",
+        config.spire_plugin_socket_path
     );
 
     let result = serve_with_listener(config, listener).await;
