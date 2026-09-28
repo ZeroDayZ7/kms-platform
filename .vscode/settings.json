@@ -18,7 +18,8 @@
     // "**/README.md": true,
     "**/SECURITY.md": true,
 
-    // "**/out": true,
+    "**/out": true,
+    "**/third_party": true,
     // "**/docs": true,
     "**/scripts": true,
     "**/secrets": true,

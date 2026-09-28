@@ -116,11 +116,9 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                 use std::path::Path;
                 use tokio::net::UnixListener;
 
-                let socket_path = settings
-                    .server
-                    .unix_socket_path
-                    .clone()
-                    .unwrap_or_else(|| "/run/kms/kms.sock".to_string());
+                // Read socket path from env (dev compose sets KMS_GRPC_SOCKET), fallback to /run/kms/kms.sock
+                let socket_path = std::env::var("KMS_GRPC_SOCKET")
+                    .unwrap_or_else(|_| "/run/kms/kms.sock".to_string());
 
                 if let Some(parent) = Path::new(&socket_path).parent() {
                     if let Err(err) = tokio::fs::create_dir_all(parent).await {
@@ -142,7 +140,7 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                             &socket_path,
                             std::fs::Permissions::from_mode(0o666),
                         ) {
-                            tracing::warn!(error = ?err, "Failed to set permissions on KMS socket {}");
+                            tracing::warn!(error = ?err, "Failed to set permissions on KMS socket {}", socket_path);
                         }
 
                         tracing::info!(socket = %socket_path, "KMS UDS listener bound");
@@ -209,14 +207,14 @@ async fn run_command(cli: Cli) -> anyhow::Result<()> {
                                             let audit_repo =
                                                 PgAuditRepository::new(state_conn.db.clone());
                                             let audit_service = Arc::new(
-                                                crate::domain::audit::service::AuditService::new(
+                                                kms_service::domain::audit::service::AuditService::new(
                                                     Arc::new(audit_repo),
                                                 ),
                                             );
-                                            let usecase = crate::application::use_cases::sign_intermediate_ca::SignIntermediateCaUseCase::new(audit_service);
+                                            let usecase = kms_service::application::use_cases::sign_intermediate_ca::SignIntermediateCaUseCase::new(audit_service);
 
-                                            let input = crate::application::use_cases::sign_intermediate_ca::SignIntermediateCaInput {
-                                                caller_service: crate::domain::keys::models::ServiceId(req.caller_service),
+                                            let input = kms_service::application::use_cases::sign_intermediate_ca::SignIntermediateCaInput {
+                                                caller_service: kms_service::domain::keys::models::ServiceId(req.caller_service),
                                                 ca_tag: req.ca_tag.clone(),
                                                 csr_pem: req.csr_pem.clone(),
                                                 validity_days: req.validity_days,
