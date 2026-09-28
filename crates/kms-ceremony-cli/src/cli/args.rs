@@ -162,7 +162,7 @@ pub enum Commands {
             long = "encrypted-b64",
             help = "Encrypted private key (base64)"
         )]
-        encrypted_b64: String,
+            encrypted_b64: Option<String>,
     },
     /// Import encrypted bootstrap secrets file and send into KMS
     ImportBootstrap {

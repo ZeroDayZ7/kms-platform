@@ -68,7 +68,7 @@ ca-init:
 	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose --profile tools run --rm -it kms-ceremony-cli ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root
 
 ca-load:
- 	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose --profile tools run --rm -it kms-ceremony-cli ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root --encrypted-b64 "$(ENCRYPTED_B64)"
+	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose --profile tools run --rm -it kms-ceremony-cli ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root
 
 bootstrap:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli import-bootstrap --file ./out/bootstrap-secrets.json.enc --service-url http://kms-service:8080
@@ -83,7 +83,36 @@ ca-init-dev:
 	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root
 
 ca-load-dev:
-	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root --encrypted-b64 "$(ENCRYPTED_B64)"
+	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root
+
+.PHONY: ca-bootstrap-dev
+ca-bootstrap-dev:
+	@echo "==> Running ca-init and piping blob to ca-load (dev)"
+	MSYS_NO_PATHCONV=1 \
+	KMS_CLI__SERVICE_URL=http://kms-service:8080 \
+	KMS_CLI__SERVICE_ID=kms-infra \
+	KMS_CLI__SECRET=dev-secret \
+	KMS_CLI__PRINT_BLOB=1 \
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli \
+		sh -c "cargo run -p kms-ceremony-cli -- ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root" \
+	| tr -d '\r' > /tmp/ca_blob.b64 || true
+	@if [ -s /tmp/ca_blob.b64 ]; then \
+		BLOB=$$(cat /tmp/ca_blob.b64); \
+		echo "Loaded blob length=$$(echo -n $$BLOB | wc -c)"; \
+		MSYS_NO_PATHCONV=1 \
+		KMS_CLI__SERVICE_URL=http://kms-service:8080 \
+		KMS_CLI__SERVICE_ID=kms-infra \
+		KMS_CLI__SECRET=dev-secret \
+		docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli \
+			sh -c "cargo run -p kms-ceremony-cli -- ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root --encrypted-b64 \"$$BLOB\""; \
+		rm -f /tmp/ca_blob.b64; \
+	else \
+		echo "ERROR: ca-init did not emit blob"; false; \
+	fi
+
+.PHONY: ca-bootstrap-dev-from-db
+ca-bootstrap-dev-from-db:
+	@echo "==> Use 'make ca-load-dev' now; kms-service will fetch blob from DB"
 
 bootstrap-dev:
 	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- import-bootstrap --file ./out/bootstrap-secrets.json.enc --service-url 'http://kms-service:8080'

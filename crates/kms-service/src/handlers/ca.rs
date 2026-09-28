@@ -10,7 +10,7 @@ use crate::server::state::AppState;
 #[derive(Deserialize)]
 pub struct LoadCaRequest {
     pub ca_tag: String,
-    pub encrypted_private_key_b64: String,
+    pub encrypted_private_key_b64: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -27,24 +27,35 @@ pub async fn post_ca_load(
     let socket = &state.settings.crypto.hsm_socket_path;
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64_ENGINE;
-
-    let encrypted = BASE64_ENGINE
-        .decode(&payload.encrypted_private_key_b64)
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::BAD_REQUEST,
-                format!("invalid base64: {}", e),
-            )
-        })?;
+    // Determine encrypted blob: prefer provided payload, otherwise fetch from DB
+    let encrypted: Vec<u8> = if let Some(ref b64) = payload.encrypted_private_key_b64 {
+        BASE64_ENGINE
+            .decode(b64)
+            .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("invalid base64: {}", e)))?
+    } else {
+        // Fetch from DB
+        match kms_db::repositories::RootCaQueries::fetch_active_by_tag(&state.db, &payload.ca_tag)
+            .await
+            .map_err(|e| {
+                (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("db error: {}", e),
+                )
+            })?
+        {
+            Some(row) => row.encrypted_private_key,
+            None => {
+                return Err((
+                    axum::http::StatusCode::NOT_FOUND,
+                    format!("root CA not found for tag '{}'", payload.ca_tag),
+                ))
+            }
+        }
+    };
 
     crate::hsm::client::load_root_ca(socket, &payload.ca_tag, &encrypted, None)
         .await
-        .map_err(|e| {
-            (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                format!("hsm error: {}", e),
-            )
-        })?;
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("hsm error: {}", e)))?;
 
     Ok(Json(serde_json::json!({"status": "loaded"})))
 }

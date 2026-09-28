@@ -53,6 +53,12 @@ pub async fn handle_ca_init(
         expires_at,
     };
 
+    // For developer convenience: optionally print the encrypted blob only (Base64)
+    // so Makefile or scripts can capture it and pass to `ca-load` automatically.
+    if std::env::var("KMS_CLI__PRINT_BLOB").ok().as_deref() == Some("1") {
+        println!("{}", manifest.encrypted_private_key_b64);
+    }
+
     let cfg = crate::cli::hmac::CliConfig {
         service_id: service_id
             .or_else(|| std::env::var("KMS_CLI__SERVICE_ID").ok())
