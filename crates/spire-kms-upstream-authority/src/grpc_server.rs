@@ -31,7 +31,7 @@ mod generated {
         }
         pub mod config {
             pub mod v1 {
-                tonic::include_proto!("spire.config.v1");
+                tonic::include_proto!("spire.service.common.config.v1");
             }
         }
         pub mod plugin {
@@ -386,7 +386,7 @@ impl PluginInit for PluginInitService {
 
         let response = InitResponse {
             plugin_services: vec![
-                "spire.config.v1.Config".to_string(),
+                "spire.service.common.config.v1.Config".to_string(),
                 "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
                 "grpc.health.v1.Health".to_string(),
             ],
@@ -432,7 +432,7 @@ impl PrivateInit for PrivateInitService {
 
         let response = PrivateInitResponse {
             plugin_service_names: vec![
-                "spire.config.v1.Config".to_string(),
+                "spire.service.common.config.v1.Config".to_string(),
                 "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
                 "grpc.health.v1.Health".to_string(),
             ],

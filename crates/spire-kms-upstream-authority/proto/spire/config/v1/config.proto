@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package spire.config.v1;
+package spire.service.common.config.v1;
 
 message ConfigureRequest {
   string configuration = 1;
