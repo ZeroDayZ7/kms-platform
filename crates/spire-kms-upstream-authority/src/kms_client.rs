@@ -7,7 +7,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(unix)]
 use tokio::net::{TcpStream, UnixStream};
-use tracing::warn;
 
 #[allow(dead_code)]
 const MAX_KMS_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
@@ -126,12 +125,12 @@ pub async fn sign_csr_via_kms(
         match tokio::time::timeout(KMS_TIMEOUT, fut).await {
             Ok(Ok(resp)) => return Ok(resp),
             Ok(Err(e)) => {
-                warn!(error = %e, attempt = %attempt_desc, "KMS request failed");
+                tracing::warn!(error = %e, attempt = %attempt_desc, "KMS request failed");
                 last_err = Some(e);
             }
             Err(_) => {
                 let to_err = anyhow::anyhow!("KMS request timed out after {:?}", KMS_TIMEOUT);
-                warn!(error = %to_err, attempt = %attempt_desc, "KMS request timed out");
+                tracing::warn!(error = %to_err, attempt = %attempt_desc, "KMS request timed out");
                 last_err = Some(to_err);
             }
         }
