@@ -1,6 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use kms_ceremony_cli::cli::args::{CliArgs, Commands};
+use kms_ceremony_cli::cli::ca_init::handle_ca_init;
+use kms_ceremony_cli::cli::ca_load::handle_ca_load;
 use kms_ceremony_cli::cli::ceremony::handle_interactive_ceremony;
 use kms_ceremony_cli::cli::crypto_ops::{handle_decrypt, handle_encrypt};
 use kms_ceremony_cli::cli::import_bootstrap::handle_import_bootstrap;
@@ -53,6 +55,34 @@ async fn main() -> Result<()> {
         }
         Commands::ImportBootstrap { file, service_url } => {
             handle_import_bootstrap(file, service_url).await?;
+        }
+        Commands::CaInit {
+            socket_path,
+            ca_tag,
+        } => {
+            // Read optional auth flags from env for simplicity in Makefile
+            let service_url = std::env::var("KMS_CLI__SERVICE_URL").ok();
+            let service_id = std::env::var("KMS_CLI__SERVICE_ID").ok();
+            let secret = std::env::var("KMS_CLI__SECRET").ok();
+            handle_ca_init(socket_path, ca_tag, service_url, service_id, secret).await?;
+        }
+        Commands::CaLoad {
+            socket_path,
+            ca_tag,
+            encrypted_b64,
+        } => {
+            let service_url = std::env::var("KMS_CLI__SERVICE_URL").ok();
+            let service_id = std::env::var("KMS_CLI__SERVICE_ID").ok();
+            let secret = std::env::var("KMS_CLI__SECRET").ok();
+            handle_ca_load(
+                socket_path,
+                ca_tag,
+                encrypted_b64,
+                service_url,
+                service_id,
+                secret,
+            )
+            .await?;
         }
     }
 

@@ -205,6 +205,27 @@ pub async fn decrypt_via_hsm(
     }
 }
 
+/// Load an encrypted root CA blob into vHSM memory. Returns Ok(()) on success.
+pub async fn load_root_ca_via_hsm(
+    socket_path: &str,
+    ca_tag: &str,
+    encrypted_private_key: &[u8],
+    timeout: Option<Duration>,
+) -> HsmResult<()> {
+    let req = HsmRequest::LoadRootCa {
+        ca_tag: ca_tag.to_string(),
+        encrypted_private_key: encrypted_private_key.to_vec(),
+    };
+
+    match send_hsm_request(socket_path, &req, timeout).await? {
+        HsmResponse::MasterKeyInitialized => Ok(()),
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
+            "vHSM load Root CA failed ({code}): {message}"
+        ))),
+        _ => Err(HsmClientError::InvalidResponse),
+    }
+}
+
 //#region generate_random_bytes_via_hsm
 /// Wywołuje vHSM przez UDS w celu wygenerowania bezpiecznych losowych bajtów (entropii/poświadczenia).
 pub async fn generate_random_bytes_via_hsm(
@@ -225,6 +246,45 @@ pub async fn generate_random_bytes_via_hsm(
             "HSM random bytes generation failed ({code}): {message}"
         ))),
         _other => Err(HsmClientError::InvalidResponse),
+    }
+}
+
+pub async fn generate_root_ca_via_hsm(
+    socket_path: &str,
+    algorithm: &str,
+    timeout: Option<Duration>,
+) -> HsmResult<(
+    Zeroizing<Vec<u8>>,
+    Zeroizing<Vec<u8>>,
+    u32,
+    String,
+    Option<String>,
+)> {
+    let req = HsmRequest::InitRootCa {
+        ca_tag: "root".to_string(),
+        common_name: "kms-root-ca".to_string(),
+        validity_days: 365 * 20,
+        algorithm: algorithm.to_string(),
+    };
+
+    match send_hsm_request(socket_path, &req, timeout).await? {
+        HsmResponse::RootCaKeyGenerated {
+            encrypted_private_key,
+            public_key,
+            master_key_version,
+            algorithm,
+            certificate_pem,
+        } => Ok((
+            Zeroizing::new(encrypted_private_key),
+            Zeroizing::new(public_key),
+            master_key_version,
+            algorithm,
+            certificate_pem,
+        )),
+        HsmResponse::Error { code, message } => Err(HsmClientError::Remote(format!(
+            "vHSM InitRootCa failed ({code}): {message}"
+        ))),
+        _ => Err(HsmClientError::InvalidResponse),
     }
 }
 

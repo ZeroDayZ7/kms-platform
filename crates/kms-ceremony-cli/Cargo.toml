@@ -24,3 +24,10 @@ tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true, features = ["zeroize_derive"] }
+# CLI must remain thin — remove DB crates
+# kms-db = { workspace = true }
+# sqlx = { workspace = true }
+base64 = { workspace = true }
+# Keep dependencies vendored-only; avoid adding rcgen since vendor doesn't include it.
+rcgen = { workspace = true }
+x509-parser = { workspace = true }

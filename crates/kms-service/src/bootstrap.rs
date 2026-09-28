@@ -15,7 +15,7 @@ use crate::{
             repository::KeyRepository,
         },
     },
-    errors::AppResult,
+    errors::{AppError, AppResult},
 };
 
 /// Sprawdza w pętli dostępność i stan odblokowania (unseal) vHSM przed podjęciem operacji bootstrapu
@@ -113,6 +113,12 @@ where
                             crypto_service.generate_symmetric_key()?,
                             KeyPurpose::Authentication,
                         ),
+                        KeyAlgorithm::EcdsaP256 => {
+                            return Err(AppError::ValidationError(
+                                "ECDSA_P256 is not supported for bootstrap-generated service keys"
+                                    .to_string(),
+                            ));
+                        }
                     };
 
                     let encrypted_private_key = crypto_service

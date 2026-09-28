@@ -28,6 +28,38 @@ pub enum HsmRequest {
     GenerateCredential {
         password_length: usize,
     },
+    /// Initialize a Root CA fully inside vHSM: generate keypair, build & sign self-signed cert,
+    /// encrypt private key with master/root key and return encrypted blob + public cert material.
+    InitRootCa {
+        ca_tag: String,
+        common_name: String,
+        validity_days: u32,
+        algorithm: String,
+    },
+    /// Load an encrypted Root CA private key into vHSM RAM (after unseal). The encrypted blob
+    /// must have been produced by `InitRootCa` or a compatible wrapping operation.
+    LoadRootCa {
+        ca_tag: String,
+        encrypted_private_key: Vec<u8>,
+    },
+    /// Sign an intermediate CSR using a loaded Root CA identified by `ca_tag`.
+    SignIntermediateCa {
+        ca_tag: String,
+        csr_pem: String,
+        validity_days: u32,
+    },
+    /// Sign arbitrary TBS bytes with a loaded CA key inside vHSM. The signature bytes
+    /// are returned. This is an internal operation used by KMS when the TBS is
+    /// constructed outside of vHSM but signing must occur inside.
+    SignWithCaKey {
+        ca_tag: String,
+        algorithm: String,
+        tbs: Vec<u8>,
+    },
+    /// Generate a Root CA private/public keypair inside vHSM. Returns only encrypted private key and public data.
+    GenerateRootCaKey {
+        algorithm: String,
+    },
     Encrypt {
         key_id: String,
         key_version: Option<u32>,
@@ -80,6 +112,22 @@ pub enum HsmResponse {
         password: String,
         wrapped_password: Vec<u8>,
         key_version: u32,
+    },
+    /// Response when a Root CA key was generated inside vHSM.
+    RootCaKeyGenerated {
+        encrypted_private_key: Vec<u8>,
+        public_key: Vec<u8>,
+        master_key_version: u32,
+        algorithm: String,
+        certificate_pem: Option<String>,
+    },
+    /// Signed intermediate certificate PEM produced by a CA key loaded into vHSM
+    SignedIntermediate {
+        certificate_pem: String,
+    },
+    /// Response for SignWithCaKey returning raw signature bytes (ASN.1/DER or raw depending on algorithm)
+    Signature {
+        signature: Vec<u8>,
     },
     Error {
         code: u16,

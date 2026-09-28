@@ -9,6 +9,25 @@ pub enum KeyAlgorithm {
     X25519,
     AES256GCM,
     HmacSha256,
+    EcdsaP256,
+}
+
+impl KeyAlgorithm {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Ed25519 => "Ed25519",
+            Self::X25519 => "X25519",
+            Self::AES256GCM => "AES256GCM",
+            Self::HmacSha256 => "HmacSha256",
+            Self::EcdsaP256 => "ECDSA_P256",
+        }
+    }
+}
+
+impl fmt::Display for KeyAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
 
 #[derive(Debug, Clone)]
