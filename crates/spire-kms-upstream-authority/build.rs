@@ -8,6 +8,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let proto_files = &[
         "proto/spire/common/plugin/plugin.proto",
+        "proto/spire/config/v1/config.proto",
         "proto/spire/service/private/init/v1/init.proto",
         "proto/spire/server/upstreamauthority/v1/upstreamauthority.proto",
         "proto/plugin/grpc_controller.proto",

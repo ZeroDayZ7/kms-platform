@@ -2,10 +2,14 @@ use serde::{Deserialize, Serialize};
 
 #[cfg(unix)]
 use std::path::Path;
+use std::time::Duration;
 #[cfg(unix)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(unix)]
 use tokio::net::UnixStream;
+
+const MAX_KMS_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10 MB
+const KMS_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KmsSignRequest {
@@ -22,7 +26,6 @@ pub struct KmsSignResponse {
 }
 
 #[cfg(unix)]
-#[cfg(unix)]
 pub async fn sign_csr_via_kms(
     socket_path: &str,
     req: KmsSignRequest,
@@ -31,23 +34,33 @@ pub async fn sign_csr_via_kms(
         anyhow::bail!("KMS socket not available at {}", socket_path);
     }
 
-    let mut stream = UnixStream::connect(socket_path).await?;
-    let payload = serde_json::to_vec(&req)?;
-    let len = payload.len() as u32;
+    let res = tokio::time::timeout(KMS_TIMEOUT, async move {
+        let mut stream = UnixStream::connect(socket_path).await?;
+        let payload = serde_json::to_vec(&req)?;
+        let len = payload.len() as u32;
 
-    stream.write_all(&len.to_be_bytes()).await?;
-    stream.write_all(&payload).await?;
-    stream.flush().await?;
+        stream.write_all(&len.to_be_bytes()).await?;
+        stream.write_all(&payload).await?;
+        stream.flush().await?;
 
-    let mut len_buf = [0_u8; 4];
-    stream.read_exact(&mut len_buf).await?;
-    let response_len = u32::from_be_bytes(len_buf) as usize;
+        let mut len_buf = [0_u8; 4];
+        stream.read_exact(&mut len_buf).await?;
+        let response_len = u32::from_be_bytes(len_buf) as usize;
 
-    let mut response_buf = vec![0_u8; response_len];
-    stream.read_exact(&mut response_buf).await?;
+        if response_len > MAX_KMS_RESPONSE_SIZE {
+            anyhow::bail!("KMS response length {} exceeds limit {}", response_len, MAX_KMS_RESPONSE_SIZE);
+        }
 
-    let response: KmsSignResponse = serde_json::from_slice(&response_buf)?;
-    Ok(response)
+        let mut response_buf = vec![0_u8; response_len];
+        stream.read_exact(&mut response_buf).await?;
+
+        let response: KmsSignResponse = serde_json::from_slice(&response_buf)?;
+        Ok::<KmsSignResponse, anyhow::Error>(response)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("KMS request timed out after {:?}", KMS_TIMEOUT))?;
+
+    res
 }
 
 #[cfg(not(unix))]

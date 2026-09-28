@@ -19,8 +19,9 @@ fn init_logging() {
 
 #[cfg(unix)]
 fn emit_go_plugin_handshake(socket_path: &str) -> anyhow::Result<()> {
-    let mut stdout = io::stdout().lock();
-    writeln!(stdout, "1|1|unix|{socket_path}|grpc")?;
+    let mut stdout = io::stdout();
+    let handshake = format!("1|1|unix|{socket_path}|grpc\n");
+    stdout.write_all(handshake.as_bytes())?;
     stdout.flush()?;
     Ok(())
 }

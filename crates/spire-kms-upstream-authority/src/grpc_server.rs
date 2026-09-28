@@ -24,6 +24,11 @@ mod generated {
                 tonic::include_proto!("spire.common.plugin");
             }
         }
+        pub mod config {
+            pub mod v1 {
+                tonic::include_proto!("spire.config.v1");
+            }
+        }
         pub mod plugin {
             pub mod server {
                 pub mod upstreamauthority {
@@ -63,6 +68,7 @@ use generated::spire::common::plugin::{
     ConfigureRequest, ConfigureResponse, GetPluginInfoRequest, GetPluginInfoResponse,
     InitRequest, InitResponse,
 };
+// Use generated config types via fully-qualified paths where needed.
 #[allow(unused_imports)]
 use generated::spire::plugin::server::upstreamauthority::v1::{
     MintX509caRequest, MintX509caResponse, PublishJwtKeyRequest, PublishJwtKeyResponse,
@@ -286,6 +292,38 @@ impl GrpcBroker for GoPluginBrokerService {
 #[derive(Clone, Default)]
 pub struct PluginInitService;
 
+#[derive(Clone, Default)]
+pub struct ConfigService;
+
+#[tonic::async_trait]
+impl generated::spire::config::v1::config_server::Config for ConfigService {
+    async fn configure(
+        &self,
+        mut request: Request<generated::spire::config::v1::ConfigureRequest>,
+    ) -> Result<Response<generated::spire::config::v1::ConfigureResponse>, Status> {
+        let path = request
+            .metadata()
+            .get(":path")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("<unknown>")
+            .to_string();
+        let req = request.get_mut();
+
+        tracing::info!(service = "Config", method = "Configure", grpc_path = %path, configuration_len = req.configuration.len(), "RPC_ENTER");
+
+        if req.configuration.trim().is_empty() {
+            tracing::info!(service = "Config", method = "Configure", "RPC_CONFIG_EMPTY_TREATED_AS_OK");
+            let response = generated::spire::config::v1::ConfigureResponse { error_list: vec![] };
+            return Ok(Response::new(response));
+        }
+
+        tracing::info!(service = "Config", method = "Configure", configuration_preview = %req.configuration, "RPC_EXIT status=OK");
+
+        let response = generated::spire::config::v1::ConfigureResponse { error_list: vec![] };
+        Ok(Response::new(response))
+    }
+}
+
 #[tonic::async_trait]
 impl PluginInit for PluginInitService {
     async fn init(
@@ -310,6 +348,7 @@ impl PluginInit for PluginInitService {
 
         let response = InitResponse {
             plugin_services: vec![
+                "spire.config.v1.Config".to_string(),
                 "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
                 "grpc.health.v1.Health".to_string(),
             ],
@@ -355,6 +394,7 @@ impl PrivateInit for PrivateInitService {
 
         let response = PrivateInitResponse {
             plugin_service_names: vec![
+                "spire.config.v1.Config".to_string(),
                 "spire.plugin.server.upstreamauthority.v1.UpstreamAuthority".to_string(),
                 "grpc.health.v1.Health".to_string(),
             ],
@@ -402,22 +442,29 @@ impl PrivateInit for PrivateInitService {
     }
 }
 
-fn pem_to_der(pem: &str, label: &str) -> Result<Vec<u8>, String> {
-    pem::parse(pem)
-        .map(|block| block.contents().to_vec())
-        .map_err(|err| format!("invalid {label} PEM: {err}"))
+fn parse_pem_to_der_list(pem_str: &str, label: &str) -> Vec<Vec<u8>> {
+    match pem::parse_many(pem_str) {
+        Ok(pem_blocks) => {
+            let mut der_list = Vec::new();
+            for block in pem_blocks {
+                der_list.push(block.into_contents());
+            }
+            der_list
+        }
+        Err(err) => {
+            tracing::error!(error = %err, label = %label, "PEM_PARSE_FAILED");
+            Vec::new()
+        }
+    }
 }
 
-fn build_mint_x509ca_response(certs: &[String]) -> MintX509caResponse {
-    let mut chain = Vec::with_capacity(certs.len());
-    for cert_pem in certs {
-        let Ok(der) = pem_to_der(cert_pem, "certificate") else {
-            continue;
-        };
-        chain.push(X509Certificate {
-            asn1: der,
-            tainted: false,
-        });
+fn build_mint_x509ca_response(certs_pem_list: &[String]) -> MintX509caResponse {
+    let mut chain = Vec::new();
+    for cert_pem in certs_pem_list {
+        let der_blocks = parse_pem_to_der_list(cert_pem, "certificate");
+        for der in der_blocks {
+            chain.push(X509Certificate { asn1: der, tainted: false });
+        }
     }
 
     let upstream_x509_roots = if chain.is_empty() {
@@ -429,10 +476,7 @@ fn build_mint_x509ca_response(certs: &[String]) -> MintX509caResponse {
         })]
     };
 
-    MintX509caResponse {
-        x509_ca_chain: chain,
-        upstream_x509_roots,
-    }
+    MintX509caResponse { x509_ca_chain: chain, upstream_x509_roots }
 }
 
 #[tonic::async_trait]
@@ -452,12 +496,20 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             .unwrap_or_else(|| "<unknown>".to_string());
         let req = request.into_inner();
 
+        // preferred_ttl is in seconds per SPIRE; convert to days for KMS validity
+        let validity_days = if req.preferred_ttl > 0 {
+            ((req.preferred_ttl as f64) / 86400.0).ceil() as u32
+        } else {
+            1u32
+        };
+
         tracing::info!(
             service = "UpstreamAuthority",
             method = "MintX509CAAndSubscribe",
             grpc_path = %path,
             csr_len = req.csr.len(),
-            preferred_ttl = req.preferred_ttl,
+            preferred_ttl_sec = req.preferred_ttl,
+            calculated_validity_days = validity_days,
             request_metadata = ?metadata,
             "RPC_ENTER"
         );
@@ -488,18 +540,13 @@ impl UpstreamAuthority for UpstreamAuthorityService {
             kms_socket = %self.config.kms_socket_path,
             ca_tag = %self.config.ca_tag,
             csr_pem_len = csr_pem.len(),
-            validity_days = req.preferred_ttl.max(1) as u32,
+            validity_days = validity_days,
             "KMS_SIGN_REQUEST_PREPARED"
         );
 
         let response = sign_csr_via_kms(
             &self.config.kms_socket_path,
-            KmsSignRequest {
-                csr_pem,
-                ca_tag: self.config.ca_tag.clone(),
-                validity_days: req.preferred_ttl.max(1) as u32,
-                caller_service: "spire".to_string(),
-            },
+                KmsSignRequest { csr_pem, ca_tag: self.config.ca_tag.clone(), validity_days, caller_service: "spire".to_string() },
         )
         .await;
 
@@ -688,6 +735,11 @@ pub async fn serve_with_listener(
                 }),
         )
         .add_service(PluginServer::new(PluginService::default()))
+        .add_service(
+            // Config service required by newer SPIRE servers to deliver plugin configuration
+            // Implemented below as ConfigService
+            generated::spire::config::v1::config_server::ConfigServer::new(ConfigService::default()),
+        )
         .add_service(PluginInitServer::new(PluginInitService::default()))
         .add_service(InitServer::new(PrivateInitService::default()))
         .add_service(GrpcControllerServer::new(GoPluginControllerService::default()))
@@ -697,6 +749,9 @@ pub async fn serve_with_listener(
         .add_service(health_service);
 
     tracing::info!("TONIC_SERVER_REGISTERED_ALL_SERVICES");
+
+    // Register Config service for SPIRE plugin configuration compatibility.
+    tracing::info!("REGISTERING_CONFIG_SERVICE");
 
     tokio::select! {
         result = server.serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener)) => {
@@ -744,15 +799,12 @@ pub async fn serve(config: PluginConfig) -> anyhow::Result<()> {
         , config.spire_plugin_socket_path
     );
 
-    tracing::info!(
-        "HANDSHAKE_START path={}"
-        , config.spire_plugin_socket_path
-    );
-    crate::emit_go_plugin_handshake(&config.spire_plugin_socket_path)?;
-    tracing::info!(
-        "HANDSHAKE_OK path={}"
-        , config.spire_plugin_socket_path
-    );
+    tracing::info!("HANDSHAKE_START path={}", config.spire_plugin_socket_path);
+    if let Err(e) = crate::emit_go_plugin_handshake(&config.spire_plugin_socket_path) {
+        tracing::error!(error = %e, "HANDSHAKE_WRITE_FAILED");
+        return Err(e);
+    }
+    tracing::info!("HANDSHAKE_OK path={}", config.spire_plugin_socket_path);
 
     tracing::info!(
         "PLUGIN_SOCKET_READY_FOR_SPIRE path={}"

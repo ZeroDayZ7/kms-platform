@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+package spire.config.v1;
+
+message ConfigureRequest {
+  string configuration = 1;
+  string global_configuration = 2;
+}
+
+message ConfigureResponse {
+  repeated string error_list = 1;
+}
+
+service Config {
+  rpc Configure (ConfigureRequest) returns (ConfigureResponse) {}
+}
