@@ -52,10 +52,10 @@ rebuild: net-up
 	cargo fmt
 	@echo "===> Budowanie wszystkich obrazów (w tym tools) bez cache..."
 	docker compose --profile tools build --no-cache
-	@echo "===> Uruchamianie środowiska..."
-	docker compose --profile tools up -d
+	@echo "===> Uruchamianie podstawowych usług..."
+	docker compose up -d
 	@echo "===> Śledzenie logów migratora..."
-	docker compose logs -f kms-migrate
+	docker compose --profile tools run --rm kms-migrate cargo run -p kms-migrate -- run
 
 init:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
@@ -75,9 +75,8 @@ bootstrap:
 
 setup-all: unlock ca-init bootstrap
 
-# --- DEV ---
 unlock-dev:
-	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -it vhsm-daemon cargo run -p kms-ceremony-cli -- unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
+	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -it --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
 
 ca-init-dev:
 	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root
