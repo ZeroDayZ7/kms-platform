@@ -469,6 +469,8 @@ impl BootstrapQueries {
     }
 }
 
+// Legacy ceremonies repository removed — ceremonies are recorded via audit_logs
+
 #[derive(Debug, Clone, FromRow)]
 pub struct KeyDbRow {
     pub id: Uuid,
@@ -745,6 +747,134 @@ impl KeyQueries {
 
         tx.commit().await?;
         Ok(updated)
+    }
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct RootCaRow {
+    pub id: Uuid,
+    pub ca_tag: String,
+    pub algorithm: String,
+    pub public_key: Vec<u8>,
+    pub encrypted_private_key: Vec<u8>,
+    pub kek_id: Uuid,
+    pub kek_version: i32,
+    pub certificate_pem: String,
+    pub serial_number: String,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+}
+
+pub struct RootCaQueries;
+
+impl RootCaQueries {
+    pub async fn fetch_active_by_tag(
+        pool: &PgPool,
+        ca_tag: &str,
+    ) -> Result<Option<RootCaRow>, sqlx::Error> {
+        sqlx::query_as::<_, RootCaRow>(
+            "SELECT id, ca_tag, algorithm, public_key, encrypted_private_key, kek_id, kek_version, certificate_pem, serial_number, status, created_at, expires_at FROM root_cas WHERE ca_tag = $1 LIMIT 1",
+        )
+        .bind(ca_tag)
+        .fetch_optional(pool)
+        .await
+    }
+
+    pub async fn exists_by_tag(pool: &PgPool, ca_tag: &str) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM root_cas WHERE ca_tag = $1)")
+            .bind(ca_tag)
+            .fetch_one(pool)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn insert_root_ca(
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+        ca_tag: &str,
+        algorithm: &str,
+        public_key: &[u8],
+        encrypted_private_key: &[u8],
+        kek_id: Uuid,
+        kek_version: i32,
+        certificate_pem: &str,
+        serial_number: &str,
+        status: &str,
+        created_at: DateTime<Utc>,
+        expires_at: Option<DateTime<Utc>>,
+    ) -> Result<bool, sqlx::Error> {
+        let res = sqlx::query(
+            r#"
+            INSERT INTO root_cas
+                (id, ca_tag, algorithm, public_key, encrypted_private_key, kek_id, kek_version, certificate_pem, serial_number, status, created_at, expires_at)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            ON CONFLICT (ca_tag) DO NOTHING
+            "#,
+        )
+        .bind(id)
+        .bind(ca_tag)
+        .bind(algorithm)
+        .bind(public_key)
+        .bind(encrypted_private_key)
+        .bind(kek_id)
+        .bind(kek_version)
+        .bind(certificate_pem)
+        .bind(serial_number)
+        .bind(status)
+        .bind(created_at)
+        .bind(expires_at)
+        .execute(&mut **tx)
+        .await?;
+
+        Ok(res.rows_affected() == 1)
+    }
+
+    pub async fn advisory_xact_lock_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        key: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
+            .bind(key)
+            .execute(&mut **tx)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn exists_by_tag_tx(
+        tx: &mut Transaction<'_, Postgres>,
+        ca_tag: &str,
+    ) -> Result<bool, sqlx::Error> {
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM root_cas WHERE ca_tag = $1)")
+            .bind(ca_tag)
+            .fetch_one(&mut **tx)
+            .await
+    }
+
+    pub async fn update_encrypted_private_key(
+        tx: &mut Transaction<'_, Postgres>,
+        id: Uuid,
+        encrypted_private_key: &[u8],
+        kek_version: i32,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "UPDATE root_cas SET encrypted_private_key = $2, kek_version = $3 WHERE id = $1",
+        )
+        .bind(id)
+        .bind(encrypted_private_key)
+        .bind(kek_version)
+        .execute(&mut **tx)
+        .await
+        .map(|_| ())
+    }
+
+    pub async fn fetch_by_id(pool: &PgPool, id: Uuid) -> Result<Option<RootCaRow>, sqlx::Error> {
+        sqlx::query_as::<_, RootCaRow>(
+            "SELECT id, ca_tag, algorithm, encrypted_private_key, kek_id, kek_version, certificate_pem, serial_number, status, created_at, expires_at FROM root_cas WHERE id = $1 LIMIT 1",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
     }
 }
 

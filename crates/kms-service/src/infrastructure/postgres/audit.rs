@@ -33,8 +33,8 @@ impl AuditRepository for PgAuditRepository {
         });
 
         let action_str = format!("{:?}", log.action);
-        let algorithm_str = format!("{:?}", log.algorithm);
-        let status_str = format!("{:?}", log.status);
+        let algorithm_str = log.algorithm.as_str().to_string();
+        let status_str = log.status.as_str().to_string();
 
         let safe_reason = AuditLog::sanitize_reason(log.reason.as_deref());
         let hash_hex = compute_audit_hash(&AuditHashInput {

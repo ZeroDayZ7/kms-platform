@@ -121,7 +121,6 @@ impl TargetResourceProvider for RedisTargetProvider {
     ) -> Result<GeneratedCredential, AppError> {
         tracing::info!(
             operation = "[R1] create_user",
-            target = %target_conn_str,
             caller_service = %caller_service,
             username = %username,
             "[R1] Redis create_user called"
@@ -205,7 +204,7 @@ impl TargetResourceProvider for RedisTargetProvider {
     }
 
     async fn revoke_user(&self, target_conn_str: &str, username: &str) -> Result<(), AppError> {
-        tracing::info!(operation = "[R9] revoke_user", target = %target_conn_str, username = %username, "[R9] revoke_user called");
+        tracing::info!(operation = "[R9] revoke_user", username = %username, "[R9] revoke_user called");
 
         let client = self.connect_admin(target_conn_str).await?;
 

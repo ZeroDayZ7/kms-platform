@@ -1,5 +1,6 @@
 // src/infrastructure/mod.rs
 pub mod crypto;
+pub mod identity;
 pub mod postgres;
 pub mod providers;
 pub mod redis;

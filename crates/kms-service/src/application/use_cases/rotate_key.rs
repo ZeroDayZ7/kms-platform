@@ -100,6 +100,11 @@ where
             KeyAlgorithm::AES256GCM | KeyAlgorithm::HmacSha256 => {
                 self.crypto_service.generate_symmetric_key()?
             }
+            KeyAlgorithm::EcdsaP256 => {
+                return Err(AppError::ValidationError(
+                    "ECDSA_P256 rotation is not supported by this service".to_string(),
+                ));
+            }
         };
 
         let encrypted_private_key = self

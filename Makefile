@@ -1,6 +1,6 @@
 export LANG = pl_PL.UTF-8
 
-.PHONY: all fmt check clippy test docker-up docker-down lock unlock run db-reset audit-verify audit-logs rebuild clean init bootstrap setup-all dev dev-down prod unlock-dev bootstrap-dev migrate migrate-dev net-up net-down
+.PHONY: all fcc fmt check clippy test net-up net-down docker-down docker-up docker-rebuild profile clean rebuild init unlock ca-init ca-load bootstrap setup-all unlock-dev ca-init-dev ca-load-dev bootstrap-dev setup-dev migrate migrate-dev tools audit-verify audit-logs db-reset check-targets check-creds dev-build dev dev-down prod dev-recreate
 
 all: fmt check clippy test
 
@@ -30,32 +30,32 @@ net-down:
 	@docker network rm kms_target_admin_net 2>/dev/null || true
 
 docker-down:
-	docker compose down -v
+	docker compose down --remove-orphans
 
 docker-up: net-up
 	docker compose up -d
 
 docker-rebuild: net-up
-	docker compose down -v
+	docker compose down --remove-orphans
 	docker compose up -d --build --force-recreate
 
 profile:
-	docker compose --profile tools build --no-cache kms-ceremony-cli
+	docker compose --profile tools build kms-ceremony-cli
 
 clean:
 	cargo clean
 
 rebuild: net-up
-	@echo "===> Czyszczenie starych kontenerów i wolumenów..."
-	docker compose --profile tools down -v --remove-orphans
+	@echo "===> Czyszczenie starych kontenerów..."
+	docker compose --profile tools down --remove-orphans
 	@echo "===> Formatowanie kodu (cargo fmt)..."
 	cargo fmt
 	@echo "===> Budowanie wszystkich obrazów (w tym tools) bez cache..."
 	docker compose --profile tools build --no-cache
-	@echo "===> Uruchamianie środowiska..."
-	docker compose --profile tools up -d
+	@echo "===> Uruchamianie podstawowych usług..."
+	docker compose up -d
 	@echo "===> Śledzenie logów migratora..."
-	docker compose logs -f kms-migrate
+	docker compose --profile tools run --rm kms-migrate cargo run -p kms-migrate -- run
 
 init:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli interactive --socket-path /run/vhsm/vhsm.sock
@@ -64,28 +64,40 @@ init:
 unlock:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
 
+ca-init:
+	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose --profile tools run --rm -it kms-ceremony-cli ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root
+
+ca-load:
+	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose --profile tools run --rm -it kms-ceremony-cli ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root
+
 bootstrap:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm -it kms-ceremony-cli import-bootstrap --file ./out/bootstrap-secrets.json.enc --service-url http://kms-service:8080
 
-# --- DEV  ---
+setup-all: unlock ca-init bootstrap
+
 unlock-dev:
-	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -it vhsm-daemon cargo run -p kms-ceremony-cli -- unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
+	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm -it --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- unseal --threshold 3 --shares-dir ./out/shares --socket-path /run/vhsm/vhsm.sock
+
+ca-init-dev:
+	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-init --socket-path /run/vhsm/vhsm.sock --ca-tag root
+
+ca-load-dev:
+	MSYS_NO_PATHCONV=1 KMS_CLI__SERVICE_URL=http://kms-service:8080 KMS_CLI__SERVICE_ID=kms-infra KMS_CLI__SECRET=dev-secret docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- ca-load --socket-path /run/vhsm/vhsm.sock --ca-tag root
 
 bootstrap-dev:
 	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm --no-deps kms-ceremony-cli cargo run -p kms-ceremony-cli -- import-bootstrap --file ./out/bootstrap-secrets.json.enc --service-url 'http://kms-service:8080'
 
-# --- PRODUKCJA (używa profilu tools i zbudowanego obrazu) ---
+setup-dev: unlock-dev ca-init-dev bootstrap-dev
+
+# --- MIGRACJE ---
 migrate:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-migrate
 
-# --- DEV (używa kompilacji w locie cargo run) ---
 migrate-dev:
 	MSYS_NO_PATHCONV=1 docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm kms-migrate cargo run -p kms-migrate -- run
-	
+
 tools:
 	docker compose --profile tools build kms-ceremony-cli
-
-setup-all: unlock bootstrap
 
 audit-verify:
 	MSYS_NO_PATHCONV=1 docker compose --profile tools run --rm kms-ceremony-cli verify-audit-chain
@@ -104,30 +116,25 @@ DB_CONTAINER ?= db_kms
 DB_USER      ?= kms_root_user
 DB_NAME      ?= kms_db
 
-# Komenda do szybkiego podglądu zaimportowanych zasobów
 check-targets:
 	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, target_name, target_type, active, created_at FROM target_resources;"
 
-# Komenda do sprawdzenia zaimplementowanych poświadczeń
 check-creds:
 	docker exec -it $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -c "SELECT id, service_id, target_type, target_db, username, status FROM db_credentials;"
 
-# Uruchomienie z przebudowaniem obrazów (gdy zmieniasz zależności/Dockerfile)
 dev-build: net-up
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 
-# Szybkie uruchomienie (automatycznie tworzy trwałe sieci, jeśli nie istnieją)
 dev: net-up
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
 
-# Zatrzymanie deweloperskie (czyści wolumeny dev, ale pozostawia trwałe sieci intact)
 dev-down:
-	docker compose -f docker-compose.yml -f docker-compose.dev.yml down -v
-# 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down --remove-orphans
 
-# Standardowe uruchomienie produkcyjne
 prod: net-up
 	docker compose up --build
 
 dev-recreate: net-up
+	@docker volume inspect kms_sockets >/dev/null 2>&1 || docker volume create kms_sockets
+	@docker volume inspect spire_sockets >/dev/null 2>&1 || docker volume create spire_sockets
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate kms-service

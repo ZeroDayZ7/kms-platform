@@ -15,6 +15,7 @@ pub mod crypto;
 pub mod iam_json;
 pub mod rate_limit;
 
+pub use auth::{AuthConfig, SpiffeConfig, SpiffeIdentityMode};
 pub use cors::HttpMethod;
 pub use database::DatabaseConfig;
 pub use log::LogConfig;
@@ -26,11 +27,15 @@ pub use settings::Settings;
 
 //#region load
 pub fn load() -> Result<Settings, ConfigError> {
-    let base_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("config")
-        .join("settings.toml");
+    let config_path = std::env::var("APP_CONFIG_PATH")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("config")
+                .join("settings.toml")
+        });
 
-    load_from(base_path)
+    load_from(config_path)
 }
 
 // src/config/mod.rs

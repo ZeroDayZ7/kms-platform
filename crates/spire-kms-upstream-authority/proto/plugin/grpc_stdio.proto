@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package plugin;
+option go_package = "github.com/hashicorp/go-plugin/internal/plugin";
+
+import "google/protobuf/empty.proto";
+
+service GRPCStdio {
+  rpc StreamStdio(google.protobuf.Empty) returns (stream StdioData);
+}
+
+message StdioData {
+  enum Channel {
+    INVALID = 0;
+    STDOUT = 1;
+    STDERR = 2;
+  }
+
+  Channel channel = 1;
+  bytes data = 2;
+}

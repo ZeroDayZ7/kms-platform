@@ -103,6 +103,11 @@ where
             KeyAlgorithm::AES256GCM | KeyAlgorithm::HmacSha256 => {
                 self.crypto_service.generate_symmetric_key()?
             }
+            KeyAlgorithm::EcdsaP256 => {
+                return Err(AppError::ValidationError(
+                    "ECDSA_P256 is not supported for in-process key generation".to_string(),
+                ));
+            }
         };
 
         let public_key_pem = generated_pair.public_key_pem.clone();

@@ -56,3 +56,11 @@ enable_http_rewrap = false
 
 cache_cleanup_interval_secs = 60
 expiration_check_interval_secs = 300
+
+[acl]
+# Minimal ACL allowing the SPIRE server to request intermediate CA signing.
+[acl.services.spire]
+service-id = "spire"
+secret = "replace-with-real-secret"
+allowed_access = []
+allowed_actions = ["CA_SIGN_INTERMEDIATE"]
