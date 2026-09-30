@@ -91,7 +91,8 @@ services:
       dockerfile: Dockerfile.dev
     container_name: kms_ceremony_cli
     entrypoint: []
-    command: cargo run -p kms-ceremony-cli --bin kms-ceremony-cli
+    # stdin_open: true
+    # tty: true
     environment:
       - RUST_LOG=${RUST_LOG:-debug}
       - VHSM__SOCKET_PATH=/run/vhsm/vhsm.sock

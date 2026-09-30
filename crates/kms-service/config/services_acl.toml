@@ -33,6 +33,7 @@ allowed_access = [
     { target_service = "hmac-gateway-identity", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
     { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
     { target_service = "hmac-gateway-messaging", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
+    { target_service = "hmac-gateway-notification", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
     { target_service = "hmac-gateway-officer-bff", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
 
     # RabbitMQ dla Gateway
@@ -111,4 +112,11 @@ service_id = "messaging-service"
 secret = "super-long-random-secret-for-messaging-service-hmac-64-bytes"
 allowed_access = [
     { target_service = "hmac-gateway-messaging", algorithm = "HmacSha256", access_level = "SecretKey", preload = false }
+]
+
+[acl.services.notification-service]
+service_id = "notification-service"
+secret = "super-long-random-secret-for-notification-service-hmac-64-bytes"
+allowed_access = [
+    { target_service = "hmac-gateway-notification", algorithm = "HmacSha256", access_level = "SecretKey", preload = false }
 ]
