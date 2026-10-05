@@ -96,14 +96,14 @@ allowed_access = [
 service_id = "citizen-docs-service"
 secret = "super-long-random-secret-for-docs-service-hmac-64-bytes"
 allowed_access = [
-    { target_service = "docs-id-cards", algorithm = "AES256GCM", access_level = "SecretKey", preload = false },
-    { target_service = "docs-driver-license", algorithm = "AES256GCM", access_level = "SecretKey", preload = false },
-    { target_service = "docs-passport", algorithm = "AES256GCM", access_level = "SecretKey", preload = false },
+    # Uprawnienia do generowania DataKey (Envelope Encryption)
+    { target_service = "docs-id-cards", algorithm = "AES256GCM", access_level = "GenerateDataKey", preload = false },
+    { target_service = "docs-driver-license", algorithm = "AES256GCM", access_level = "GenerateDataKey", preload = false },
+    { target_service = "docs-passport", algorithm = "AES256GCM", access_level = "GenerateDataKey", preload = false },
 
+    # Dostęp do kluczy HMAC
     { target_service = "hmac-gateway-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
     { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
-
-    # DODANY KLUCZ PESEL INDEX:
     { target_service = "hmac-docs-pesel-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
     { target_service = "hmac-documents-number-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = false }
 ]
