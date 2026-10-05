@@ -104,7 +104,8 @@ allowed_access = [
     { target_service = "hmac-bff-docs", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
 
     # DODANY KLUCZ PESEL INDEX:
-    { target_service = "hmac-docs-pesel-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = false }
+    { target_service = "hmac-docs-pesel-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = false },
+    { target_service = "hmac-documents-number-index", algorithm = "HmacSha256", access_level = "SecretKey", preload = false }
 ]
 
 [acl.services.messaging-service]
