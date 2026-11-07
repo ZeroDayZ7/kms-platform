@@ -22,5 +22,5 @@ tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
 
 [build-dependencies]
-protoc-bin-vendored = "3.0"
+protoc-bin-vendored = "3.3"
 tonic-build = "0.13"
